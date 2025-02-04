@@ -1,0 +1,3 @@
+ruff
+basedpyright
+types-hvac==2.3.0.20240621
