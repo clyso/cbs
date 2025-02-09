@@ -18,16 +18,14 @@ import errno
 import json
 import logging
 import re
-import shlex
-import subprocess
 import sys
-from pathlib import Path
 from typing import cast
 
 import click
+from ceslib.logging import log as root_logger
+from ceslib.utils.git import get_git_repo_root, get_git_user
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("builds")
+log = root_logger.getChild("builds")
 
 
 class Prios(enum.Enum):
@@ -62,7 +60,7 @@ component_repos: dict[str, str] = {
 @click.option("-d", "--debug", is_flag=True)
 def main(debug: bool) -> None:
     if debug:
-        log.setLevel(logging.DEBUG)
+        root_logger.setLevel(logging.DEBUG)
     pass
 
 
@@ -158,40 +156,6 @@ def _get_build_type(types_lst: list[tuple[str, int]]) -> BuildType:
     return what
 
 
-def _run_git(args: str) -> str:
-    cmd = shlex.split(args)
-    p = subprocess.run(["git"] + cmd, capture_output=True, stderr=None)
-    if p.returncode != 0:
-        log.error(f"unable to obtain result from git '{args}'")
-        sys.exit(p.returncode)
-
-    return p.stdout.decode("utf-8")
-
-
-def _get_git_user() -> tuple[str, str]:
-    def _run_git_config_for(v: str) -> str:
-        val = _run_git(f"config {v}")
-        if len(val) == 0:
-            log.error(f"'{v}' not set in git config")
-            sys.exit(errno.EINVAL)
-
-        return val.strip()
-
-    user_name = _run_git_config_for("user.name")
-    user_email = _run_git_config_for("user.email")
-    assert len(user_name) > 0 and len(user_email) > 0
-    return (user_name, user_email)
-
-
-def _get_repo_root() -> Path:
-    val = _run_git("rev-parse --show-toplevel")
-    if len(val) == 0:
-        log.error("unable to obtain toplevel git directory path")
-        sys.exit(errno.ENOENT)
-
-    return Path(val.strip())
-
-
 _create_help_msg = f"""Creates a new build descriptor file.
 
 Requires a VERSION to be provided, which this descriptor describes.
@@ -283,9 +247,9 @@ def build_create(
     )
     ces_version_title = f"Release CES v{version}, {version_types_title}"
 
-    user_name, user_email = _get_git_user()
+    user_name, user_email = get_git_user()
 
-    repo_path = _get_repo_root()
+    repo_path = get_git_repo_root()
     build_path = (
         repo_path.joinpath("builds")
         .joinpath(build_type_dir_name)

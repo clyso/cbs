@@ -1,0 +1,81 @@
+# CES library - images errors
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+from typing import override
+from ceslib.errors import CESError
+
+
+class MalformedVersionError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "malformed version"
+
+
+class NoSuchVersionError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "no such version"
+
+
+class UnknownRepositoryError(CESError):
+    repo: str
+
+    def __init__(self, repo: str) -> None:
+        super().__init__()
+        self.repo = repo
+
+    @override
+    def __str__(self) -> str:
+        return f"unknown repository: {self.repo}"
+
+
+class DescriptorError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "descriptor error"
+
+
+class SkopeoError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "skopeo error"
+
+
+class AuthError(CESError):
+    msg: str | None
+
+    def __init__(self, msg: str | None) -> None:
+        super().__init__()
+        self.msg = msg
+
+    @override
+    def __str__(self) -> str:
+        return "authentication error" + ("" if self.msg is None else f": {self.msg}")
+
+
+class MissingTagError(CESError):
+    tag: str | None
+    for_what: str
+
+    def __init__(self, *, tag: str | None = None, for_what: str) -> None:
+        super().__init__()
+        self.tag = tag
+        self.for_what = for_what
+
+    @override
+    def __str__(self) -> str:
+        return (
+            "missing tag "
+            + (f"'{self.tag}' " if self.tag is not None else "")
+            + f"for '{self.for_what}'"
+        )
