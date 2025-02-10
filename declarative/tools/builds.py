@@ -60,7 +60,7 @@ component_repos: dict[str, str] = {
 
 
 @click.group()
-@click.option("-d", "--debug", is_flag=True)
+@click.option("-d", "--debug", envvar="CES_TOOL_DEBUG", is_flag=True)
 def main(debug: bool) -> None:
     if debug:
         root_logger.setLevel(logging.DEBUG)
