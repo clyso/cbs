@@ -11,8 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-
+from __future__ import annotations
+import errno
+from pathlib import Path
 import pydantic
+
+from ceslib.builds.errors import InvalidBuildDescriptorError, NoSuchBuildDescriptorError
 
 
 class BuildSignedOffBy(pydantic.BaseModel):
@@ -31,3 +35,25 @@ class BuildDescriptor(pydantic.BaseModel):
     title: str
     signed_off_by: BuildSignedOffBy
     components: list[BuildComponent]
+
+    @classmethod
+    def read(cls, path: Path) -> BuildDescriptor:
+        # propagate exceptions
+        with path.open("r") as f:
+            raw_json = f.read()
+
+        try:
+            return BuildDescriptor.model_validate_json(raw_json)
+        except OSError as e:
+            if e.errno == errno.ENOENT:
+                raise NoSuchBuildDescriptorError(path)
+            raise e
+        except pydantic.ValidationError:
+            raise InvalidBuildDescriptorError(path)
+        except Exception as e:
+            raise e
+
+    def write(self, path: Path) -> None:
+        # propagate exceptions
+        with path.open("w") as f:
+            _ = f.write(self.model_dump_json(indent=2))

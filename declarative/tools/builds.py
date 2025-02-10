@@ -287,9 +287,13 @@ def build_create(
     desc_json = desc.model_dump_json(indent=2)
     print(desc_json)
 
-    with build_path.open("w") as f:
-        print(desc_json, file=f)
-        log.info(f"-> written to {build_path}")
+    try:
+        desc.write(build_path)
+    except Exception as e:
+        log.error(f"unable to write descriptor at '{build_path}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    log.info(f"-> written to {build_path}")
 
     # check if image descriptor for this version exists
     try:
