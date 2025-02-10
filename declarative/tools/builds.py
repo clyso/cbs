@@ -22,6 +22,9 @@ import sys
 from typing import cast
 
 import click
+from ceslib.errors import CESError
+from ceslib.images.desc import get_version_desc
+from ceslib.images.errors import NoSuchVersionError
 from ceslib.logging import log as root_logger
 from ceslib.utils.git import get_git_repo_root, get_git_user
 
@@ -241,7 +244,8 @@ def build_create(
             sys.exit(errno.ENOENT)
 
     ces_version_types = "-".join([f"{t}.{n}" for t, n in types_lst])
-    ces_version = f"ces-v{version}-{ces_version_types}"
+    raw_version_str = f"{version}-{ces_version_types}"
+    ces_version = f"ces-v{raw_version_str}"
     version_types_title = " ".join(
         [f"{release_types[t][1]} #{n}" for t, n in types_lst]
     )
@@ -287,6 +291,14 @@ def build_create(
     with build_path.open("w") as f:
         print(json_str, file=f)
         log.info(f"-> written to {build_path}")
+
+    # check if image descriptor for this version exists
+    try:
+        _ = get_version_desc(raw_version_str)
+    except NoSuchVersionError:
+        log.warning(f"image descriptor for version '{raw_version_str}' missing")
+    except CESError as e:
+        log.error(f"error obtaining image descriptor for '{raw_version_str}': {e}")
 
 
 if __name__ == "__main__":
