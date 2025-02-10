@@ -15,13 +15,13 @@
 
 import enum
 import errno
-import json
 import logging
 import re
 import sys
 from typing import cast
 
 import click
+from ceslib.builds.desc import BuildComponent, BuildDescriptor, BuildSignedOffBy
 from ceslib.errors import CESError
 from ceslib.images.desc import get_version_desc
 from ceslib.images.errors import NoSuchVersionError
@@ -265,31 +265,30 @@ def build_create(
 
     build_path.parent.mkdir(parents=True, exist_ok=True)
 
-    component_res: list[dict[str, str]] = []
+    component_res: list[BuildComponent] = []
     for comp_name, comp_version in components_map.items():
         comp_repo = component_repos[comp_name]
         if comp_name in component_overrides_map:
             comp_repo = component_overrides_map[comp_name]
 
         component_res.append(
-            {"name": comp_name, "repo": comp_repo, "version": comp_version}
+            BuildComponent(name=comp_name, repo=comp_repo, version=comp_version)
         )
 
-    res_dict = {
-        "version": ces_version,
-        "title": ces_version_title,
-        "signed-off-by": {
-            "user": user_name,
-            "email": user_email,
-        },
-        "components": component_res,
-    }
-
-    json_str = json.dumps(res_dict, indent=2)
-    print(json_str)
+    desc = BuildDescriptor(
+        version=ces_version,
+        title=ces_version_title,
+        signed_off_by=BuildSignedOffBy(
+            user=user_name,
+            email=user_email,
+        ),
+        components=component_res,
+    )
+    desc_json = desc.model_dump_json(indent=2)
+    print(desc_json)
 
     with build_path.open("w") as f:
-        print(json_str, file=f)
+        print(desc_json, file=f)
         log.info(f"-> written to {build_path}")
 
     # check if image descriptor for this version exists

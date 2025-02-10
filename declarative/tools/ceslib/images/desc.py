@@ -26,17 +26,17 @@ from ceslib.utils.git import get_git_repo_root
 log = parent_logger.getChild("descriptors")
 
 
-class DescImage(pydantic.BaseModel):
+class ImageLocations(pydantic.BaseModel):
     src: str
     dst: str
 
 
-class Desc(pydantic.BaseModel):
+class ImageDescriptor(pydantic.BaseModel):
     releases: list[str]
-    images: list[DescImage]
+    images: list[ImageLocations]
 
 
-def get_version_desc(version: str) -> Desc:
+def get_version_desc(version: str) -> ImageDescriptor:
     m = re.match(r"(\d+\.\d+\.\d+).*", version)
     if m is None:
         raise MalformedVersionError()
@@ -62,12 +62,12 @@ def get_version_desc(version: str) -> Desc:
 
     ces_version = f"ces-v{version}"
 
-    desc: Desc | None = None
+    desc: ImageDescriptor | None = None
     found_at: Path | None = None
     for candidate in candidates:
         try:
             desc_raw = candidate.read_text()
-            desc = Desc.model_validate_json(desc_raw)
+            desc = ImageDescriptor.model_validate_json(desc_raw)
         except Exception as e:
             log.debug(f"error loading desc file: {e}")
             raise e
