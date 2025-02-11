@@ -15,34 +15,11 @@ from typing import override
 from ceslib.errors import CESError
 
 
-class MalformedVersionError(CESError):
-    @override
-    def __str__(self) -> str:
-        return "malformed version"
-
-
-class NoSuchVersionError(CESError):
-    @override
-    def __str__(self) -> str:
-        return "no such version"
-
-
-class UnknownRepositoryError(CESError):
-    repo: str
-
-    def __init__(self, repo: str) -> None:
-        super().__init__()
-        self.repo = repo
-
-    @override
-    def __str__(self) -> str:
-        return f"unknown repository: {self.repo}"
-
-
-class DescriptorError(CESError):
-    @override
-    def __str__(self) -> str:
-        return "descriptor error"
+class ImageDescriptorError(CESError):
+    def __init__(self, msg: str | None = None) -> None:
+        super().__init__(
+            "image descriptor error" + (f": {msg}" if msg is not None else "")
+        )
 
 
 class SkopeoError(CESError):

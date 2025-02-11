@@ -22,9 +22,8 @@ from typing import cast
 
 import click
 from ceslib.builds.desc import BuildComponent, BuildDescriptor, BuildSignedOffBy
-from ceslib.errors import CESError
+from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_version_desc
-from ceslib.images.errors import NoSuchVersionError
 from ceslib.logging import log as root_logger
 from ceslib.utils.git import get_git_repo_root, get_git_user
 

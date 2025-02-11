@@ -27,12 +27,10 @@ log = parent_logger.getChild("git")
 
 class GitError(CESError):
     retcode: int
-    msg: str
 
     def __init__(self, retcode: int, msg: str) -> None:
-        super().__init__()
+        super().__init__(msg)
         self.retcode = retcode
-        self.msg = msg
 
     @override
     def __str__(self) -> str:

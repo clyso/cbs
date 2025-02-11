@@ -12,5 +12,40 @@
 # GNU General Public License for more details.
 
 
+from typing import override
+
+
 class CESError(Exception):
-    pass
+    msg: str | None
+
+    def __init__(self, msg: str | None = None) -> None:
+        super().__init__()
+        self.msg = msg
+
+    @override
+    def __str__(self) -> str:
+        return "CES error" + (f": {self.msg}" if self.msg is not None else "")
+
+
+class MalformedVersionError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "malformed version"
+
+
+class NoSuchVersionError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "no such version"
+
+
+class UnknownRepositoryError(CESError):
+    repo: str
+
+    def __init__(self, repo: str) -> None:
+        super().__init__()
+        self.repo = repo
+
+    @override
+    def __str__(self) -> str:
+        return f"unknown repository: {self.repo}"

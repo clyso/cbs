@@ -12,11 +12,13 @@
 # GNU General Public License for more details.
 
 import re
+
 import pydantic
-from ceslib.errors import CESError
-from ceslib.images import get_image_name, log as parent_logger
+from ceslib.errors import CESError, UnknownRepositoryError
+from ceslib.images import get_image_name
+from ceslib.images import log as parent_logger
 from ceslib.images.auth import AuthAndSignInfo
-from ceslib.images.errors import SkopeoError, UnknownRepositoryError
+from ceslib.images.errors import SkopeoError
 from ceslib.images.signing import sign
 from ceslib.utils import run_cmd
 

@@ -11,11 +11,11 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from ceslib.errors import CESError
+from ceslib.errors import CESError, UnknownRepositoryError
+from ceslib.images import get_image_tag, skopeo
+from ceslib.images import log as parent_logger
 from ceslib.images.auth import AuthAndSignInfo
-
-from ceslib.images import get_image_tag, log as parent_logger, skopeo
-from ceslib.images.errors import MissingTagError, UnknownRepositoryError
+from ceslib.images.errors import MissingTagError
 
 log = parent_logger.getChild("sync")
 

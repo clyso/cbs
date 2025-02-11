@@ -11,15 +11,17 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from pathlib import Path
 import re
-import pydantic
+from pathlib import Path
 
-from ceslib.images import log as parent_logger
-from ceslib.images.errors import (
-    DescriptorError,
+import pydantic
+from ceslib.errors import (
     MalformedVersionError,
     NoSuchVersionError,
+)
+from ceslib.images import log as parent_logger
+from ceslib.images.errors import (
+    ImageDescriptorError,
 )
 from ceslib.utils.git import get_git_repo_root
 
@@ -78,7 +80,7 @@ def get_version_desc(version: str) -> ImageDescriptor:
                     f"error: potential conflict for version {ces_version} "
                     + f"between {found_at} and {candidate}"
                 )
-                raise DescriptorError()
+                raise ImageDescriptorError()
             found_at = candidate
             desc = desc
             log.debug(f"found candidate at {found_at}")
