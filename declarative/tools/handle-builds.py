@@ -2,38 +2,96 @@
 
 import errno
 import logging
+import re
 import sys
 from pathlib import Path
 
 import click
-
-from ceslib.logging import log as root_logger
 from ceslib.builds.desc import BuildDescriptor
+from ceslib.errors import CESError, MalformedVersionError, NoSuchVersionError
+from ceslib.images.auth import AuthAndSignInfo
+from ceslib.images.desc import ImageDescriptor, get_version_desc
+from ceslib.images.errors import AuthError
+from ceslib.images.sync import sync_image
+from ceslib.logging import log as root_logger
 from ceslib.utils.git import GitError, get_git_modified_paths
 
-
 log = root_logger.getChild("handle-builds")
+
+
+def get_raw_version(ces_version: str) -> str:
+    m = re.match(r"^ces-v(.*)$", ces_version)
+    if m is None:
+        raise MalformedVersionError()
+    return m.group(1)
 
 
 class DescriptorEntry:
     build_name: str
     build_type: str
-    descriptor: BuildDescriptor
+    build_desc: BuildDescriptor
+    image_desc: ImageDescriptor
 
     def __init__(self, build_name: str, build_type: str, path: Path):
         self.build_name = build_name
         self.build_type = build_type
-        self.descriptor = BuildDescriptor.read(path)
+        self.build_desc = BuildDescriptor.read(path)
+
+        # propagate exception
+        raw_version = get_raw_version(self.build_desc.version)
+        self.image_desc = get_version_desc(raw_version)
+
+
+def attempt_sync_images(
+    desc: ImageDescriptor,
+    vault_addr: str,
+    vault_role_id: str,
+    vault_secret_id: str,
+    vault_transit: str,
+) -> bool:
+    try:
+        auth_info = AuthAndSignInfo(
+            vault_addr, vault_role_id, vault_secret_id, vault_transit
+        )
+    except AuthError as e:
+        log.error(f"authentication error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        log.error(f"unknown error: {e}")
+        sys.exit(1)
+
+    for image in desc.images:
+        log.info(f"handling '{image.src}' to '{image.dst}")
+        try:
+            sync_image(image.src, image.dst, auth_info, force=False, dry_run=False)
+        except CESError as e:
+            log.error(f"error copying images: {e}")
+            return False
+        except Exception as e:
+            log.error(f"unknown error: {e}")
+            return False
+
+        log.info(f"handled image from '{image.src}' to '{image.dst}'")
+
+    return True
 
 
 @click.command()
 @click.option("-d", "--debug", is_flag=True)
 @click.option("--base-path", envvar="BUILDS_BASE_PATH", type=str, required=True)
 @click.option("--base-sha", envvar="BUILDS_BASE_SHA", type=str, required=True)
+@click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
+@click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
+@click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
+@click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
 def main(
     debug: bool,
     base_path: str,
     base_sha: str,
+    vault_addr: str,
+    vault_role_id: str,
+    vault_secret_id: str,
+    vault_transit: str,
 ):
     if debug:
         root_logger.setLevel(logging.DEBUG)
@@ -41,34 +99,56 @@ def main(
     log.debug(f"base_path: {base_path}, base_sha: {base_sha}")
 
     try:
-        descs_modified, descs_deleted = get_git_modified_paths(
-            base_sha, "HEAD", base_path
-        )
+        modified, deleted = get_git_modified_paths(base_sha, "HEAD", base_path)
     except GitError as e:
         log.error(f"unable to obtain modified paths: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    for desc_file in descs_deleted:
-        if desc_file.suffix != ".json":
+    for build_desc_file in deleted:
+        if build_desc_file.suffix != ".json":
             continue
-        log.info(f"descriptor for '{desc_file.name}' deleted")
+        log.info(f"descriptor for '{build_desc_file.name}' deleted")
 
-    for desc_file in descs_modified:
-        if desc_file.suffix != ".json":
+    for build_desc_file in modified:
+        if build_desc_file.suffix != ".json":
             continue
 
-        log.info(f"info: process descriptor for '{desc_file.name}'")
-        build_name = desc_file.stem
-        build_type = desc_file.parent.name
-        desc = DescriptorEntry(build_name, build_type, desc_file)
+        if not build_desc_file.exists():
+            log.error(f"build descriptor file does not exist at '{build_desc_file}'")
+            continue
+
+        log.info(f"info: process descriptor for '{build_desc_file.name}'")
+        build_name = build_desc_file.stem
+        build_type = build_desc_file.parent.name
+
+        try:
+            desc = DescriptorEntry(build_name, build_type, build_desc_file)
+        except MalformedVersionError:
+            log.error(f"malformed CES version '{build_name}'")
+            sys.exit(1)
+        except NoSuchVersionError:
+            log.error(f"images not found for CES version '{build_name}'")
+            continue
 
         print("=> handle build descriptor:")
         print(f"-       name: {desc.build_name}")
         print(f"-       type: {desc.build_type}")
-        print(f"-    version: {desc.descriptor.version}")
+        print(f"-    version: {desc.build_desc.version}")
         print("- components:")
-        for c in desc.descriptor.components:
+        for c in desc.build_desc.components:
             print(f"-- {c.name}: {c.version}")
+        print("- images:")
+        for img in desc.image_desc.images:
+            print(f"-- needs: {img.dst}")
+
+        log.info("attempt to sync required images")
+        res = attempt_sync_images(
+            desc.image_desc, vault_addr, vault_role_id, vault_secret_id, vault_transit
+        )
+        if not res:
+            log.error(f"failed synchronizing required images for '{desc.build_name}'")
+            continue
+        log.info(f"images for '{desc.build_name}' synchronized")
 
         # TODO: call 'ces-build.sh' with info for this build
 
