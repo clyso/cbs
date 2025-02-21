@@ -30,13 +30,13 @@ class CESError(Exception):
 class MalformedVersionError(CESError):
     @override
     def __str__(self) -> str:
-        return "malformed version"
+        return "malformed version" + (f": {self.msg}" if self.msg else "")
 
 
 class NoSuchVersionError(CESError):
     @override
     def __str__(self) -> str:
-        return "no such version"
+        return "no such version" + (f": {self.msg}" if self.msg else "")
 
 
 class UnknownRepositoryError(CESError):

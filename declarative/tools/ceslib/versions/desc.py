@@ -1,4 +1,4 @@
-# CES library - build descriptor
+# CES library - version descriptor
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -12,44 +12,50 @@
 # GNU General Public License for more details.
 
 from __future__ import annotations
+
 import errno
 from pathlib import Path
+
 import pydantic
+from ceslib.versions.errors import (
+    InvalidVersionDescriptorError,
+    NoSuchVersionDescriptorError,
+)
 
-from ceslib.builds.errors import InvalidBuildDescriptorError, NoSuchBuildDescriptorError
 
-
-class BuildSignedOffBy(pydantic.BaseModel):
+class VersionSignedOffBy(pydantic.BaseModel):
     user: str
     email: str
 
 
-class BuildComponent(pydantic.BaseModel):
+class VersionComponent(pydantic.BaseModel):
     name: str
     repo: str
     version: str
 
 
-class BuildDescriptor(pydantic.BaseModel):
+class VersionDescriptor(pydantic.BaseModel):
     version: str
     title: str
-    signed_off_by: BuildSignedOffBy
-    components: list[BuildComponent]
+    signed_off_by: VersionSignedOffBy
+    components: list[VersionComponent]
+    distro: str
+    el_version: int
 
     @classmethod
-    def read(cls, path: Path) -> BuildDescriptor:
+    def read(cls, path: Path) -> VersionDescriptor:
         # propagate exceptions
         with path.open("r") as f:
             raw_json = f.read()
 
         try:
-            return BuildDescriptor.model_validate_json(raw_json)
+            return VersionDescriptor.model_validate_json(raw_json)
         except OSError as e:
             if e.errno == errno.ENOENT:
-                raise NoSuchBuildDescriptorError(path)
+                raise NoSuchVersionDescriptorError(path)
             raise e
         except pydantic.ValidationError:
-            raise InvalidBuildDescriptorError(path)
+            raise InvalidVersionDescriptorError(path)
         except Exception as e:
             raise e
 

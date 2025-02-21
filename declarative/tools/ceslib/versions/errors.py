@@ -13,10 +13,11 @@
 
 from pathlib import Path
 from typing import override
+
 from ceslib.errors import CESError
 
 
-class InvalidBuildDescriptorError(CESError):
+class InvalidVersionDescriptorError(CESError):
     path: Path | None
 
     def __init__(self, path: Path | None = None) -> None:
@@ -30,7 +31,7 @@ class InvalidBuildDescriptorError(CESError):
         )
 
 
-class NoSuchBuildDescriptorError(CESError):
+class NoSuchVersionDescriptorError(CESError):
     path: Path | None
 
     def __init__(self, path: Path | None = None) -> None:

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import click
 from ceslib.errors import CESError
-from ceslib.images.desc import get_version_desc
+from ceslib.images.desc import get_image_desc
 from ceslib.images.sync import sync_image
 from ceslib.logging import log as root_logger
 from ceslib.utils.secrets import SecretsVaultMgr
@@ -66,7 +66,7 @@ def sync(
     secrets_path: Path,
 ) -> None:
     try:
-        desc = get_version_desc(version)
+        desc = get_image_desc(version)
     except CESError as e:
         click.echo(f"error: {e}")
         sys.exit(1)

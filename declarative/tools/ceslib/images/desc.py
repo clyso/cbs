@@ -38,7 +38,7 @@ class ImageDescriptor(pydantic.BaseModel):
     images: list[ImageLocations]
 
 
-def get_version_desc(version: str) -> ImageDescriptor:
+def get_image_desc(version: str) -> ImageDescriptor:
     m = re.match(r"(\d+\.\d+\.\d+).*", version)
     if m is None:
         raise MalformedVersionError()

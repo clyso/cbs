@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Handles CES declarative builds
+# Handles CES declarative versions
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -21,9 +21,9 @@ import sys
 from typing import cast
 
 import click
-from ceslib.builds.desc import BuildComponent, BuildDescriptor, BuildSignedOffBy
+from ceslib.versions.desc import VersionComponent, VersionDescriptor, VersionSignedOffBy
 from ceslib.errors import CESError, NoSuchVersionError
-from ceslib.images.desc import get_version_desc
+from ceslib.images.desc import get_image_desc
 from ceslib.logging import log as root_logger
 from ceslib.utils.git import get_git_repo_root, get_git_user
 
@@ -158,12 +158,12 @@ def _get_build_type(types_lst: list[tuple[str, int]]) -> BuildType:
     return what
 
 
-_create_help_msg = f"""Creates a new build descriptor file.
+_create_help_msg = f"""Creates a new version descriptor file.
 
 Requires a VERSION to be provided, which this descriptor describes.
 
 Requires at least one '--type TYPE=N' pair, specifying which type of release
-the build refers to.
+the version refers to.
 
 Requires all components to be passed as '--component NAME@VERSION', individually.
 
@@ -203,11 +203,29 @@ Available components: {", ".join(component_repos.keys())}.
     required=False,
     metavar="COMPONENT=URL",
 )
+@click.option(
+    "--distro",
+    type=str,
+    help="Distribution to use for this release",
+    required=False,
+    default="rockylinux:9",
+    metavar="NAME",
+)
+@click.option(
+    "--el-version",
+    type=int,
+    help="Distribution EL version",
+    required=False,
+    default=9,
+    metavar="VERSION",
+)
 def build_create(
     version: str,
     build_types: list[str],
     components: list[str],
     component_overrides: list[str],
+    distro: str,
+    el_version: int,
 ):
     if len(build_types) == 0:
         log.error("no build type provided")
@@ -253,50 +271,52 @@ def build_create(
     user_name, user_email = get_git_user()
 
     repo_path = get_git_repo_root()
-    build_path = (
-        repo_path.joinpath("builds")
+    version_path = (
+        repo_path.joinpath("versions")
         .joinpath(build_type_dir_name)
         .joinpath(f"{ces_version}.json")
     )
-    if build_path.exists():
-        log.error(f"build for {ces_version} already exists")
+    if version_path.exists():
+        log.error(f"version for {ces_version} already exists")
         sys.exit(errno.EEXIST)
 
-    build_path.parent.mkdir(parents=True, exist_ok=True)
+    version_path.parent.mkdir(parents=True, exist_ok=True)
 
-    component_res: list[BuildComponent] = []
+    component_res: list[VersionComponent] = []
     for comp_name, comp_version in components_map.items():
         comp_repo = component_repos[comp_name]
         if comp_name in component_overrides_map:
             comp_repo = component_overrides_map[comp_name]
 
         component_res.append(
-            BuildComponent(name=comp_name, repo=comp_repo, version=comp_version)
+            VersionComponent(name=comp_name, repo=comp_repo, version=comp_version)
         )
 
-    desc = BuildDescriptor(
+    desc = VersionDescriptor(
         version=ces_version,
         title=ces_version_title,
-        signed_off_by=BuildSignedOffBy(
+        signed_off_by=VersionSignedOffBy(
             user=user_name,
             email=user_email,
         ),
         components=component_res,
+        distro=distro,
+        el_version=el_version,
     )
     desc_json = desc.model_dump_json(indent=2)
     print(desc_json)
 
     try:
-        desc.write(build_path)
+        desc.write(version_path)
     except Exception as e:
-        log.error(f"unable to write descriptor at '{build_path}': {e}")
+        log.error(f"unable to write descriptor at '{version_path}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    log.info(f"-> written to {build_path}")
+    log.info(f"-> written to {version_path}")
 
     # check if image descriptor for this version exists
     try:
-        _ = get_version_desc(raw_version_str)
+        _ = get_image_desc(raw_version_str)
     except NoSuchVersionError:
         log.warning(f"image descriptor for version '{raw_version_str}' missing")
     except CESError as e:

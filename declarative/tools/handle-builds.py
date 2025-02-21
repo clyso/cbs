@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
 
+# Builds declarative versions added to the repository
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
 import errno
 import logging
 import re
@@ -7,14 +20,14 @@ import sys
 from pathlib import Path
 
 import click
-from ceslib.builds.desc import BuildDescriptor
 from ceslib.errors import CESError, MalformedVersionError, NoSuchVersionError
-from ceslib.images.desc import ImageDescriptor, get_version_desc
+from ceslib.images.desc import ImageDescriptor, get_image_desc
 from ceslib.images.sync import sync_image
 from ceslib.logging import log as root_logger
 from ceslib.utils.git import GitError, get_git_modified_paths
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
+from ceslib.versions.desc import VersionDescriptor
 
 log = root_logger.getChild("handle-builds")
 
@@ -29,17 +42,17 @@ def get_raw_version(ces_version: str) -> str:
 class DescriptorEntry:
     build_name: str
     build_type: str
-    build_desc: BuildDescriptor
+    version_desc: VersionDescriptor
     image_desc: ImageDescriptor
 
     def __init__(self, build_name: str, build_type: str, path: Path):
         self.build_name = build_name
         self.build_type = build_type
-        self.build_desc = BuildDescriptor.read(path)
+        self.version_desc = VersionDescriptor.read(path)
 
         # propagate exception
-        raw_version = get_raw_version(self.build_desc.version)
-        self.image_desc = get_version_desc(raw_version)
+        raw_version = get_raw_version(self.version_desc.version)
+        self.image_desc = get_image_desc(raw_version)
 
 
 def attempt_sync_images(
@@ -84,8 +97,8 @@ def attempt_sync_images(
 
 @click.command()
 @click.option("-d", "--debug", is_flag=True)
-@click.option("--base-path", envvar="BUILDS_BASE_PATH", type=str, required=True)
-@click.option("--base-sha", envvar="BUILDS_BASE_SHA", type=str, required=True)
+@click.option("--base-path", envvar="VERSIONS_BASE_PATH", type=str, required=True)
+@click.option("--base-sha", envvar="BUILD_BASE_SHA", type=str, required=True)
 @click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
 @click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
 @click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
@@ -144,9 +157,9 @@ def main(
         print("=> handle build descriptor:")
         print(f"-       name: {desc.build_name}")
         print(f"-       type: {desc.build_type}")
-        print(f"-    version: {desc.build_desc.version}")
+        print(f"-    version: {desc.version_desc.version}")
         print("- components:")
-        for c in desc.build_desc.components:
+        for c in desc.version_desc.components:
             print(f"-- {c.name}: {c.version}")
         print("- images:")
         for img in desc.image_desc.images:

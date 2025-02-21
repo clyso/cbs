@@ -20,6 +20,7 @@ import re
 import string
 from collections.abc import Generator
 from pathlib import Path
+import subprocess
 import tempfile
 from typing import override
 
@@ -153,6 +154,7 @@ class SecretsVaultMgr:
             if homedir is None:
                 raise SecretsVaultError("unable to obtain home directory for ssh key")
             ssh_conf_dir = Path(homedir).joinpath(".ssh")
+            ssh_conf_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
             remote_name = "".join(
                 random.choice(string.ascii_letters) for _ in range(10)
@@ -164,6 +166,25 @@ class SecretsVaultMgr:
                 raise SecretsVaultError(f"malformed url for ssh git repository: {url}")
             target_host = matched_url[:idx]
             target_repo = matched_url[idx + 1 :]
+
+            # obtain target host key, stash it
+            try:
+                p = subprocess.run(
+                    ["ssh-keyscan", "-t", "rsa", target_host], capture_output=True
+                )
+                assert p.stdout
+            except Exception as e:
+                raise SecretsVaultError(
+                    f"error obtaining host key for '{target_host}': {e}"
+                )
+
+            if p.returncode != 0:
+                raise SecretsVaultError(
+                    f"error obtaining host key for '{target_host}': {p.stderr.decode('utf-8')}"
+                )
+
+            with ssh_conf_dir.joinpath("known_hosts").open("a") as f:
+                _ = f.write(p.stdout.decode("utf-8"))
 
             # setup pvt key and ssh config
             try:
@@ -178,7 +199,8 @@ class SecretsVaultMgr:
             ssh_key_path = ssh_conf_dir.joinpath(f"{remote_name}.id")
             with ssh_key_path.open("w") as f:
                 _ = f.write(ssh_key)
-            ssh_key_path.chmod(600)
+                _ = f.write("\n")
+            ssh_key_path.chmod(0o600)
 
             ssh_username = entry.extras.get("username", "git")
 
