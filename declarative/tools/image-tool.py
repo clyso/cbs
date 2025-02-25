@@ -16,14 +16,15 @@
 import logging
 import os
 import sys
+from pathlib import Path
 
 import click
 from ceslib.errors import CESError
-from ceslib.logging import log as root_logger
-from ceslib.images.auth import AuthAndSignInfo
 from ceslib.images.desc import get_version_desc
-from ceslib.images.errors import AuthError
 from ceslib.images.sync import sync_image
+from ceslib.logging import log as root_logger
+from ceslib.utils.secrets import SecretsVaultMgr
+from ceslib.utils.vault import VaultError
 
 ourdir = os.path.dirname(os.path.realpath(__file__))
 
@@ -46,6 +47,14 @@ def main(debug: bool) -> None:
 @click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
 @click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
 @click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
+@click.option(
+    "--secrets",
+    "secrets_path",
+    type=click.Path(
+        exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path
+    ),
+    required=True,
+)
 def sync(
     version: str,
     force: bool,
@@ -54,6 +63,7 @@ def sync(
     vault_role_id: str,
     vault_secret_id: str,
     vault_transit: str,
+    secrets_path: Path,
 ) -> None:
     try:
         desc = get_version_desc(version)
@@ -69,11 +79,15 @@ def sync(
     log.debug(f"desc: {desc}")
 
     try:
-        auth_info = AuthAndSignInfo(
-            vault_addr, vault_role_id, vault_secret_id, vault_transit
+        secrets = SecretsVaultMgr(
+            secrets_path,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit=vault_transit,
         )
-    except AuthError as e:
-        log.error(f"authentication error: {e}")
+    except VaultError as e:
+        log.error(f"error initializing secrets: {e}")
         sys.exit(1)
     except Exception as e:
         log.error(f"unknown error: {e}")
@@ -82,7 +96,7 @@ def sync(
     for image in desc.images:
         log.info(f"copying '{image.src}' to '{image.dst}")
         try:
-            sync_image(image.src, image.dst, auth_info, force=force, dry_run=dry_run)
+            sync_image(image.src, image.dst, secrets, force=force, dry_run=dry_run)
         except CESError as e:
             log.error(f"error copying images: {e}")
             sys.exit(1)

@@ -1,0 +1,296 @@
+# CES library - secrets utilities
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+import os
+import random
+import re
+import string
+from collections.abc import Generator
+from pathlib import Path
+import tempfile
+from typing import override
+
+import pydantic
+from ceslib.errors import CESError
+from ceslib.utils.vault import Vault, VaultError
+
+
+class SecretsError(CESError):
+    @override
+    def __str__(self) -> str:
+        return f"Secrets Error: {self.msg}"
+
+
+class SecretsVaultError(CESError):
+    @override
+    def __str__(self) -> str:
+        return f"Vault Secrets Error: {self.msg}"
+
+
+class VaultSecrets(pydantic.BaseModel):
+    vault_key: str
+
+
+class GitSSHSecrets(VaultSecrets):
+    ssh_key: str
+    extras: dict[str, str] = pydantic.Field(default={})
+
+
+class GitHTTPSSecrets(VaultSecrets):
+    username: str
+    password: str
+
+
+class S3Secrets(VaultSecrets):
+    hostname: str
+    access_id: str
+    secret_id: str
+
+
+class GPGPublicKeySecrets(VaultSecrets):
+    key: str
+
+
+class GPGPrivateKeySecrets(VaultSecrets):
+    key: str
+    passphrase: str
+
+
+class GPGSecrets(pydantic.BaseModel):
+    public: GPGPublicKeySecrets
+    private: GPGPrivateKeySecrets
+
+
+class HarborSecrets(VaultSecrets):
+    username: str
+    password: str
+    extras: dict[str, str] = pydantic.Field(default={})
+
+
+class Secrets(pydantic.BaseModel):
+    git: dict[str, GitSSHSecrets | GitHTTPSSecrets]
+    s3: S3Secrets
+    gpg: GPGSecrets
+    harbor: HarborSecrets
+
+    @classmethod
+    def read(cls, path: Path) -> Secrets:
+        if not path.exists() or not path.is_file():
+            raise SecretsError(f"credentials not found at '{path}'")
+
+        with path.open("r") as f:
+            raw_json = f.read()
+
+        try:
+            return Secrets.model_validate_json(raw_json)
+        except pydantic.ValidationError:
+            raise SecretsError(f"error validating credentials at '{path}'")
+        except Exception as e:
+            raise SecretsError(f"error validating credentials at '{path}': {e}")
+
+
+class GitSSHSecretCtx:
+    vault: Vault
+    secret: GitSSHSecrets
+
+    def __init__(self, vault: Vault, secret: GitSSHSecrets) -> None:
+        self.vault = vault
+        self.secret = secret
+
+
+class SecretsVaultMgr:
+    vault: Vault
+    secrets: Secrets
+
+    def __init__(
+        self,
+        secrets_path: Path,
+        vault_addr: str,
+        vault_role_id: str,
+        vault_secret_id: str,
+        *,
+        vault_transit: str | None = None,
+    ) -> None:
+        # propagate errors, let caller deal with them
+        self.vault = Vault(
+            vault_addr, vault_role_id, vault_secret_id, transit=vault_transit
+        )
+        self.secrets = Secrets.read(secrets_path)
+
+    @contextmanager
+    def git_url_for(self, url: str) -> Generator[str]:
+        entry: GitSSHSecrets | GitHTTPSSecrets | None = None
+        pattern = re.compile(r"^(?:https:\/\/)?([^./]+(?:\.[^./]+)+(?:\/.*)?)$")
+        for target, secrets_entry in self.secrets.git.items():
+            if target in url:
+                entry = secrets_entry
+                break
+
+        if entry is None:
+            raise SecretsVaultError(f"unable to find secret for '{url}'")
+
+        m = re.match(pattern, url)
+        if m is None:
+            raise SecretsVaultError(f"malformed url '{url}'")
+
+        matched_url: str = m.group(1)
+
+        if isinstance(entry, GitSSHSecrets):
+            homedir = os.getenv("HOME")
+            if homedir is None:
+                raise SecretsVaultError("unable to obtain home directory for ssh key")
+            ssh_conf_dir = Path(homedir).joinpath(".ssh")
+
+            remote_name = "".join(
+                random.choice(string.ascii_letters) for _ in range(10)
+            )
+
+            # split matched url into git repo host and git repo
+            idx = matched_url.find("/")
+            if idx <= 0 or (len(matched_url) - 1) == idx:
+                raise SecretsVaultError(f"malformed url for ssh git repository: {url}")
+            target_host = matched_url[:idx]
+            target_repo = matched_url[idx + 1 :]
+
+            # setup pvt key and ssh config
+            try:
+                ssh_secret = self.vault.read_secret(entry.vault_key)
+            except VaultError as e:
+                raise SecretsVaultError(f"error obtaining ssh secret from vault: {e}")
+            try:
+                ssh_key = ssh_secret[entry.ssh_key]
+            except KeyError as e:
+                raise SecretsVaultError(f"error obtaining ssh key: {e}")
+
+            ssh_key_path = ssh_conf_dir.joinpath(f"{remote_name}.id")
+            with ssh_key_path.open("w") as f:
+                _ = f.write(ssh_key)
+            ssh_key_path.chmod(600)
+
+            ssh_username = entry.extras.get("username", "git")
+
+            ssh_host_config = f"""
+Host {remote_name}
+    Hostname {target_host}
+    User {ssh_username}
+    IdentityFile {ssh_key_path.as_posix()}
+
+"""
+            ssh_conf_path = ssh_conf_dir.joinpath("config")
+            with ssh_conf_path.open("a") as f:
+                _ = f.write(ssh_host_config)
+
+            ssh_url = f"{remote_name}:{target_repo}"
+            yield ssh_url
+
+            # clean up private key
+            ssh_key_path.unlink()
+
+        else:  # https git repository
+            try:
+                https_secret = self.vault.read_secret(entry.vault_key)
+            except VaultError as e:
+                raise SecretsVaultError(
+                    f"error obtaining https credentials from vault: {e}"
+                )
+
+            try:
+                username = https_secret[entry.username]
+                password = https_secret[entry.password]
+            except KeyError as e:
+                raise SecretsVaultError(f"error obtaining https credentials: {e}")
+
+            https_url = f"https://{username}:{password}@{matched_url}"
+            yield https_url
+
+    def harbor_creds(self) -> tuple[str, str, str]:
+        try:
+            harbor_secret = self.vault.read_secret(self.secrets.harbor.vault_key)
+        except VaultError as e:
+            raise SecretsVaultError(
+                f"error obtaining harbor credentials from vault: {e}"
+            )
+
+        try:
+            username = harbor_secret[self.secrets.harbor.username]
+            password = harbor_secret[self.secrets.harbor.password]
+            address = self.secrets.harbor.extras["address"]
+        except KeyError as e:
+            raise SecretsVaultError(f"error obtaining harbor credentials: {e}")
+
+        return address, username, password
+
+    def s3_creds(self) -> tuple[str, str, str]:
+        try:
+            s3_secret = self.vault.read_secret(self.secrets.s3.vault_key)
+        except VaultError as e:
+            raise SecretsVaultError(f"error obtaining S3 credentials from vault: {e}")
+
+        try:
+            hostname = s3_secret[self.secrets.s3.hostname]
+            access_id = s3_secret[self.secrets.s3.access_id]
+            secret_id = s3_secret[self.secrets.s3.secret_id]
+        except KeyError as e:
+            raise SecretsVaultError(f"error obtaining S3 credentials: {e}")
+
+        return hostname, access_id, secret_id
+
+    @contextmanager
+    def gpg_private_key_file(self) -> Generator[tuple[str, str]]:
+        # obtain private key from vault
+        try:
+            gpg_pvt_secret = self.vault.read_secret(self.secrets.gpg.private.vault_key)
+        except VaultError as e:
+            raise SecretsVaultError(f"error obtaining GPG private key from vault: {e}")
+
+        try:
+            gpg_pvt_key = gpg_pvt_secret[self.secrets.gpg.private.key]
+            gpg_pvt_passphrase = gpg_pvt_secret[self.secrets.gpg.private.passphrase]
+        except KeyError as e:
+            raise SecretsVaultError(f"error obtaining GPG private key credentials: {e}")
+
+        _, gpg_pvt_path = tempfile.mkstemp()
+        with Path(gpg_pvt_path).open("w") as f:
+            n = f.write(gpg_pvt_key)
+
+        yield gpg_pvt_path, gpg_pvt_passphrase
+
+        with Path(gpg_pvt_path).open("bw") as f:
+            _ = f.write(random.randbytes(n))
+        os.unlink(gpg_pvt_path)
+
+    @contextmanager
+    def gpg_public_key_file(self) -> Generator[str]:
+        # obtain public key from vault
+        try:
+            gpg_pub_secret = self.vault.read_secret(self.secrets.gpg.public.vault_key)
+        except VaultError as e:
+            raise SecretsVaultError(f"error obtainin GPG public key from vault: {e}")
+
+        try:
+            gpg_pub_key = gpg_pub_secret[self.secrets.gpg.public.key]
+        except KeyError as e:
+            raise SecretsVaultError(f"error obtaining GPG public key: {e}")
+
+        _, gpg_pub_path = tempfile.mkstemp()
+        with Path(gpg_pub_path).open("w") as f:
+            n = f.write(gpg_pub_key)
+
+        yield gpg_pub_path
+
+        with Path(gpg_pub_path).open("bw") as f:
+            _ = f.write(random.randbytes(n))
+        os.unlink(gpg_pub_path)

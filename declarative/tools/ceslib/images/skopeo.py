@@ -17,10 +17,10 @@ import pydantic
 from ceslib.errors import CESError, UnknownRepositoryError
 from ceslib.images import get_image_name
 from ceslib.images import log as parent_logger
-from ceslib.images.auth import AuthAndSignInfo
 from ceslib.images.errors import SkopeoError
 from ceslib.images.signing import sign
 from ceslib.utils import run_cmd
+from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
 log = parent_logger.getChild("skopeo")
 
@@ -56,14 +56,21 @@ def skopeo_get_tags(img: str) -> SkopeoTagListResult:
         raise SkopeoError()
 
 
-def skopeo_copy(src: str, dst: str, auth_info: AuthAndSignInfo) -> None:
+def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
     log.info(f"copy '{src}' to '{dst}'")
+
+    try:
+        _, user, passwd = secrets.harbor_creds()
+    except SecretsVaultError as e:
+        log.error(f"error obtaining harbor credentials: {e}")
+        raise e
+
     try:
         retcode, _, err = skopeo(
             [
                 "copy",
                 "--dest-creds",
-                f"{auth_info.harbor_username}:{auth_info.harbor_password}",
+                f"{user}:{passwd}",
                 f"docker://{src}",
                 f"docker://{dst}",
             ]
@@ -79,7 +86,7 @@ def skopeo_copy(src: str, dst: str, auth_info: AuthAndSignInfo) -> None:
     log.info(f"copied '{src}' to '{dst}'")
 
     try:
-        retcode, out, err = sign(dst, auth_info)
+        retcode, out, err = sign(dst, secrets)
     except SkopeoError as e:
         log.error(f"error signing image '{dst}': {e}")
         raise e

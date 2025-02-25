@@ -9,12 +9,12 @@ from pathlib import Path
 import click
 from ceslib.builds.desc import BuildDescriptor
 from ceslib.errors import CESError, MalformedVersionError, NoSuchVersionError
-from ceslib.images.auth import AuthAndSignInfo
 from ceslib.images.desc import ImageDescriptor, get_version_desc
-from ceslib.images.errors import AuthError
 from ceslib.images.sync import sync_image
 from ceslib.logging import log as root_logger
 from ceslib.utils.git import GitError, get_git_modified_paths
+from ceslib.utils.secrets import SecretsVaultMgr
+from ceslib.utils.vault import VaultError
 
 log = root_logger.getChild("handle-builds")
 
@@ -44,17 +44,23 @@ class DescriptorEntry:
 
 def attempt_sync_images(
     desc: ImageDescriptor,
+    secrets_path: Path,
     vault_addr: str,
     vault_role_id: str,
     vault_secret_id: str,
     vault_transit: str,
 ) -> bool:
     try:
-        auth_info = AuthAndSignInfo(
-            vault_addr, vault_role_id, vault_secret_id, vault_transit
+        secrets = SecretsVaultMgr(
+            secrets_path,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit=vault_transit,
         )
-    except AuthError as e:
-        log.error(f"authentication error: {e}")
+
+    except VaultError as e:
+        log.error(f"error initializing vault: {e}")
         sys.exit(1)
     except Exception as e:
         log.error(f"unknown error: {e}")
@@ -63,7 +69,7 @@ def attempt_sync_images(
     for image in desc.images:
         log.info(f"handling '{image.src}' to '{image.dst}")
         try:
-            sync_image(image.src, image.dst, auth_info, force=False, dry_run=False)
+            sync_image(image.src, image.dst, secrets, force=False, dry_run=False)
         except CESError as e:
             log.error(f"error copying images: {e}")
             return False
@@ -97,6 +103,11 @@ def main(
         root_logger.setLevel(logging.DEBUG)
 
     log.debug(f"base_path: {base_path}, base_sha: {base_sha}")
+
+    secrets_path = Path(base_path).joinpath("secrets.json")
+    if not secrets_path.exists():
+        log.error(f"missing secrets file at '{secrets_path}'")
+        sys.exit(errno.ENOENT)
 
     try:
         modified, deleted = get_git_modified_paths(base_sha, "HEAD", base_path)
@@ -143,7 +154,12 @@ def main(
 
         log.info("attempt to sync required images")
         res = attempt_sync_images(
-            desc.image_desc, vault_addr, vault_role_id, vault_secret_id, vault_transit
+            desc.image_desc,
+            secrets_path,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit,
         )
         if not res:
             log.error(f"failed synchronizing required images for '{desc.build_name}'")

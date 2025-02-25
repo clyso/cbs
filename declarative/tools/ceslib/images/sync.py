@@ -14,8 +14,8 @@
 from ceslib.errors import CESError, UnknownRepositoryError
 from ceslib.images import get_image_tag, skopeo
 from ceslib.images import log as parent_logger
-from ceslib.images.auth import AuthAndSignInfo
 from ceslib.images.errors import MissingTagError
+from ceslib.utils.secrets import SecretsVaultMgr
 
 log = parent_logger.getChild("sync")
 
@@ -23,7 +23,7 @@ log = parent_logger.getChild("sync")
 def sync_image(
     src: str,
     dst: str,
-    auth_info: AuthAndSignInfo,
+    secrets: SecretsVaultMgr,
     *,
     force: bool = False,
     dry_run: bool = False,
@@ -72,7 +72,7 @@ def sync_image(
     try:
         if not dry_run:
             log.debug(f"copy '{src}' to '{dst}'")
-            skopeo.skopeo_copy(src, dst, auth_info)
+            skopeo.skopeo_copy(src, dst, secrets)
         else:
             log.debug("not copying, dry run specified")
     except CESError as e:

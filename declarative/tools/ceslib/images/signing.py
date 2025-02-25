@@ -12,27 +12,41 @@
 # GNU General Public License for more details.
 
 import os
-from ceslib.images.auth import AuthAndSignInfo
+
+from ceslib.images import log as parent_logger
 from ceslib.utils import run_cmd
+from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
+
+log = parent_logger.getChild("sign")
 
 
-def sign(img: str, auth_info: AuthAndSignInfo) -> tuple[int, str, str]:
+def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
+    try:
+        _, username, password = secrets.harbor_creds()
+    except SecretsVaultError as e:
+        log.error(f"error obtaining harbor credentials: {e}")
+        raise e
+
     cmd = [
         "cosign",
         "sign",
         "--key=hashivault://container-image-key",
-        f"--registry-username={auth_info.harbor_username}",
-        f"--registry-password={auth_info.harbor_password}",
+        f"--registry-username={username}",
+        f"--registry-password={password}",
         "--tlog-upload=false",
         "--upload=true",
         img,
     ]
+
+    vault_transit = secrets.vault.transit
+    assert vault_transit is not None
+
     env = os.environ.copy()
     env.update(
         {
-            "VAULT_ADDR": auth_info.vault_addr,
-            "VAULT_TOKEN": auth_info.vault_token,
-            "TRANSIT_SECRET_ENGINE_PATH": auth_info.vault_transit,
+            "VAULT_ADDR": secrets.vault.addr,
+            "VAULT_TOKEN": secrets.vault.token,
+            "TRANSIT_SECRET_ENGINE_PATH": vault_transit,
         }
     )
     return run_cmd(cmd, env=env)
