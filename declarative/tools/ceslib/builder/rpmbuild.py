@@ -24,8 +24,95 @@ from ceslib.utils import CommandError, async_run_cmd
 log = parent_logger.getChild("rpmbuild")
 
 
-def _setup_rpm_topdir(rpms_path: Path, component_name: str) -> Path:
+def _get_component_scripts_path(
+    components_path: Path, component_name: str
+) -> Path | None:
+    comp_path = components_path.joinpath(component_name)
+    if not comp_path.exists():
+        log.warning(
+            f"component path for '{component_name}' "
+            + f"not found in '{components_path}'"
+        )
+        return None
+
+    comp_scripts_path = comp_path.joinpath("scripts")
+    if not comp_scripts_path.exists():
+        log.warning(
+            f"component scripts path for '{component_name}' "
+            + f"not found in '{comp_path}'"
+        )
+        return None
+
+    return comp_scripts_path
+
+
+def _get_script_path(scripts_path: Path, glob: str) -> Path | None:
+    candidates = list(scripts_path.glob(glob))
+    if len(candidates) != 1:
+        log.error(
+            f"found '{len(candidates)}' candidate build scripts in "
+            + f"'{scripts_path}' for glob '{glob}', needs 1"
+        )
+        return None
+
+    script_path = candidates[0]
+    if not script_path.is_file() or not script_path.stat().st_mode & stat.S_IXUSR:
+        log.error(f"script at '{script_path}' either not a file or not executable")
+        return None
+    return script_path
+
+
+async def _get_component_version(
+    component_name: str, component_scripts_path: Path, repo_path: Path
+) -> str | None:
+    version_script_path = _get_script_path(component_scripts_path, "get_version.*")
+    if not version_script_path:
+        log.error(
+            f"unable to find 'get_version' script for component '{component_name}'"
+        )
+        return None
+
+    cmd = [
+        version_script_path.resolve().as_posix(),
+    ]
+
+    try:
+        rc, stdout, stderr = await async_run_cmd(cmd, cwd=repo_path)
+    except CommandError as e:
+        msg = f"error running version script for '{component_name}': {e}"
+        log.error(msg)
+        raise BuilderError(msg)
+    except Exception as e:
+        msg = f"unknown exception running version script for '{component_name}: {e}"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    if rc != 0:
+        msg = f"error running version script for '{component_name}': {stderr}"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    return stdout.strip()
+
+
+def _get_component_build_script(
+    component_name: str, component_scripts_path: Path
+) -> Path | None:
+    build_script_path = _get_script_path(component_scripts_path, "build_rpms.*")
+    if not build_script_path:
+        log.error(f"unable to find build script for component '{component_name}'")
+        return None
+
+    return build_script_path
+
+
+def _setup_rpm_topdir(
+    rpms_path: Path, component_name: str, version: str | None
+) -> Path:
     comp_rpm_path = rpms_path.joinpath(component_name).resolve()
+    if version:
+        comp_rpm_path = comp_rpm_path.joinpath(version).resolve()
+
     comp_rpm_path.mkdir(exist_ok=True)
 
     for d in ["BUILD", "SOURCES", "RPMS", "SRPMS", "SPECS"]:
@@ -38,14 +125,19 @@ def _setup_rpm_topdir(rpms_path: Path, component_name: str) -> Path:
 # repository 'repo_path'.
 # returns the number of seconds the script took to execute.
 async def _build_component(
-    rpms_path: Path, el_version: int, comp_name: str, script_path: Path, repo_path: Path
+    rpms_path: Path,
+    el_version: int,
+    comp_name: str,
+    script_path: Path,
+    repo_path: Path,
+    version: str | None,
 ) -> int:
     log.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
     def _outcb(s: str) -> None:
         log.debug(s)
 
-    comp_rpms_path = _setup_rpm_topdir(rpms_path, comp_name)
+    comp_rpms_path = _setup_rpm_topdir(rpms_path, comp_name, version)
 
     dist_version = f".el{el_version}.clyso"
     cmd = [
@@ -54,6 +146,9 @@ async def _build_component(
         dist_version,
         comp_rpms_path.resolve().as_posix(),
     ]
+
+    if version:
+        cmd.append(version)
 
     start = dt.now()
     try:
@@ -92,8 +187,16 @@ async def build_rpms(
     if not components_path.exists():
         raise BuilderError(f"components path at '{components_path}' not found")
 
-    to_build: dict[str, Path] = {}
-    for comp_name in components.keys():
+    class _ComponentBuild:
+        build_script: Path
+        version: str | None
+
+        def __init__(self, build_script: Path, version: str | None) -> None:
+            self.build_script = build_script
+            self.version = version
+
+    to_build: dict[str, _ComponentBuild] = {}
+    for comp_name, comp_repo in components.items():
         comp_path = components_path.joinpath(comp_name)
         if not comp_path.exists():
             log.warning(
@@ -102,40 +205,41 @@ async def build_rpms(
             )
             continue
 
-        comp_scripts_path = comp_path.joinpath("scripts")
-        if not comp_scripts_path.exists():
+        comp_scripts_path = _get_component_scripts_path(components_path, comp_name)
+        if not comp_scripts_path:
             log.warning(
                 f"component scripts path for '{comp_name}' "
                 + f"not found in '{comp_path}'"
             )
             continue
 
-        candidates = list(comp_scripts_path.glob("build_rpms.*"))
-        if len(candidates) != 1:
-            log.error(
-                f"found '{len(candidates)}' candidate build scripts in '{comp_scripts_path}', needs 1"
-            )
-            continue
-        build_script_path = candidates[0]
-
-        if (
-            not build_script_path.is_file()
-            or not build_script_path.stat().st_mode & stat.S_IXUSR
-        ):
-            log.error(
-                f"build script for component '{comp_name}' "
-                + f"at '{build_script_path}' is not a file or not executable"
-            )
+        build_script_path = _get_component_build_script(comp_name, comp_scripts_path)
+        if not build_script_path:
+            log.warning(f"build script not found for '{comp_name}'")
             continue
 
-        to_build[comp_name] = build_script_path
+        try:
+            comp_version = await _get_component_version(
+                comp_name, comp_scripts_path, comp_repo
+            )
+        except BuilderError as e:
+            msg = f"error building RPMs for '{comp_name}', unable to find version: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        to_build[comp_name] = _ComponentBuild(build_script_path, comp_version)
 
     try:
         async with asyncio.TaskGroup() as tg:
             tasks = {
                 name: tg.create_task(
                     _build_component(
-                        rpms_path, el_version, name, to_build[name], components[name]
+                        rpms_path,
+                        el_version,
+                        name,
+                        to_build[name].build_script,
+                        components[name],
+                        to_build[name].version,
                     )
                 )
                 for name in to_build.keys()
