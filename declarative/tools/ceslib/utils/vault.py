@@ -35,6 +35,8 @@ class Vault:
     addr: str
     client: hvac.Client
     transit: str | None
+    role_id: str
+    secret_id: str
 
     def __init__(
         self, addr: str, role_id: str, secret_id: str, *, transit: str | None = None
@@ -47,16 +49,18 @@ class Vault:
         if not secret_id:
             raise VaultError("missing secret id")
         self.transit = transit
+        self.role_id = role_id
+        self.secret_id = secret_id
 
-        self.login(role_id, secret_id)
+        self.login()
 
-    def login(self, role_id: str, secret_id: str) -> None:
+    def login(self) -> None:
         self.client = hvac.Client(url=self.addr)
 
         try:
             self.client.auth.approle.login(
-                role_id=role_id,
-                secret_id=secret_id,
+                role_id=self.role_id,
+                secret_id=self.secret_id,
                 use_token=True,
             )
             log.info("logged in to vault")
@@ -70,6 +74,11 @@ class Vault:
         return self.client.token
 
     def read_secret(self, path: str) -> dict[str, str]:
+        try:
+            self.login()
+        except VaultError as e:
+            raise VaultError(f"unable to login to read secret '{path}': {e}")
+
         try:
             res = self.client.secrets.kv.v2.read_secret_version(
                 path=path,
