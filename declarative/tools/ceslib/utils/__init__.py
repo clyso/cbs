@@ -13,6 +13,7 @@
 
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 from io import StringIO
@@ -29,15 +30,41 @@ class CommandError(CESError):
     pass
 
 
+def _sanitize_cmd(cmd: list[str]) -> list[str]:
+    sub_pattern = re.compile(r"(.*)(?:(--pass(?:phrase)[\s=]+)[^\s]+)")
+
+    sanitized: list[str] = []
+    next_secure = False
+    for c in cmd:
+        if c == "--passphrase" or c == "--pass":
+            next_secure = True
+            sanitized.append(c)
+            continue
+
+        if next_secure:
+            sanitized.append("****")
+            next_secure = False
+            continue
+
+        s = re.sub(sub_pattern, r"\1\2****", c)
+        sanitized.append(s)
+
+    return sanitized
+
+
 def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> tuple[int, str, str]:
+    log.debug(f"sync run '{_sanitize_cmd(cmd)}'")
     try:
         p = subprocess.run(cmd, env=env, capture_output=True)
     except OSError as e:
-        log.error(f"error running '{cmd}': {e}")
+        log.error(f"error running '{_sanitize_cmd(cmd)}': {e}")
         raise CESError()
 
     if p.returncode != 0:
-        log.error(f"error running '{cmd}': retcode = {p.returncode}, res: {p.stderr}")
+        log.error(
+            f"error running '{_sanitize_cmd(cmd)}': "
+            + f"retcode = {p.returncode}, res: {p.stderr}"
+        )
         return (p.returncode, "", p.stderr.decode("utf-8"))
 
     return (0, p.stdout.decode("utf-8"), p.stderr.decode("utf-8"))
@@ -81,7 +108,7 @@ async def async_run_cmd(
     reset_python_env: bool = False,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    log.debug(f"run '{cmd}'")
+    log.debug(f"async run '{_sanitize_cmd(cmd)}'")
 
     env: dict[str, str] = os.environ.copy()
     if reset_python_env:
