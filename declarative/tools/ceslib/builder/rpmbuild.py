@@ -113,7 +113,7 @@ def _setup_rpm_topdir(
     if version:
         comp_rpm_path = comp_rpm_path.joinpath(version).resolve()
 
-    comp_rpm_path.mkdir(exist_ok=True)
+    comp_rpm_path.mkdir(exist_ok=True, parents=True)
 
     for d in ["BUILD", "SOURCES", "RPMS", "SRPMS", "SPECS"]:
         comp_rpm_path.joinpath(d).mkdir(exist_ok=True)
@@ -131,13 +131,19 @@ async def _build_component(
     script_path: Path,
     repo_path: Path,
     version: str | None,
-) -> int:
+    *,
+    ccache_path: Path | None = None,
+    skip_build: bool = False,
+) -> tuple[int, Path]:
     log.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
     def _outcb(s: str) -> None:
         log.debug(s)
 
     comp_rpms_path = _setup_rpm_topdir(rpms_path, comp_name, version)
+
+    if skip_build:
+        return 1, comp_rpms_path
 
     dist_version = f".el{el_version}.clyso"
     cmd = [
@@ -150,10 +156,14 @@ async def _build_component(
     if version:
         cmd.append(version)
 
+    extra_env: dict[str, str] | None = None
+    if ccache_path is not None:
+        extra_env = {"CES_CCACHE_PATH": ccache_path.resolve().as_posix()}
+
     start = dt.now()
     try:
         rc, _, _ = await async_run_cmd(
-            cmd, outcb=_outcb, cwd=repo_path, reset_python_env=True
+            cmd, outcb=_outcb, cwd=repo_path, reset_python_env=True, extra_env=extra_env
         )
     except CommandError as e:
         msg = (
@@ -175,15 +185,21 @@ async def _build_component(
         log.error(f"error running build script for '{comp_name}'")
         raise BuilderError(f"error running build script for '{comp_name}'")
 
-    return delta
+    return delta, comp_rpms_path
 
 
 # build RPMs for the various components provided in 'components'.
 # relies on a 'build_rpms.sh' script that must be found in the
 # 'components_path' directory, for each specific component.
 async def build_rpms(
-    rpms_path: Path, el_version: int, components_path: Path, components: dict[str, Path]
-) -> None:
+    rpms_path: Path,
+    el_version: int,
+    components_path: Path,
+    components: dict[str, Path],
+    *,
+    ccache_path: Path | None = None,
+    skip_build: bool = False,
+) -> dict[str, Path]:
     if not components_path.exists():
         raise BuilderError(f"components path at '{components_path}' not found")
 
@@ -240,6 +256,8 @@ async def build_rpms(
                         to_build[name].build_script,
                         components[name],
                         to_build[name].version,
+                        ccache_path=ccache_path,
+                        skip_build=skip_build,
                     )
                 )
                 for name in to_build.keys()
@@ -252,8 +270,15 @@ async def build_rpms(
                 log.error(f"- {exc}")
         else:
             log.error(f"unexpected error building component RPMs: {e}")
+            for exc in e.exceptions:
+                log.error(f"- {exc}")
 
         raise BuilderError("error building component RPMs")
 
+    comps_rpms_paths: dict[str, Path] = {}
     for name, task in tasks.items():
-        log.info(f"built component '{name}' in {task.result()} seconds")
+        time_spent, comp_rpms_path = task.result()
+        log.info(f"built component '{name}' in {time_spent} seconds")
+        comps_rpms_paths[name] = comp_rpms_path
+
+    return comps_rpms_paths

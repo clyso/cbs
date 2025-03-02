@@ -17,6 +17,7 @@ from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
 from ceslib.builder.prepare import prepare
 from ceslib.builder.rpmbuild import build_rpms
+from ceslib.builder.signing import sign_rpms
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 from ceslib.versions.desc import VersionDescriptor
@@ -30,6 +31,8 @@ class Builder:
     components_path: Path
     upload: bool
     secrets: SecretsVaultMgr
+    ccache_path: Path | None
+    skip_build: bool
 
     def __init__(
         self,
@@ -40,12 +43,17 @@ class Builder:
         scratch_path: Path,
         secrets_path: Path,
         components_path: Path,
-        upload: bool,
+        *,
+        ccache_path: Path | None = None,
+        upload: bool = False,
+        skip_build: bool = False,
     ) -> None:
         self.desc = desc
         self.scratch_path = scratch_path
         self.components_path = components_path
         self.upload = upload
+        self.ccache_path = ccache_path
+        self.skip_build = skip_build
 
         try:
             self.secrets = SecretsVaultMgr(
@@ -69,9 +77,25 @@ class Builder:
         rpms_path = self.scratch_path.joinpath("rpms")
         rpms_path.mkdir(exist_ok=True)
 
-        await build_rpms(
-            rpms_path, self.desc.el_version, self.components_path, components
+        comp_rpms_paths = await build_rpms(
+            rpms_path,
+            self.desc.el_version,
+            self.components_path,
+            components,
+            ccache_path=self.ccache_path,
+            skip_build=self.skip_build,
         )
+
+        try:
+            await sign_rpms(self.secrets, comp_rpms_paths)
+        except BuilderError as e:
+            msg = f"error signing component RPMs: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+        except Exception as e:
+            msg = f"unknown error signing component RPMs: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
 
         pass
 

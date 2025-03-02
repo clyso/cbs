@@ -108,6 +108,24 @@ def main(debug: bool) -> None:
     ),
     required=True,
 )
+@click.option(
+    "--ccache-dir",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=False,
+)
+@click.option(
+    "--skip-build",
+    help="Skip building RPMs for components",
+    is_flag=True,
+    default=False,
+)
 def build(
     desc_path: Path,
     secrets_path: Path,
@@ -117,8 +135,11 @@ def build(
     vault_secret_id: str,
     scratch_dir: Path,
     components_dir: Path,
+    ccache_dir: Path | None,
+    skip_build: bool,
 ) -> None:
     log.info(f"build desc: {desc_path}, upload: {upload}")
+    log.info(f"with ccache path: {ccache_dir}")
 
     if not desc_path.exists():
         log.error(f"build descriptor does not exist at '{desc_path}'")
@@ -130,6 +151,24 @@ def build(
         sys.exit(1)
 
     our_dir = Path(sys.argv[0]).parent
+
+    podman_volumes = {
+        desc_path.resolve().as_posix(): f"/builder/{desc_path.name}",
+        our_dir.resolve().as_posix(): "/builder/tools",
+        scratch_dir.resolve().as_posix(): "/builder/scratch",
+        secrets_path.resolve().as_posix(): "/builder/secrets.json",
+        components_dir.resolve().as_posix(): "/builder/components",
+    }
+
+    podman_args: list[str] = ["--desc", f"/builder/{desc_path.name}"]
+
+    if ccache_dir:
+        ccache_dir_str = ccache_dir.resolve().as_posix()
+        podman_volumes[ccache_dir_str] = "/builder/ccache"
+        podman_args.extend(["--ccache-path", "/builder/ccache"])
+
+    if skip_build:
+        podman_args.append("--skip-build")
 
     try:
         loop = asyncio.new_event_loop()
@@ -144,18 +183,9 @@ def build(
                     if log.getEffectiveLevel() == logging.DEBUG
                     else "0",
                 },
-                volumes={
-                    desc_path.resolve().as_posix(): f"/builder/{desc_path.name}",
-                    our_dir.resolve().as_posix(): "/builder/tools",
-                    scratch_dir.resolve().as_posix(): "/builder/scratch",
-                    secrets_path.resolve().as_posix(): "/builder/secrets.json",
-                    components_dir.resolve().as_posix(): "/builder/components",
-                },
+                args=podman_args,
+                volumes=podman_volumes,
                 entrypoint="/builder/tools/ctr-build-entrypoint.sh",
-                args=[
-                    "--desc",
-                    f"/builder/{desc_path.name}",
-                ],
                 use_user_ns=False,
             )
         )
@@ -236,8 +266,26 @@ def build(
     required=True,
 )
 @click.option(
+    "--ccache-path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=False,
+)
+@click.option(
     "--upload",
     help="Upload artifacts to Clyso's S3",
+    is_flag=True,
+    default=False,
+)
+@click.option(
+    "--skip-build",
+    help="Skip building RPMs for components",
     is_flag=True,
     default=False,
 )
@@ -249,7 +297,9 @@ def ctr_build(
     scratch_dir: Path,
     components_dir: Path,
     secrets_path: Path,
+    ccache_path: Path | None,
     upload: bool,
+    skip_build: bool,
 ) -> None:
     log.debug(f"desc: {desc_path}")
     log.debug(f"vault addr: {vault_addr}")
@@ -275,7 +325,9 @@ def ctr_build(
         scratch_dir,
         secrets_path,
         components_dir,
-        upload,
+        upload=upload,
+        ccache_path=ccache_path,
+        skip_build=skip_build,
     )
 
     try:

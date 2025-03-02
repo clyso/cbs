@@ -43,22 +43,20 @@ def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> tuple[int, str
     return (0, p.stdout.decode("utf-8"), p.stderr.decode("utf-8"))
 
 
-def _reset_python_env() -> dict[str, str] | None:
+def _reset_python_env(env: dict[str, str]) -> dict[str, str]:
     log.debug("reset python env for command")
-
-    env = os.environ.copy()
 
     python3_loc = shutil.which("python3")
     if not python3_loc:
         print("python3 executable not found")
-        return None
+        return env
 
     log.debug(f"python3 location: {python3_loc}")
 
     python3_path = Path(python3_loc)
     if python3_path.parent.full_match("/usr/bin"):
         log.debug("nothing to do to python3 path")
-        return None
+        return env
 
     orig_path = env.get("PATH")
     assert orig_path
@@ -81,12 +79,16 @@ async def async_run_cmd(
     timeout: float = 2 * 60 * 60,  # 2h in seconds, because why not.
     cwd: Path | None = None,
     reset_python_env: bool = False,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
     log.debug(f"run '{cmd}'")
 
-    env: dict[str, str] | None = None
+    env: dict[str, str] = os.environ.copy()
     if reset_python_env:
-        env = _reset_python_env()
+        env = _reset_python_env(env)
+
+    if extra_env:
+        env.update(extra_env)
 
     p = await asyncio.create_subprocess_exec(
         *cmd,

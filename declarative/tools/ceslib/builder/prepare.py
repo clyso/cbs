@@ -75,6 +75,7 @@ async def prepare_builder() -> None:
                 "pinentry",
                 "s3cmd",
                 "jq",
+                "ccache",
             ],
             outcb=_cb,
         )

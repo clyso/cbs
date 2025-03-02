@@ -13,20 +13,25 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import logging
 import os
 import random
 import re
+import shutil
 import string
-from collections.abc import Generator
-from pathlib import Path
 import subprocess
 import tempfile
+from collections.abc import Generator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import override
 
 import pydantic
 from ceslib.errors import CESError
+from ceslib.utils import log as parent_logger
 from ceslib.utils.vault import Vault, VaultError
+
+log = parent_logger.getChild("secrets")
 
 
 class SecretsError(CESError):
@@ -70,9 +75,14 @@ class GPGPrivateKeySecrets(VaultSecrets):
     passphrase: str
 
 
+class GPGExtras(pydantic.BaseModel):
+    email: str
+
+
 class GPGSecrets(pydantic.BaseModel):
     public: GPGPublicKeySecrets
     private: GPGPrivateKeySecrets
+    extras: GPGExtras
 
 
 class HarborSecrets(VaultSecrets):
@@ -115,6 +125,7 @@ class GitSSHSecretCtx:
 class SecretsVaultMgr:
     vault: Vault
     secrets: Secrets
+    log: logging.Logger
 
     def __init__(
         self,
@@ -130,6 +141,7 @@ class SecretsVaultMgr:
             vault_addr, vault_role_id, vault_secret_id, transit=vault_transit
         )
         self.secrets = Secrets.read(secrets_path)
+        self.log = log.getChild("secrets-vault-mgr")
 
     @contextmanager
     def git_url_for(self, url: str) -> Generator[str]:
@@ -271,7 +283,48 @@ Host {remote_name}
         return hostname, access_id, secret_id
 
     @contextmanager
-    def gpg_private_key_file(self) -> Generator[tuple[str, str]]:
+    def gpg_private_keyring(self) -> Generator[tuple[Path, str, str]]:
+        with self.gpg_private_key_file() as pvt:
+            self.log.debug("obtained gpg private key")
+            pvt_key_file = pvt[0]
+            passphrase = pvt[1]
+            keyring_path = Path(tempfile.mkdtemp())
+            keyring_path.chmod(0o700)
+
+            self.log.debug(f"import gpg private key from '{pvt_key_file}'")
+            cmd = ["gpg", "--import", "--batch", pvt_key_file.resolve().as_posix()]
+            env = os.environ.copy()
+            env["GNUPGHOME"] = keyring_path.resolve().as_posix()
+            try:
+                p = subprocess.run(cmd, capture_output=True, env=env)
+                self.log.debug(f"stdout: {p.stdout}")
+                self.log.debug(f"stderr: {p.stderr}")
+            except Exception as e:
+                msg = f"error importing gpg private key: {e}"
+                self.log.error(msg)
+                raise SecretsVaultError(msg)
+
+            if p.returncode != 0:
+                log.error(
+                    f"error importing gpg private key from '{pvt_key_file}': {p.stderr}"
+                )
+                raise SecretsVaultError(f"error importing gpg private key: {p.stderr}")
+
+            self.log.debug(
+                f"return keyring at '{keyring_path}', "
+                + f"email '{self.secrets.gpg.extras.email}'"
+            )
+            yield keyring_path, passphrase, self.secrets.gpg.extras.email
+
+            try:
+                shutil.rmtree(keyring_path)
+            except Exception as e:
+                msg = f"error cleaning up keyring at '{keyring_path}': {e}"
+                log.error(msg)
+                raise SecretsVaultError(msg)
+
+    @contextmanager
+    def gpg_private_key_file(self) -> Generator[tuple[Path, str]]:
         # obtain private key from vault
         try:
             gpg_pvt_secret = self.vault.read_secret(self.secrets.gpg.private.vault_key)
@@ -284,15 +337,26 @@ Host {remote_name}
         except KeyError as e:
             raise SecretsVaultError(f"error obtaining GPG private key credentials: {e}")
 
-        _, gpg_pvt_path = tempfile.mkstemp()
-        with Path(gpg_pvt_path).open("w") as f:
-            n = f.write(gpg_pvt_key)
+        try:
+            _, gpg_pvt_file = tempfile.mkstemp()
+            gpg_pvt_path = Path(gpg_pvt_file)
+            with gpg_pvt_path.open("w") as f:
+                n = f.write(gpg_pvt_key)
+        except Exception as e:
+            msg = f"error writing gpg private key to file: {e}"
+            self.log.error(msg)
+            raise SecretsVaultError(msg)
 
         yield gpg_pvt_path, gpg_pvt_passphrase
 
-        with Path(gpg_pvt_path).open("bw") as f:
-            _ = f.write(random.randbytes(n))
-        os.unlink(gpg_pvt_path)
+        try:
+            with gpg_pvt_path.open("bw") as f:
+                _ = f.write(random.randbytes(n))
+            gpg_pvt_path.unlink()
+        except Exception as e:
+            msg = f"error cleaning up gpg private key file: {e}"
+            self.log.error(msg)
+            raise SecretsVaultError(msg)
 
     @contextmanager
     def gpg_public_key_file(self) -> Generator[str]:
