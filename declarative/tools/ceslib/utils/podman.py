@@ -42,6 +42,7 @@ async def podman_run(
     entrypoint: str | None = None,
     use_user_ns: bool = False,
     timeout: float = 2 * 60 * 60,  # 2 hours, because why not.
+    use_host_network: bool = False,
 ) -> tuple[int, str, str]:
     cmd = ["podman", "run", "--security-opt", "label=disable"]
 
@@ -55,6 +56,9 @@ async def podman_run(
     if volumes is not None:
         for src, dst in volumes.items():
             cmd.extend(["--volume", f"{src}:{dst}"])
+
+    if use_host_network:
+        cmd.extend(["--network", "host"])
 
     if entrypoint is not None:
         cmd.extend(["--entrypoint", entrypoint])

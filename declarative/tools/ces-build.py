@@ -187,6 +187,7 @@ def build(
                 volumes=podman_volumes,
                 entrypoint="/builder/tools/ctr-build-entrypoint.sh",
                 use_user_ns=False,
+                use_host_network=True,
             )
         )
         log.debug(f"podman run: rc = {retcode}")
