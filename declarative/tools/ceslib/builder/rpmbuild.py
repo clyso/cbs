@@ -145,11 +145,10 @@ async def _build_component(
     if skip_build:
         return 1, comp_rpms_path
 
-    dist_version = f".el{el_version}.clyso"
     cmd = [
         script_path.resolve().as_posix(),
         repo_path.resolve().as_posix(),
-        dist_version,
+        str(el_version),
         comp_rpms_path.resolve().as_posix(),
     ]
 
