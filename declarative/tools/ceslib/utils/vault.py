@@ -52,11 +52,10 @@ class Vault:
         self.role_id = role_id
         self.secret_id = secret_id
 
+        self.client = hvac.Client(url=self.addr)
         self.login()
 
     def login(self) -> None:
-        self.client = hvac.Client(url=self.addr)
-
         try:
             self.client.auth.approle.login(
                 role_id=self.role_id,
