@@ -16,7 +16,7 @@ import re
 from datetime import datetime as dt
 from pathlib import Path
 
-from ceslib.builder import BuilderError
+from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
 from ceslib.utils import CommandError, async_run_cmd, git
 from ceslib.utils.secrets import SecretsVaultMgr
@@ -237,6 +237,56 @@ async def prepare_components(
 
         return repo_path
 
+    # install dependencies for all components, sequentially.
+    async def _install_deps(repo_paths: dict[str, Path]) -> None:
+        for comp in components:
+            comp_scripts_path = get_component_scripts_path(components_path, comp.name)
+            if not comp_scripts_path:
+                log.warning(f"scripts for component '{comp.name}' not found, continue")
+                continue
+
+            install_deps_script = get_script_path(comp_scripts_path, "install_deps.*")
+            if not install_deps_script:
+                log.info(f"no dependencies to install for component '{comp.name}'")
+                continue
+
+            if comp.name not in repo_paths:
+                log.error(
+                    f"unable to find repository for component '{comp.name}', continue"
+                )
+                continue
+
+            clog = log.getChild(f"comp[{comp.name}]")
+
+            def _comp_out(s: str) -> None:
+                clog.debug(s)
+
+            cmd = [
+                install_deps_script.resolve().as_posix(),
+                repo_paths[comp.name].resolve().as_posix(),
+            ]
+
+            try:
+                rc, _, stderr = await async_run_cmd(
+                    cmd,
+                    outcb=_comp_out,
+                    cwd=repo_paths[comp.name],
+                    reset_python_env=True,
+                )
+            except CommandError as e:
+                msg = f"error installing dependencies for '{comp.name}': {e}"
+                clog.error(msg)
+                raise BuilderError(msg)
+            except Exception as e:
+                msg = f"unknown error installing dependencies for '{comp.name}': {e}"
+                clog.error(msg)
+                raise BuilderError(msg)
+
+            if rc != 0:
+                msg = f"error installing dependencies for '{comp.name}': {stderr}"
+                clog.error(msg)
+                raise BuilderError(msg)
+
     try:
         async with asyncio.TaskGroup() as tg:
             task_dict = {
@@ -250,7 +300,16 @@ async def prepare_components(
                 log.error(f"- {exc}")
         raise BuilderError("error preparing components")
 
-    return {name: task.result() for name, task in task_dict.items()}
+    repo_paths = {name: task.result() for name, task in task_dict.items()}
+
+    try:
+        await _install_deps(repo_paths)
+    except BuilderError as e:
+        msg = f"error installing component dependencies: {e}"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    return repo_paths
 
 
 async def prepare(

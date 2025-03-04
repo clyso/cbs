@@ -11,6 +11,8 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from pathlib import Path
+import stat
 from ceslib.errors import CESError
 from ceslib.logging import log as root_logger
 
@@ -19,3 +21,41 @@ log = root_logger.getChild("builder")
 
 class BuilderError(CESError):
     pass
+
+
+def get_component_scripts_path(
+    components_path: Path, component_name: str
+) -> Path | None:
+    comp_path = components_path.joinpath(component_name)
+    if not comp_path.exists():
+        log.warning(
+            f"component path for '{component_name}' "
+            + f"not found in '{components_path}'"
+        )
+        return None
+
+    comp_scripts_path = comp_path.joinpath("scripts")
+    if not comp_scripts_path.exists():
+        log.warning(
+            f"component scripts path for '{component_name}' "
+            + f"not found in '{comp_path}'"
+        )
+        return None
+
+    return comp_scripts_path
+
+
+def get_script_path(scripts_path: Path, glob: str) -> Path | None:
+    candidates = list(scripts_path.glob(glob))
+    if len(candidates) != 1:
+        log.error(
+            f"found '{len(candidates)}' candidate build scripts in "
+            + f"'{scripts_path}' for glob '{glob}', needs 1"
+        )
+        return None
+
+    script_path = candidates[0]
+    if not script_path.is_file() or not script_path.stat().st_mode & stat.S_IXUSR:
+        log.error(f"script at '{script_path}' either not a file or not executable")
+        return None
+    return script_path

@@ -13,59 +13,20 @@
 
 
 import asyncio
-import stat
 from datetime import datetime as dt
 from pathlib import Path
 
-from ceslib.builder import BuilderError
+from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
 from ceslib.utils import CommandError, async_run_cmd
 
 log = parent_logger.getChild("rpmbuild")
 
 
-def _get_component_scripts_path(
-    components_path: Path, component_name: str
-) -> Path | None:
-    comp_path = components_path.joinpath(component_name)
-    if not comp_path.exists():
-        log.warning(
-            f"component path for '{component_name}' "
-            + f"not found in '{components_path}'"
-        )
-        return None
-
-    comp_scripts_path = comp_path.joinpath("scripts")
-    if not comp_scripts_path.exists():
-        log.warning(
-            f"component scripts path for '{component_name}' "
-            + f"not found in '{comp_path}'"
-        )
-        return None
-
-    return comp_scripts_path
-
-
-def _get_script_path(scripts_path: Path, glob: str) -> Path | None:
-    candidates = list(scripts_path.glob(glob))
-    if len(candidates) != 1:
-        log.error(
-            f"found '{len(candidates)}' candidate build scripts in "
-            + f"'{scripts_path}' for glob '{glob}', needs 1"
-        )
-        return None
-
-    script_path = candidates[0]
-    if not script_path.is_file() or not script_path.stat().st_mode & stat.S_IXUSR:
-        log.error(f"script at '{script_path}' either not a file or not executable")
-        return None
-    return script_path
-
-
 async def _get_component_version(
     component_name: str, component_scripts_path: Path, repo_path: Path
 ) -> str | None:
-    version_script_path = _get_script_path(component_scripts_path, "get_version.*")
+    version_script_path = get_script_path(component_scripts_path, "get_version.*")
     if not version_script_path:
         log.error(
             f"unable to find 'get_version' script for component '{component_name}'"
@@ -98,7 +59,7 @@ async def _get_component_version(
 def _get_component_build_script(
     component_name: str, component_scripts_path: Path
 ) -> Path | None:
-    build_script_path = _get_script_path(component_scripts_path, "build_rpms.*")
+    build_script_path = get_script_path(component_scripts_path, "build_rpms.*")
     if not build_script_path:
         log.error(f"unable to find build script for component '{component_name}'")
         return None
@@ -135,10 +96,11 @@ async def _build_component(
     ccache_path: Path | None = None,
     skip_build: bool = False,
 ) -> tuple[int, Path]:
-    log.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
+    mlog = log.getChild(f"comp[{comp_name}]")
+    mlog.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
     def _outcb(s: str) -> None:
-        log.debug(s)
+        mlog.debug(s)
 
     comp_rpms_path = _setup_rpm_topdir(rpms_path, comp_name, version)
 
@@ -169,19 +131,19 @@ async def _build_component(
             f"error running build script for '{comp_name}' "
             + f"with '{script_path}': {e}"
         )
-        log.error(msg)
+        mlog.error(msg)
         raise BuilderError(msg)
     except Exception as e:
         msg = (
             f"unknown error running build script for '{comp_name}' "
             + f"with '{script_path}': {e}"
         )
-        log.error(msg)
+        mlog.error(msg)
         raise BuilderError(msg)
     delta = (dt.now() - start).seconds
 
     if rc != 0:
-        log.error(f"error running build script for '{comp_name}'")
+        mlog.error(f"error running build script for '{comp_name}'")
         raise BuilderError(f"error running build script for '{comp_name}'")
 
     return delta, comp_rpms_path
@@ -220,7 +182,7 @@ async def build_rpms(
             )
             continue
 
-        comp_scripts_path = _get_component_scripts_path(components_path, comp_name)
+        comp_scripts_path = get_component_scripts_path(components_path, comp_name)
         if not comp_scripts_path:
             log.warning(
                 f"component scripts path for '{comp_name}' "
