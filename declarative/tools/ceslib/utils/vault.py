@@ -15,6 +15,8 @@
 # pyright: reportExplicitAny=false
 # pyright: reportUnknownVariableType=false
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import override
 
 import hvac
@@ -33,7 +35,6 @@ class VaultError(CESError):
 
 class Vault:
     addr: str
-    client: hvac.Client
     transit: str | None
     role_id: str
     secret_id: str
@@ -52,12 +53,11 @@ class Vault:
         self.role_id = role_id
         self.secret_id = secret_id
 
-        self.client = hvac.Client(url=self.addr)
-        self.login()
-
-    def login(self) -> None:
+    @contextmanager
+    def client(self) -> Generator[hvac.Client]:
+        client = hvac.Client(url=self.addr)
         try:
-            self.client.auth.approle.login(
+            client.auth.approle.login(
                 role_id=self.role_id,
                 secret_id=self.secret_id,
                 use_token=True,
@@ -68,23 +68,17 @@ class Vault:
         except Exception:
             raise VaultError("error logging in to vault")
 
-    @property
-    def token(self) -> str:
-        return self.client.token
+        yield client
 
     def read_secret(self, path: str) -> dict[str, str]:
         try:
-            self.login()
-        except VaultError as e:
-            raise VaultError(f"unable to login to read secret '{path}': {e}")
-
-        try:
-            res = self.client.secrets.kv.v2.read_secret_version(
-                path=path,
-                mount_point="ces-kv",
-                raise_on_deleted_version=False,
-            )
-            log.debug(f"obtained secret '{path}' from vault")
+            with self.client() as client:
+                res = client.secrets.kv.v2.read_secret_version(
+                    path=path,
+                    mount_point="ces-kv",
+                    raise_on_deleted_version=False,
+                )
+                log.debug(f"obtained secret '{path}' from vault")
         except hvac.exceptions.Forbidden:
             raise VaultError("permission defined obtaining secret")
         except Exception as e:

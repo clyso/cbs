@@ -41,11 +41,14 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
     vault_transit = secrets.vault.transit
     assert vault_transit is not None
 
+    with secrets.vault.client() as client:
+        vault_token = client.token
+
     env = os.environ.copy()
     env.update(
         {
             "VAULT_ADDR": secrets.vault.addr,
-            "VAULT_TOKEN": secrets.vault.token,
+            "VAULT_TOKEN": vault_token,
             "TRANSIT_SECRET_ENGINE_PATH": vault_transit,
         }
     )
