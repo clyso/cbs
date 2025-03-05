@@ -16,8 +16,10 @@ from pathlib import Path
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
 from ceslib.builder.prepare import prepare
+from ceslib.builder.release import release_desc_build, release_desc_upload
 from ceslib.builder.rpmbuild import build_rpms
 from ceslib.builder.signing import sign_rpms
+from ceslib.builder.upload import s3_upload_rpms
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 from ceslib.versions.desc import VersionDescriptor
@@ -45,7 +47,7 @@ class Builder:
         components_path: Path,
         *,
         ccache_path: Path | None = None,
-        upload: bool = False,
+        upload: bool = True,
         skip_build: bool = False,
     ) -> None:
         self.desc = desc
@@ -86,6 +88,7 @@ class Builder:
             skip_build=self.skip_build,
         )
 
+        log.info("sign RPMs")
         try:
             await sign_rpms(self.secrets, comp_rpms_paths)
         except BuilderError as e:
@@ -97,6 +100,36 @@ class Builder:
             log.error(msg)
             raise BuilderError(msg)
 
-        pass
+        if not self.upload:
+            return
+
+        log.info(f"upload RPMs: {self.upload}")
+        try:
+            s3_comp_loc = await s3_upload_rpms(
+                self.secrets, comp_rpms_paths, self.desc.el_version
+            )
+        except BuilderError as e:
+            msg = f"error uploading RPMs to S3: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+        except Exception as e:
+            msg = f"unknown error uploading RPMs to S3: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        log.info(f"create release descriptor for '{self.desc.version}'")
+        release_desc = await release_desc_build(
+            self.desc, self.components_path, s3_comp_loc
+        )
+
+        try:
+            await release_desc_upload(self.secrets, release_desc)
+        except BuilderError as e:
+            msg = (
+                "error uploading release descriptor for version "
+                + f"'{release_desc.version}' to S3: {e}"
+            )
+            log.error(msg)
+            raise BuilderError(msg)
 
     pass

@@ -23,6 +23,15 @@ from ceslib.utils import CommandError, async_run_cmd
 log = parent_logger.getChild("rpmbuild")
 
 
+class ComponentBuild:
+    version: str
+    rpms_path: Path
+
+    def __init__(self, version: str, rpms_path: Path) -> None:
+        self.version = version
+        self.rpms_path = rpms_path
+
+
 async def _get_component_version(
     component_name: str, component_scripts_path: Path, repo_path: Path
 ) -> str | None:
@@ -91,7 +100,7 @@ async def _build_component(
     comp_name: str,
     script_path: Path,
     repo_path: Path,
-    version: str | None,
+    version: str,
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
@@ -160,19 +169,19 @@ async def build_rpms(
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
-) -> dict[str, Path]:
+) -> dict[str, ComponentBuild]:
     if not components_path.exists():
         raise BuilderError(f"components path at '{components_path}' not found")
 
-    class _ComponentBuild:
+    class _ToBuildComponent:
         build_script: Path
-        version: str | None
+        version: str
 
-        def __init__(self, build_script: Path, version: str | None) -> None:
+        def __init__(self, build_script: Path, version: str) -> None:
             self.build_script = build_script
             self.version = version
 
-    to_build: dict[str, _ComponentBuild] = {}
+    to_build: dict[str, _ToBuildComponent] = {}
     for comp_name, comp_repo in components.items():
         comp_path = components_path.joinpath(comp_name)
         if not comp_path.exists():
@@ -204,7 +213,12 @@ async def build_rpms(
             log.error(msg)
             raise BuilderError(msg)
 
-        to_build[comp_name] = _ComponentBuild(build_script_path, comp_version)
+        if not comp_version:
+            msg = f"unable to obtain version for '{comp_name}'"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        to_build[comp_name] = _ToBuildComponent(build_script_path, comp_version)
 
     try:
         async with asyncio.TaskGroup() as tg:
@@ -236,10 +250,10 @@ async def build_rpms(
 
         raise BuilderError("error building component RPMs")
 
-    comps_rpms_paths: dict[str, Path] = {}
+    comps_rpms_paths: dict[str, ComponentBuild] = {}
     for name, task in tasks.items():
         time_spent, comp_rpms_path = task.result()
         log.info(f"built component '{name}' in {time_spent} seconds")
-        comps_rpms_paths[name] = comp_rpms_path
+        comps_rpms_paths[name] = ComponentBuild(to_build[name].version, comp_rpms_path)
 
     return comps_rpms_paths

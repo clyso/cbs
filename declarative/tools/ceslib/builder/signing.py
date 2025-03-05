@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
+from ceslib.builder.rpmbuild import ComponentBuild
 from ceslib.utils import CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
 
@@ -91,7 +92,7 @@ async def _sign_component_rpms(
 
 
 async def sign_rpms(
-    secrets: SecretsVaultMgr, components_rpms_paths: dict[str, Path]
+    secrets: SecretsVaultMgr, components_rpms_paths: dict[str, ComponentBuild]
 ) -> None:
     log.info(f"sign rpms for {components_rpms_paths.keys()}")
     try:
@@ -105,7 +106,9 @@ async def sign_rpms(
             async with asyncio.TaskGroup() as tg:
                 tasks = {
                     name: tg.create_task(
-                        _sign_component_rpms(p, keyring_path, passphrase, email)
+                        _sign_component_rpms(
+                            p.rpms_path, keyring_path, passphrase, email
+                        )
                     )
                     for name, p in components_rpms_paths.items()
                 }

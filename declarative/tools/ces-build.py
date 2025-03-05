@@ -61,10 +61,10 @@ def main(debug: bool) -> None:
     required=True,
 )
 @click.option(
-    "--upload",
+    "--upload/--no-upload",
     help="Upload artifacts to Clyso's S3",
     is_flag=True,
-    default=False,
+    default=True,
 )
 @click.option(
     "--vault-addr",
@@ -169,6 +169,9 @@ def build(
 
     if skip_build:
         podman_args.append("--skip-build")
+
+    if upload:
+        podman_args.append("--upload")
 
     try:
         loop = asyncio.new_event_loop()
@@ -279,10 +282,10 @@ def build(
     required=False,
 )
 @click.option(
-    "--upload",
+    "--upload/--no-upload",
     help="Upload artifacts to Clyso's S3",
     is_flag=True,
-    default=False,
+    default=True,
 )
 @click.option(
     "--skip-build",
