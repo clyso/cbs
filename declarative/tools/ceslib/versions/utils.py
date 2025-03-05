@@ -18,18 +18,20 @@ from ceslib.errors import MalformedVersionError
 
 
 # obtain major version from supplied CES version.
-# must be in the format 'ces-vXX.YY[.mm].*'
+# it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
+# with 'vXX.*', such as ceph upstream versions, and other versions.
 def get_major_version(v: str) -> str:
-    m = re.match(r"^(ces-v\d{2}\.\d{2}).*", v)
+    m = re.match(r"^((?:ces-)?v\d{2}\.\d+).*", v)
     if m is None:
         raise MalformedVersionError(v)
     return m.group(1)
 
 
-# obtain minor version from supplied CES version.
-# must be in the format 'ces-vXX.YY.mm.*'
+# obtain minor version from supplied version.
+# it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
+# with 'vXX.*', such as ceph upstream versions, and other versions.
 def get_minor_version(v: str) -> str | None:
-    m = re.match(r"^(ces-v\d{2}\.\d{2}\.\d+).*", v)
+    m = re.match(r"^((?:ces-v)?\d{2}\.\d+\.\d+).*", v)
     if m is None:
         return None
     return m.group(1)
