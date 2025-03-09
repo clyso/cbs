@@ -4,3 +4,5 @@ pydantic_core==2.27.2
 hvac==2.3.0
 aioboto3==13.3.0
 types-aioboto3 [full] == 13.3.0.post1
+PyYAML==6.0.2
+aiohttp==3.11.13

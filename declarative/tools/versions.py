@@ -21,7 +21,12 @@ import sys
 from typing import cast
 
 import click
-from ceslib.versions.desc import VersionComponent, VersionDescriptor, VersionSignedOffBy
+from ceslib.versions.desc import (
+    VersionComponent,
+    VersionDescriptor,
+    VersionImage,
+    VersionSignedOffBy,
+)
 from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_image_desc
 from ceslib.logging import log as root_logger
@@ -67,7 +72,7 @@ def main(debug: bool) -> None:
 
 
 def _validate_version(v: str) -> bool:
-    return re.match(r"^\d{2}\.\d{2}\.\d+$", v) is not None
+    return re.match(r"^.*v\d{2}\.\d+\.\d+$", v) is not None
 
 
 def _obtain_type(s: str) -> tuple[str, int] | None:
@@ -141,6 +146,9 @@ def _parse_component_overrides(overrides: list[str]) -> dict[str, str]:
 
 
 def _get_build_type(types_lst: list[tuple[str, int]]) -> BuildType:
+    if len(types_lst) == 0:
+        return BuildType.RELEASE
+
     what: BuildType | None = None
     for t, _ in types_lst:
         assert t in release_types
@@ -161,6 +169,8 @@ def _get_build_type(types_lst: list[tuple[str, int]]) -> BuildType:
 _create_help_msg = f"""Creates a new version descriptor file.
 
 Requires a VERSION to be provided, which this descriptor describes.
+VERSION must include the "CES" prefix if a CES version is intended. Otherwise,
+it can be free-form as long as it starts with a 'v' (such as, 'v18.2.4').
 
 Requires at least one '--type TYPE=N' pair, specifying which type of release
 the version refers to.
@@ -180,7 +190,7 @@ Available components: {", ".join(component_repos.keys())}.
     type=str,
     multiple=True,
     help="Type of build, and its iteration",
-    required=True,
+    required=False,
     metavar="TYPE=N",
 )
 @click.option(
@@ -219,6 +229,29 @@ Available components: {", ".join(component_repos.keys())}.
     default=9,
     metavar="VERSION",
 )
+@click.option(
+    "--registry",
+    type=str,
+    help="Registry for this release's image",
+    required=False,
+    default="harbor.clyso.com",
+    metavar="URL",
+)
+@click.option(
+    "--image-name",
+    type=str,
+    help="Name for this release's image",
+    required=False,
+    default="ces/ceph/ceph",
+    metavar="NAME",
+)
+@click.option(
+    "--image-tag",
+    type=str,
+    help="Tag for this release's image",
+    required=False,
+    metavar="TAG",
+)
 def build_create(
     version: str,
     build_types: list[str],
@@ -226,20 +259,15 @@ def build_create(
     component_overrides: list[str],
     distro: str,
     el_version: int,
+    registry: str,
+    image_name: str,
+    image_tag: str | None,
 ):
-    if len(build_types) == 0:
-        log.error("no build type provided")
-        sys.exit(errno.EINVAL)
-
     if not _validate_version(version):
         log.error(f"malformed version '{version}'")
         sys.exit(errno.EINVAL)
 
     types_lst = _parse_types(build_types)
-    if len(types_lst) == 0:
-        log.error("missing valid build type")
-        sys.exit(errno.EINVAL)
-
     build_type_dir_name = (
         "testing" if _get_build_type(types_lst) == BuildType.TESTING else "releases"
     )
@@ -260,13 +288,19 @@ def build_create(
             log.error(f"missing component '{c}' for override")
             sys.exit(errno.ENOENT)
 
-    ces_version_types = "-".join([f"{t}.{n}" for t, n in types_lst])
-    raw_version_str = f"{version}-{ces_version_types}"
-    ces_version = f"ces-v{raw_version_str}"
+    version_types = "-".join([f"{t}.{n}" for t, n in types_lst])
+    version_str = f"{version}" + (f"-{version_types}" if version_types else "")
     version_types_title = " ".join(
         [f"{release_types[t][1]} #{n}" for t, n in types_lst]
     )
-    ces_version_title = f"Release CES v{version}, {version_types_title}"
+    version_title = f"Release {version}" + (
+        f", {version_types_title}" if version_types_title else ""
+    )
+
+    print(f"version types: {version_types}")
+    print(f"version str: {version_str}")
+    print(f"version types title: {version_types_title}")
+    print(f"version title: {version_title}")
 
     user_name, user_email = get_git_user()
 
@@ -274,10 +308,10 @@ def build_create(
     version_path = (
         repo_path.joinpath("versions")
         .joinpath(build_type_dir_name)
-        .joinpath(f"{ces_version}.json")
+        .joinpath(f"{version_str}.json")
     )
     if version_path.exists():
-        log.error(f"version for {ces_version} already exists")
+        log.error(f"version for {version_str} already exists")
         sys.exit(errno.EEXIST)
 
     version_path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,12 +326,19 @@ def build_create(
             VersionComponent(name=comp_name, repo=comp_repo, version=comp_version)
         )
 
+    image_tag_str = image_tag if image_tag else version_str
+
     desc = VersionDescriptor(
-        version=ces_version,
-        title=ces_version_title,
+        version=version_str,
+        title=version_title,
         signed_off_by=VersionSignedOffBy(
             user=user_name,
             email=user_email,
+        ),
+        image=VersionImage(
+            registry=registry,
+            name=image_name,
+            tag=image_tag_str,
         ),
         components=component_res,
         distro=distro,
@@ -316,11 +357,11 @@ def build_create(
 
     # check if image descriptor for this version exists
     try:
-        _ = get_image_desc(raw_version_str)
+        _ = get_image_desc(version_str)
     except NoSuchVersionError:
-        log.warning(f"image descriptor for version '{raw_version_str}' missing")
+        log.warning(f"image descriptor for version '{version_str}' missing")
     except CESError as e:
-        log.error(f"error obtaining image descriptor for '{raw_version_str}': {e}")
+        log.error(f"error obtaining image descriptor for '{version_str}': {e}")
 
 
 if __name__ == "__main__":

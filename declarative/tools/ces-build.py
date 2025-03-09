@@ -109,6 +109,18 @@ def main(debug: bool) -> None:
     required=True,
 )
 @click.option(
+    "--containers-dir",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+)
+@click.option(
     "--ccache-dir",
     type=click.Path(
         exists=True,
@@ -135,6 +147,7 @@ def build(
     vault_secret_id: str,
     scratch_dir: Path,
     components_dir: Path,
+    containers_dir: Path,
     ccache_dir: Path | None,
     skip_build: bool,
 ) -> None:
@@ -158,6 +171,7 @@ def build(
         scratch_dir.resolve().as_posix(): "/builder/scratch",
         secrets_path.resolve().as_posix(): "/builder/secrets.json",
         components_dir.resolve().as_posix(): "/builder/components",
+        containers_dir.resolve().as_posix(): "/builder/containers",
     }
 
     podman_args: list[str] = ["--desc", f"/builder/{desc_path.name}"]
@@ -258,6 +272,18 @@ def build(
     required=True,
 )
 @click.option(
+    "--containers-dir",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+)
+@click.option(
     "--secrets-path",
     type=click.Path(
         exists=True,
@@ -300,6 +326,7 @@ def ctr_build(
     vault_secret_id: str,
     scratch_dir: Path,
     components_dir: Path,
+    containers_dir: Path,
     secrets_path: Path,
     ccache_path: Path | None,
     upload: bool,
@@ -329,6 +356,7 @@ def ctr_build(
         scratch_dir,
         secrets_path,
         components_dir,
+        containers_dir,
         upload=upload,
         ccache_path=ccache_path,
         skip_build=skip_build,

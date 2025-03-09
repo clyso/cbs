@@ -39,14 +39,14 @@ class ImageDescriptor(pydantic.BaseModel):
 
 
 def get_image_desc(version: str) -> ImageDescriptor:
-    m = re.match(r"(\d+\.\d+\.\d+).*", version)
+    m = re.match(r".*v(\d+\.\d+\.\d+).*", version)
     if m is None:
         raise MalformedVersionError()
 
     candidates: list[Path] = []
 
     def _file_matches(f: str) -> bool:
-        return f.startswith(f"ces-{m[1]}") and f.endswith(".json")
+        return re.match(r"^.*{m[1]}.*.json", f) is not None
 
     def _gen_candidates(base_path: Path, files: list[str]) -> list[Path]:
         return [base_path.joinpath(f) for f in files if _file_matches(f)]
@@ -62,8 +62,6 @@ def get_image_desc(version: str) -> ImageDescriptor:
 
     log.debug(f"candidates: {candidates}")
 
-    ces_version = f"ces-v{version}"
-
     desc: ImageDescriptor | None = None
     found_at: Path | None = None
     for candidate in candidates:
@@ -74,10 +72,10 @@ def get_image_desc(version: str) -> ImageDescriptor:
             log.debug(f"error loading desc file: {e}")
             raise e
 
-        if ces_version in desc.releases:
+        if version in desc.releases:
             if found_at is not None:
                 log.error(
-                    f"error: potential conflict for version {ces_version} "
+                    f"error: potential conflict for version {version} "
                     + f"between {found_at} and {candidate}"
                 )
                 raise ImageDescriptorError()

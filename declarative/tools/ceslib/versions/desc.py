@@ -28,6 +28,12 @@ class VersionSignedOffBy(pydantic.BaseModel):
     email: str
 
 
+class VersionImage(pydantic.BaseModel):
+    registry: str
+    name: str
+    tag: str
+
+
 class VersionComponent(pydantic.BaseModel):
     name: str
     repo: str
@@ -38,6 +44,7 @@ class VersionDescriptor(pydantic.BaseModel):
     version: str
     title: str
     signed_off_by: VersionSignedOffBy
+    image: VersionImage
     components: list[VersionComponent]
     distro: str
     el_version: int

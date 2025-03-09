@@ -47,4 +47,5 @@ python3 "${ourpath}"/ces-build.py ${dbg} ctr-build \
   --scratch-dir /builder/scratch \
   --secrets-path /builder/secrets.json \
   --components-dir /builder/components \
+  --containers-dir /builder/containers \
   $* || exit 1

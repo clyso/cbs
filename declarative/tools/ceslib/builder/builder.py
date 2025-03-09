@@ -20,6 +20,8 @@ from ceslib.builder.release import release_desc_build, release_desc_upload
 from ceslib.builder.rpmbuild import build_rpms
 from ceslib.builder.signing import sign_rpms
 from ceslib.builder.upload import s3_upload_rpms
+from ceslib.containers import ContainerError
+from ceslib.containers.build import ContainerBuilder
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 from ceslib.versions.desc import VersionDescriptor
@@ -31,6 +33,7 @@ class Builder:
     desc: VersionDescriptor
     scratch_path: Path
     components_path: Path
+    containers_path: Path
     upload: bool
     secrets: SecretsVaultMgr
     ccache_path: Path | None
@@ -45,6 +48,7 @@ class Builder:
         scratch_path: Path,
         secrets_path: Path,
         components_path: Path,
+        containers_path: Path,
         *,
         ccache_path: Path | None = None,
         upload: bool = True,
@@ -53,6 +57,7 @@ class Builder:
         self.desc = desc
         self.scratch_path = scratch_path
         self.components_path = components_path
+        self.containers_path = containers_path
         self.upload = upload
         self.ccache_path = ccache_path
         self.skip_build = skip_build
@@ -129,6 +134,16 @@ class Builder:
                 "error uploading release descriptor for version "
                 + f"'{release_desc.version}' to S3: {e}"
             )
+            log.error(msg)
+            raise BuilderError(msg)
+
+        try:
+            ctr_builder = ContainerBuilder(
+                self.desc, release_desc, self.containers_path
+            )
+            await ctr_builder.build()
+        except (ContainerError, Exception) as e:
+            msg = f"error creating container: {e}"
             log.error(msg)
             raise BuilderError(msg)
 

@@ -21,7 +21,7 @@ from ceslib.errors import MalformedVersionError
 # it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
 # with 'vXX.*', such as ceph upstream versions, and other versions.
 def get_major_version(v: str) -> str:
-    m = re.match(r"^((?:ces-)?v\d{2}\.\d+).*", v)
+    m = re.match(r"^((?:ces-v|v)?\d{2}\.\d+).*", v)
     if m is None:
         raise MalformedVersionError(v)
     return m.group(1)
@@ -31,7 +31,18 @@ def get_major_version(v: str) -> str:
 # it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
 # with 'vXX.*', such as ceph upstream versions, and other versions.
 def get_minor_version(v: str) -> str | None:
-    m = re.match(r"^((?:ces-v)?\d{2}\.\d+\.\d+).*", v)
+    m = re.match(r"^((?:ces-v|v)?\d{2}\.\d+\.\d+).*", v)
     if m is None:
         return None
     return m.group(1)
+
+
+def normalize_version(v: str) -> str:
+    m = re.match(r"((ces-v|v)?\d{2}\.\d+\..*)", v)
+    if not m:
+        raise MalformedVersionError(v)
+
+    ver, prefix = m.groups()
+    if not prefix:
+        return f"v{ver}"
+    return ver
