@@ -15,8 +15,13 @@ from pathlib import Path
 
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
-from ceslib.builder.prepare import prepare
-from ceslib.builder.release import release_desc_build, release_desc_upload
+from ceslib.builder.prepare import prepare_builder, prepare_components
+from ceslib.builder.release import (
+    ReleaseDesc,
+    check_release_exists,
+    release_desc_build,
+    release_desc_upload,
+)
 from ceslib.builder.rpmbuild import build_rpms
 from ceslib.builder.signing import sign_rpms
 from ceslib.builder.upload import s3_upload_rpms
@@ -38,6 +43,7 @@ class Builder:
     secrets: SecretsVaultMgr
     ccache_path: Path | None
     skip_build: bool
+    force: bool
 
     def __init__(
         self,
@@ -53,6 +59,7 @@ class Builder:
         ccache_path: Path | None = None,
         upload: bool = True,
         skip_build: bool = False,
+        force: bool = False,
     ) -> None:
         self.desc = desc
         self.scratch_path = scratch_path
@@ -61,6 +68,7 @@ class Builder:
         self.upload = upload
         self.ccache_path = ccache_path
         self.skip_build = skip_build
+        self.force = force
 
         try:
             self.secrets = SecretsVaultMgr(
@@ -72,13 +80,61 @@ class Builder:
 
     async def run(self) -> None:
         log.info("preparing builder")
+        try:
+            await prepare_builder()
+        except BuilderError as e:
+            msg = f"error preparing builder: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        release_desc = await check_release_exists(self.secrets, self.desc.version)
+        if not release_desc or self.force:
+            try:
+                release_desc = await self._build()
+            except (BuilderError, Exception) as e:
+                msg = f"error building components: {e}"
+                log.error(msg)
+                raise BuilderError(msg)
+
+            if not release_desc:
+                if self.upload:
+                    msg = "unexpected error building components"
+                    log.error(msg)
+                    raise BuilderError(msg)
+
+                log.warning("not uploading, finish build")
+                return
+        else:
+            log.info(
+                f"found existing release for version '{self.desc.version}', not building"
+            )
 
         try:
-            components = await prepare(
-                self.desc, self.secrets, self.scratch_path, self.components_path
+            ctr_builder = ContainerBuilder(
+                self.desc, release_desc, self.containers_path
+            )
+            await ctr_builder.build()
+        except (ContainerError, Exception) as e:
+            msg = f"error creating container: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+    pass
+
+    async def _build(self) -> ReleaseDesc | None:
+        log.info(f"prepare components for version '{self.desc.version}'")
+        try:
+            components = await prepare_components(
+                self.secrets,
+                self.scratch_path,
+                self.components_path,
+                self.desc.components,
+                self.desc.version,
             )
         except BuilderError as e:
-            raise BuilderError(f"error preparing builder: {e}")
+            msg = f"error preparing components: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
 
         log.info("build RPMs")
         rpms_path = self.scratch_path.joinpath("rpms")
@@ -106,7 +162,7 @@ class Builder:
             raise BuilderError(msg)
 
         if not self.upload:
-            return
+            return None
 
         log.info(f"upload RPMs: {self.upload}")
         try:
@@ -137,14 +193,4 @@ class Builder:
             log.error(msg)
             raise BuilderError(msg)
 
-        try:
-            ctr_builder = ContainerBuilder(
-                self.desc, release_desc, self.containers_path
-            )
-            await ctr_builder.build()
-        except (ContainerError, Exception) as e:
-            msg = f"error creating container: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
-
-    pass
+        return release_desc

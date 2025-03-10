@@ -150,6 +150,12 @@ def main(debug: bool) -> None:
     is_flag=True,
     default=False,
 )
+@click.option(
+    "--force",
+    help="Force the entire build",
+    is_flag=True,
+    default=False,
+)
 def build(
     desc_path: Path,
     secrets_path: Path,
@@ -163,6 +169,7 @@ def build(
     containers_dir: Path,
     ccache_dir: Path | None,
     skip_build: bool,
+    force: bool,
 ) -> None:
     log.info(f"build desc: {desc_path}, upload: {upload}")
     log.info(f"with ccache path: {ccache_dir}")
@@ -200,6 +207,9 @@ def build(
 
     if upload:
         podman_args.append("--upload")
+
+    if force:
+        podman_args.append("--force")
 
     try:
         loop = asyncio.new_event_loop()
@@ -335,6 +345,12 @@ def build(
     is_flag=True,
     default=False,
 )
+@click.option(
+    "--force",
+    help="Force the entire build",
+    is_flag=True,
+    default=False,
+)
 def ctr_build(
     desc_path: Path,
     vault_addr: str,
@@ -347,6 +363,7 @@ def ctr_build(
     ccache_path: Path | None,
     upload: bool,
     skip_build: bool,
+    force: bool,
 ) -> None:
     log.debug(f"desc: {desc_path}")
     log.debug(f"vault addr: {vault_addr}")
@@ -354,6 +371,7 @@ def ctr_build(
     log.debug(f"scratch dir: {scratch_dir}")
     log.debug(f"secrets path: {secrets_path}")
     log.debug(f"upload: {upload}")
+    log.debug(f"force: {force}")
 
     if not desc_path.exists():
         log.error(f"build descriptor does not exist at '{desc_path}'")
@@ -376,6 +394,7 @@ def ctr_build(
         upload=upload,
         ccache_path=ccache_path,
         skip_build=skip_build,
+        force=force,
     )
 
     try:

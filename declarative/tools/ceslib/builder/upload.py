@@ -269,3 +269,44 @@ async def s3_upload_json(
             msg = f"error uploading json to '{location}': {e}"
             log.error(msg)
             raise BuilderError(msg)
+
+
+async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | None:
+    if not location.endswith(".json"):
+        msg = f"attempting to download non-JSON object '{location}'"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    try:
+        hostname, access_id, secret_id = secrets.s3_creds()
+    except SecretsVaultError as e:
+        msg = f"error obtaining S3 credentials: {e}"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
+
+    s3_session = aioboto3.Session(
+        aws_access_key_id=access_id,
+        aws_secret_access_key=secret_id,
+    )
+
+    if not hostname.startswith("http"):
+        hostname = f"https://{hostname}"
+
+    async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
+        bucket = await s3.Bucket("ces-packages")
+        try:
+            obj = await bucket.Object(location)
+            contents = await obj.get()
+            body = contents["Body"]
+            data = await body.read()
+        except s3.meta.client.exceptions.NoSuchKey:
+            log.debug(f"object '{location}' not found")
+            return None
+        except Exception as e:
+            msg = f"error uploading json to '{location}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        return data.decode("utf-8")

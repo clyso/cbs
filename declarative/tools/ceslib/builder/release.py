@@ -24,7 +24,7 @@ from ceslib.builder import (
 from ceslib.builder import (
     log as parent_logger,
 )
-from ceslib.builder.upload import S3ComponentLocation, s3_upload_json
+from ceslib.builder.upload import S3ComponentLocation, s3_download_json, s3_upload_json
 from ceslib.utils import CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
@@ -152,5 +152,33 @@ async def release_desc_upload(
             "unknown error uploading release desc for version "
             + f"'{release_desc.version}' to '{location}': {e}"
         )
+        log.error(msg)
+        raise BuilderError(msg)
+
+
+async def check_release_exists(
+    secrets: SecretsVaultMgr, version: str
+) -> ReleaseDesc | None:
+    log.debug(f"check if release '{version}' already exists in S3")
+
+    location = f"releases/{version}.json"
+    try:
+        data = await s3_download_json(secrets, location)
+    except BuilderError as e:
+        msg = f"error checking if release '{version}' exists: {e}"
+        log.error(msg)
+        raise BuilderError(msg)
+
+    if not data:
+        return None
+
+    try:
+        return ReleaseDesc.model_validate_json(data)
+    except pydantic.ValidationError:
+        msg = f"invalid release data from '{location}'"
+        log.error(msg)
+        raise BuilderError(msg)
+    except Exception as e:
+        msg = f"unknown exception validating release data: {e}"
         log.error(msg)
         raise BuilderError(msg)
