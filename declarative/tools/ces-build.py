@@ -97,6 +97,18 @@ def main(debug: bool) -> None:
     required=True,
 )
 @click.option(
+    "--scratch-containers-dir",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+)
+@click.option(
     "--components-dir",
     type=click.Path(
         exists=True,
@@ -146,6 +158,7 @@ def build(
     vault_role_id: str,
     vault_secret_id: str,
     scratch_dir: Path,
+    scratch_containers_dir: Path,
     components_dir: Path,
     containers_dir: Path,
     ccache_dir: Path | None,
@@ -169,6 +182,7 @@ def build(
         desc_path.resolve().as_posix(): f"/builder/{desc_path.name}",
         our_dir.resolve().as_posix(): "/builder/tools",
         scratch_dir.resolve().as_posix(): "/builder/scratch",
+        scratch_containers_dir.resolve().as_posix(): "/var/lib/containers:Z",
         secrets_path.resolve().as_posix(): "/builder/secrets.json",
         components_dir.resolve().as_posix(): "/builder/components",
         containers_dir.resolve().as_posix(): "/builder/containers",
@@ -202,9 +216,11 @@ def build(
                 },
                 args=podman_args,
                 volumes=podman_volumes,
+                devices={"/dev/fuse": "/dev/fuse:rw"},
                 entrypoint="/builder/tools/ctr-build-entrypoint.sh",
                 use_user_ns=False,
                 use_host_network=True,
+                unconfined=True,
             )
         )
         log.debug(f"podman run: rc = {retcode}")

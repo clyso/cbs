@@ -39,15 +39,20 @@ async def podman_run(
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
     volumes: dict[str, str] | None = None,
+    devices: dict[str, str] | None = None,
     entrypoint: str | None = None,
     use_user_ns: bool = False,
     timeout: float = 2 * 60 * 60,  # 2 hours, because why not.
     use_host_network: bool = False,
+    unconfined: bool = False,
 ) -> tuple[int, str, str]:
     cmd = ["podman", "run", "--security-opt", "label=disable"]
 
     if use_user_ns:
         cmd.extend(["--userns", "keep-id"])
+
+    if unconfined:
+        cmd.extend(["--security-opt", "seccomp=unconfined"])
 
     if env is not None:
         for k, v in env.items():
@@ -56,6 +61,10 @@ async def podman_run(
     if volumes is not None:
         for src, dst in volumes.items():
             cmd.extend(["--volume", f"{src}:{dst}"])
+
+    if devices:
+        for src, dst in devices.items():
+            cmd.extend(["--device", f"{src}:{dst}"])
 
     if use_host_network:
         cmd.extend(["--network", "host"])

@@ -76,6 +76,7 @@ async def prepare_builder() -> None:
                 "s3cmd",
                 "jq",
                 "ccache",
+                "buildah",
             ],
             outcb=_cb,
         )
