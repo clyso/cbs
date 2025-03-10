@@ -114,6 +114,7 @@ class Builder:
                 self.desc, release_desc, self.containers_path
             )
             await ctr_builder.build()
+            await ctr_builder.finish()
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
             log.error(msg)

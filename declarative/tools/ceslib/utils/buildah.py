@@ -97,15 +97,15 @@ class BuildahContainer:
 
         if annotations:
             for key, value in annotations.items():
-                args.extend(["--annotation", f"{key}='{value}'"])
+                args.extend(["--annotation", f"{key}={value}"])
 
         if labels:
             for key, value in labels.items():
-                args.extend(["--label", f"{key}='{value}'"])
+                args.extend(["--label", f"{key}={value}"])
 
         if env:
             for key, value in env.items():
-                args.extend(["--env", f"{key.upper()}='{value}'"])
+                args.extend(["--env", f"{key.upper()}={value}"])
 
         if len(args) == 0:
             log.warning("set config called without arguments")
@@ -182,11 +182,35 @@ class BuildahContainer:
                 }
             )
         except BuildahError as e:
-            msg = f"error setting final config on '{self.cid}': {e}"
+            msg = (
+                f"error setting final config on '{self.cid}' "
+                + f"for '{self.version_desc.version}': {e}"
+            )
             log.error(msg)
             raise BuildahError(msg)
 
-        # TODO: commit
+        try:
+            rc, _, stderr = await _buildah_run(
+                ["commit", "--squash"],
+                cid=self.cid,
+                args=[url],
+            )
+        except BuildahError as e:
+            msg = (
+                f"error committing container '{self.cid}' for "
+                + f"'{self.version_desc.version}': {e}"
+            )
+            log.error(msg)
+            raise BuildahError(msg)
+
+        if rc != 0:
+            msg = (
+                f"error committing container '{self.cid}' for "
+                + f"'{self.version_desc.version}: {stderr}"
+            )
+            log.error(msg)
+            raise BuildahError(msg)
+
         # TODO: push to registry
         pass
 
