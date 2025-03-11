@@ -85,6 +85,12 @@ def main(debug: bool) -> None:
     required=True,
 )
 @click.option(
+    "--vault-transit",
+    envvar="VAULT_TRANSIT",
+    type=str,
+    required=True,
+)
+@click.option(
     "--scratch-dir",
     type=click.Path(
         exists=True,
@@ -163,6 +169,7 @@ def build(
     vault_addr: str,
     vault_role_id: str,
     vault_secret_id: str,
+    vault_transit: str,
     scratch_dir: Path,
     scratch_containers_dir: Path,
     components_dir: Path,
@@ -220,6 +227,7 @@ def build(
                     "VAULT_ADDR": vault_addr,
                     "VAULT_ROLE_ID": vault_role_id,
                     "VAULT_SECRET_ID": vault_secret_id,
+                    "VAULT_TRANSIT": vault_transit,
                     "WITH_DEBUG": "1"
                     if log.getEffectiveLevel() == logging.DEBUG
                     else "0",
@@ -270,6 +278,12 @@ def build(
 @click.option(
     "--vault-secret-id",
     envvar="VAULT_SECRET_ID",
+    type=str,
+    required=True,
+)
+@click.option(
+    "--vault-transit",
+    envvar="VAULT_TRANSIT",
     type=str,
     required=True,
 )
@@ -356,6 +370,7 @@ def ctr_build(
     vault_addr: str,
     vault_role_id: str,
     vault_secret_id: str,
+    vault_transit: str,
     scratch_dir: Path,
     components_dir: Path,
     containers_dir: Path,
@@ -368,6 +383,7 @@ def ctr_build(
     log.debug(f"desc: {desc_path}")
     log.debug(f"vault addr: {vault_addr}")
     log.debug(f"vault role id: {vault_role_id}")
+    log.debug(f"vault transit: {vault_transit}")
     log.debug(f"scratch dir: {scratch_dir}")
     log.debug(f"secrets path: {secrets_path}")
     log.debug(f"upload: {upload}")
@@ -387,6 +403,7 @@ def ctr_build(
         vault_addr,
         vault_role_id,
         vault_secret_id,
+        vault_transit,
         scratch_dir,
         secrets_path,
         components_dir,

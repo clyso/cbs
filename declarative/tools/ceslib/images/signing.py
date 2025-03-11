@@ -12,12 +12,20 @@
 # GNU General Public License for more details.
 
 import os
+from typing import override
 
+from ceslib.errors import CESError
 from ceslib.images import log as parent_logger
-from ceslib.utils import run_cmd
+from ceslib.utils import CommandError, async_run_cmd, run_cmd
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
 log = parent_logger.getChild("sign")
+
+
+class SigningError(CESError):
+    @override
+    def __str__(self) -> str:
+        return f"Signing Error: {self.msg}"
 
 
 def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
@@ -53,3 +61,53 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
         }
     )
     return run_cmd(cmd, env=env)
+
+
+async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
+    def _out(s: str) -> None:
+        log.debug(s)
+
+    try:
+        _, username, password = secrets.harbor_creds()
+    except SecretsVaultError as e:
+        msg = f"error obtaining harbor credentials: {e}"
+        log.error(msg)
+        raise SigningError(msg)
+
+    cmd = [
+        "cosign",
+        "sign",
+        "--key=hashivault://container-image-key",
+        f"--registry-username={username}",
+        f"--registry-password={password}",
+        "--tlog-upload=false",
+        "--upload=true",
+        img,
+    ]
+
+    vault_transit = secrets.vault.transit
+    if not vault_transit:
+        msg = "vault transit unset, can't sign"
+        log.error(msg)
+        raise SigningError(msg)
+
+    with secrets.vault.client() as client:
+        vault_token = client.token
+
+    env = {
+        "VAULT_ADDR": secrets.vault.addr,
+        "VAULT_TOKEN": vault_token,
+        "TRANSIT_SECRET_ENGINE_PATH": vault_transit,
+    }
+
+    try:
+        rc, _, stderr = await async_run_cmd(cmd, outcb=_out, extra_env=env)
+    except (CommandError, Exception) as e:
+        msg = f"error signing image '{img}': {e}"
+        log.error(msg)
+        raise SigningError(msg)
+
+    if rc != 0:
+        msg = f"error signing image '{img}': {stderr}"
+        log.error(msg)
+        raise SigningError(msg)

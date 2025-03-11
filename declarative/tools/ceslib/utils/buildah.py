@@ -14,12 +14,16 @@
 
 from datetime import datetime as dt
 from datetime import timezone as tz
+import os
 from pathlib import Path
+import tempfile
 from typing import Callable, override
 
 from ceslib.errors import CESError
+from ceslib.images.signing import SigningError, async_sign
 from ceslib.utils import CommandError, async_run_cmd
 from ceslib.utils import log as parent_logger
+from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
 
 log = parent_logger.getChild("buildah")
@@ -165,7 +169,11 @@ class BuildahContainer:
 
         pass
 
-    async def finish(self) -> None:
+    async def finish(self, secrets: SecretsVaultMgr) -> None:
+        # output to logger
+        def _out(s: str) -> None:
+            log.debug(s)
+
         creation_time = dt.now(tz.utc).isoformat(timespec="seconds")
         registry = self.version_desc.image.registry
         name = self.version_desc.image.name
@@ -189,6 +197,7 @@ class BuildahContainer:
             log.error(msg)
             raise BuildahError(msg)
 
+        # commit container as image
         try:
             rc, _, stderr = await _buildah_run(
                 ["commit", "--squash"],
@@ -211,8 +220,68 @@ class BuildahContainer:
             log.error(msg)
             raise BuildahError(msg)
 
-        # TODO: push to registry
-        pass
+        # obtain registry credentials
+        try:
+            _, username, password = secrets.harbor_creds()
+            pass
+        except SecretsVaultError as e:
+            msg = f"error obtaining harbor credentials to push '{url}': {e}"
+            log.error(msg)
+            raise BuildahError(msg)
+
+        # push to registry
+        #
+        log.info(f"pushing image '{url}'")
+
+        digest_file_fd, digest_file = tempfile.mkstemp(text=True)
+        try:
+            rc, _, stderr = await _buildah_run(
+                [
+                    "push",
+                    "--creds",
+                    f"{username}:{password}",
+                    "--digestfile",
+                    digest_file,
+                    url,
+                ],
+                outcb=_out,
+            )
+
+            with Path(digest_file).open("r") as f:
+                image_digest = f.read().strip()
+
+            log.debug(f"pushed '{url}', digest: {image_digest}")
+
+        except BuildahError as e:
+            msg = f"error pushing image '{url}': {e}"
+            log.error(msg)
+            raise BuildahError(msg)
+        finally:
+            os.close(digest_file_fd)
+            os.unlink(digest_file)
+
+        # sign image
+        #
+
+        # try:
+        #     digest = await _get_digest(url)
+        # except (BuildahError, Exception) as e:
+        #     msg = f"error obtaining digest for '{url}': {e}"
+        #     log.error(msg)
+        #     raise BuildahError(msg)
+        #
+        img_to_sign = f"{registry}/{name}@{image_digest}"
+        try:
+            await async_sign(img_to_sign, secrets)
+        except (SigningError, Exception) as e:
+            msg = f"error signing image '{url}': {e}"
+            log.error(msg)
+            raise BuildahError(msg)
+
+        if rc != 0:
+            msg = f"error signing image '{url}': {stderr}"
+            log.error(msg)
+            raise BuildahError(msg)
 
 
 async def buildah_new_container(desc: VersionDescriptor) -> BuildahContainer:

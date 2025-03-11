@@ -83,6 +83,21 @@ async def prepare_builder() -> None:
         if rc != 0:
             log.error(f"error installing builder packages: {stderr}")
             raise BuilderError("unable to install dependencies")
+
+        # install cosign rpm
+        rc, _, stderr = await async_run_cmd(
+            [
+                "rpm",
+                "-Uvh",
+                "https://github.com/sigstore/cosign/releases/download/v2.4.3/"
+                + "cosign-2.4.3-1.x86_64.rpm",
+            ],
+            outcb=_cb,
+        )
+        if rc != 0:
+            msg = f"error installing cosign package: {stderr}"
+            log.error(msg)
+            raise BuilderError(msg)
     except CommandError as e:
         log.error(f"unable to run 'dnf': {e}")
         raise BuilderError(f"error running 'dnf': {e}")

@@ -11,6 +11,11 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+# NOTE: pydantic makes basedpyright complain about 'Any' when using Field
+# defaults. Disable temporarily.
+#
+# pyright: reportAny=false, reportUnknownArgumentType=false
+
 import re
 
 import pydantic

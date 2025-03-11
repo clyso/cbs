@@ -20,6 +20,7 @@ from ceslib.builder.release import ReleaseDesc
 from ceslib.containers import ContainerError
 from ceslib.containers.component import ComponentContainer
 from ceslib.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
+from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
 
 log = parent_logger.getChild("containers")
@@ -200,8 +201,7 @@ class ContainerBuilder:
 
         pass
 
-    async def finish(self) -> None:
+    async def finish(self, secrets: SecretsVaultMgr) -> None:
         log.info(f"finish container for '{self.version_desc.version}'")
         assert self.container
-
-        await self.container.finish()
+        await self.container.finish(secrets)

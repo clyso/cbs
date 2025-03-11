@@ -51,6 +51,7 @@ class Builder:
         vault_addr: str,
         vault_role_id: str,
         vault_secret_id: str,
+        vault_transit: str,
         scratch_path: Path,
         secrets_path: Path,
         components_path: Path,
@@ -72,7 +73,11 @@ class Builder:
 
         try:
             self.secrets = SecretsVaultMgr(
-                secrets_path, vault_addr, vault_role_id, vault_secret_id
+                secrets_path,
+                vault_addr,
+                vault_role_id,
+                vault_secret_id,
+                vault_transit=vault_transit,
             )
         except VaultError as e:
             log.error(f"error logging in to vault: {e}")
@@ -114,7 +119,7 @@ class Builder:
                 self.desc, release_desc, self.containers_path
             )
             await ctr_builder.build()
-            await ctr_builder.finish()
+            await ctr_builder.finish(self.secrets)
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
             log.error(msg)
