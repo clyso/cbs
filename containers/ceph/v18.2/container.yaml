@@ -133,6 +133,9 @@ post:
   - name: ganesha-fixes
     run: fix-ganesha.sh
 
+  - name: fix-jaraco
+    run: fix-jaraco.sh
+
   - name: disable-sync-udev
     run: disable-sync-udev.sh
 
