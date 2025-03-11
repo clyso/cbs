@@ -80,7 +80,7 @@ class Vault:
                 )
                 log.debug(f"obtained secret '{path}' from vault")
         except hvac.exceptions.Forbidden:
-            raise VaultError("permission defined obtaining secret")
+            raise VaultError("permission denied obtaining secret")
         except Exception as e:
             raise VaultError(f"error obtaining secret: {e}")
 
