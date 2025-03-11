@@ -1,3 +1,20 @@
+config:
+  env:
+    CEPH_IS_DEVEL: "False"
+    CEPH_REF: "{git_ref}"
+    CEPH_VERSION: "{git_ref}"
+    CEPH_OSD_FLAVOR: default
+    FROM_IMAGE: "{distro}"
+  labels:
+    ceph: "True"
+    CEPH_REF: "{git_ref}"
+    CEPH_SHA1: "{git_sha1}"
+    CEPH_GIT_REPO: "{git_repo_url}"
+    GANESHA_REPO_BASEURL: https://buildlogs.centos.org/centos/$releasever-stream/storage/$basearch/nfsganesha-5/
+    OSD_FLAVOR: default
+  annotations:
+    com.clyso.ces.ceph.version: "{git_ref}"
+
 pre:
   keys:
     - https://ces-packages.s3.clyso.com/keys/release.asc

@@ -186,7 +186,7 @@ class Builder:
 
         log.info(f"create release descriptor for '{self.desc.version}'")
         release_desc = await release_desc_build(
-            self.desc, self.components_path, s3_comp_loc
+            self.desc, components, self.components_path, s3_comp_loc
         )
 
         try:

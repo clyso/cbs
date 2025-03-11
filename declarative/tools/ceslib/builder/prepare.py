@@ -16,14 +16,25 @@ import re
 from datetime import datetime as dt
 from pathlib import Path
 
+import pydantic
+
 from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
 from ceslib.utils import CommandError, async_run_cmd, git
 from ceslib.utils.secrets import SecretsVaultMgr
-from ceslib.versions.desc import VersionComponent, VersionDescriptor
+from ceslib.versions.desc import VersionComponent
 from ceslib.versions.utils import get_major_version, get_minor_version
 
 log = parent_logger.getChild("prepare")
+
+
+class BuildComponentInfo(pydantic.BaseModel):
+    """Contains information about a component to be built"""
+
+    repo_path: Path
+    repo_url: str
+    ref: str
+    sha1: str
 
 
 async def prepare_builder() -> None:
@@ -152,21 +163,28 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
     return patch_list_order
 
 
-# Prepares all components by cloning them and applying required patches, parallelizing
-# on a per-component basis.
-# Returns a dict of Paths per component name, where said path refers to the location
-# of the component's repository that was cloned.
-#
 async def prepare_components(
     secrets: SecretsVaultMgr,
     scratch_path: Path,
     components_path: Path,
     components: list[VersionComponent],
     version: str,
-) -> dict[str, Path]:
-    # clone component repository, returns its Path upon successful completion.
-    #
-    async def _clone_repo(comp: VersionComponent) -> Path:
+) -> dict[str, BuildComponentInfo]:
+    """
+    Prepares all components by cloning them and applying required patches,
+    parallelizing on a per-component basis.
+
+    Returns a `dict` of `BuildComponentInfo` per component name, containing the
+    component's git repository, version, and SHA1, alongside the `Path` on which the
+    repository has been cloned.
+    """
+
+    async def _clone_repo(comp: VersionComponent) -> BuildComponentInfo:
+        """
+        Clone component repository, returns a `BuildComponentInfo` containing its
+        original repository `URL`, the `Path` to which it has been cloned, alongside
+        the `version` being cloned, and the `SHA1` of said version.
+        """
         log.debug(
             f"clone repo '{comp.repo}' to '{scratch_path}', "
             + f"name: '{comp.name}', version: '{comp.version}'"
@@ -174,7 +192,7 @@ async def prepare_components(
         start = dt.now()
         try:
             with secrets.git_url_for(comp.repo) as comp_url:
-                res = git.git_clone(
+                cloned_path = git.git_clone(
                     comp_url,
                     scratch_path,
                     comp.name,
@@ -190,13 +208,26 @@ async def prepare_components(
         except Exception as e:
             log.error(f"unknown exception cloning '{comp.repo}': {e}")
             raise BuilderError(f"error cloning '{comp.repo}': {e}")
+
         delta = dt.now() - start
         log.info(f"component '{comp.name}' cloned in {delta.seconds}")
-        return res
 
-    # apply required patches to component's repository.
-    #
+        try:
+            sha1 = git.git_get_sha1(cloned_path)
+        except (git.GitError, Exception) as e:
+            msg = f"error obtaining SHA1 for repository '{cloned_path}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        return BuildComponentInfo(
+            repo_path=cloned_path,
+            repo_url=comp.repo,
+            ref=comp.version,
+            sha1=sha1,
+        )
+
     async def _apply_patches(comp: VersionComponent, repo: Path) -> None:
+        """Apply required patches to component's repository."""
         log.info(f"apply patches to '{comp.name}' at '{repo}'")
 
         comp_path = components_path.joinpath(comp.name)
@@ -232,18 +263,19 @@ async def prepare_components(
 
         patches_lst = sorted(patches_lst, key=lambda item: item[0])
 
-    # prepares a component, by cloning and then applying any required patches to the
-    # repository.
-    #
-    async def _do_component(comp: VersionComponent) -> Path:
+    async def _do_component(comp: VersionComponent) -> BuildComponentInfo:
+        """
+        Prepares a component, by cloning and then applying any required patches to the
+        repository.
+        """
         try:
-            repo_path = await _clone_repo(comp)
+            info = await _clone_repo(comp)
         except BuilderError as e:
             log.error(f"error cloning component '{comp.name}': {e}")
             raise e
 
         try:
-            await _apply_patches(comp, repo_path)
+            await _apply_patches(comp, info.repo_path)
         except BuilderError as e:
             log.error(f"error applying component patches: {e}")
             raise e
@@ -251,10 +283,11 @@ async def prepare_components(
             log.error(f"error applying component patches: {e}")
             raise e
 
-        return repo_path
+        return info
 
-    # install dependencies for all components, sequentially.
-    async def _install_deps(repo_paths: dict[str, Path]) -> None:
+    async def _install_deps(comp_infos: dict[str, BuildComponentInfo]) -> None:
+        """Install dependencies for all components, sequentially."""
+
         for comp in components:
             comp_scripts_path = get_component_scripts_path(components_path, comp.name)
             if not comp_scripts_path:
@@ -266,7 +299,7 @@ async def prepare_components(
                 log.info(f"no dependencies to install for component '{comp.name}'")
                 continue
 
-            if comp.name not in repo_paths:
+            if comp.name not in comp_infos:
                 log.error(
                     f"unable to find repository for component '{comp.name}', continue"
                 )
@@ -277,16 +310,17 @@ async def prepare_components(
             def _comp_out(s: str) -> None:
                 clog.debug(s)
 
+            repo_path = comp_infos[comp.name].repo_path.resolve()
             cmd = [
                 install_deps_script.resolve().as_posix(),
-                repo_paths[comp.name].resolve().as_posix(),
+                repo_path.as_posix(),
             ]
 
             try:
                 rc, _, stderr = await async_run_cmd(
                     cmd,
                     outcb=_comp_out,
-                    cwd=repo_paths[comp.name],
+                    cwd=repo_path,
                     reset_python_env=True,
                 )
             except CommandError as e:
@@ -316,40 +350,13 @@ async def prepare_components(
                 log.error(f"- {exc}")
         raise BuilderError("error preparing components")
 
-    repo_paths = {name: task.result() for name, task in task_dict.items()}
+    component_infos = {name: task.result() for name, task in task_dict.items()}
 
     try:
-        await _install_deps(repo_paths)
+        await _install_deps(component_infos)
     except BuilderError as e:
         msg = f"error installing component dependencies: {e}"
         log.error(msg)
         raise BuilderError(msg)
 
-    return repo_paths
-
-
-async def prepare(
-    desc: VersionDescriptor,
-    secrets: SecretsVaultMgr,
-    scratch_path: Path,
-    components_path: Path,
-) -> dict[str, Path]:
-    try:
-        await prepare_builder()
-    except BuilderError as e:
-        log.error(f"unable to prepare builder: {e}")
-        raise BuilderError(f"error preparing builder: {e}")
-
-    try:
-        comp_paths = await prepare_components(
-            secrets,
-            scratch_path,
-            components_path,
-            desc.components,
-            desc.version,
-        )
-    except BuilderError as e:
-        log.error(f"unable to prepare components: {e}")
-        raise BuilderError(f"error preparing components: {e}")
-
-    return comp_paths
+    return component_infos

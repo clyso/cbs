@@ -83,6 +83,13 @@ class ContainerBuilder:
             log.error(msg)
             raise ContainerError(msg)
 
+        try:
+            await self.apply_config(components)
+        except (ContainerError, Exception) as e:
+            msg = f"error applying CONFIG section: {e}"
+            log.error(msg)
+            raise ContainerError(msg)
+
         pass
 
     async def get_components(
@@ -110,6 +117,11 @@ class ContainerBuilder:
             vars = {
                 "version": release_comp.version,
                 "el": self.version_desc.el_version,
+                "git_ref": release_comp.version,
+                "git_sha1": release_comp.sha1,
+                "git_repo_url": release_comp.repo_url,
+                "component_name": release_comp.name,
+                "distro": self.version_desc.distro,
             }
 
             try:
@@ -207,7 +219,13 @@ class ContainerBuilder:
             log.info(f"apply POST for component '{comp_name}'")
             await comp_container.apply_post(self.container)
 
-        pass
+    async def apply_config(self, components: dict[str, ComponentContainer]) -> None:
+        log.info("apply component config to container image")
+        assert self.container
+
+        for comp_name, comp_container in components.items():
+            log.info(f"apply config for component '{comp_name}'")
+            await comp_container.apply_config(self.container)
 
     async def finish(self, secrets: SecretsVaultMgr) -> None:
         log.info(f"finish container for '{self.version_desc.version}'")

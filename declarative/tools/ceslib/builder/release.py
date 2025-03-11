@@ -24,6 +24,7 @@ from ceslib.builder import (
 from ceslib.builder import (
     log as parent_logger,
 )
+from ceslib.builder.prepare import BuildComponentInfo
 from ceslib.builder.upload import S3ComponentLocation, s3_download_json, s3_upload_json
 from ceslib.utils import CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
@@ -35,12 +36,17 @@ log = parent_logger.getChild("release")
 class ReleaseComponent(pydantic.BaseModel):
     name: str
     version: str
+    sha1: str
+    repo_url: str
+
+    # s3 locations
     loc: str
     release_rpm_loc: str
 
 
 class ReleaseDesc(pydantic.BaseModel):
     version: str
+    el_version: int
     components: dict[str, ReleaseComponent]
 
     @classmethod
@@ -108,12 +114,18 @@ async def _get_comp_release_rpm(
 
 async def release_desc_build(
     desc: VersionDescriptor,
+    components_info: dict[str, BuildComponentInfo],
     components_path: Path,
     s3_comp_loc: dict[str, S3ComponentLocation],
 ) -> ReleaseDesc:
     components: dict[str, ReleaseComponent] = {}
 
     for name, loc in s3_comp_loc.items():
+        if name not in components_info:
+            msg = f"unexpected missing info for component '{name}'"
+            log.error(msg)
+            raise BuilderError(msg)
+
         rpm_release_loc = await _get_comp_release_rpm(
             components_path, name, desc.el_version
         )
@@ -124,12 +136,16 @@ async def release_desc_build(
 
         components[name] = ReleaseComponent(
             name=name,
+            repo_url=components_info[name].repo_url,
             version=loc.version,
+            sha1=components_info[name].sha1,
             loc=loc.location,
             release_rpm_loc=f"{loc.location}/{rpm_release_loc}",
         )
 
-    return ReleaseDesc(version=desc.version, components=components)
+    return ReleaseDesc(
+        version=desc.version, el_version=desc.el_version, components=components
+    )
 
 
 async def release_desc_upload(

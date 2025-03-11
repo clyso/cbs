@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
+from ceslib.builder.prepare import BuildComponentInfo
 from ceslib.utils import CommandError, async_run_cmd
 
 log = parent_logger.getChild("rpmbuild")
@@ -91,9 +92,6 @@ def _setup_rpm_topdir(
     return comp_rpm_path
 
 
-# build a given component, by running the script provided by 'script_path' in the
-# repository 'repo_path'.
-# returns the number of seconds the script took to execute.
 async def _build_component(
     rpms_path: Path,
     el_version: int,
@@ -105,6 +103,13 @@ async def _build_component(
     ccache_path: Path | None = None,
     skip_build: bool = False,
 ) -> tuple[int, Path]:
+    """
+    Build a given component, by running the script provided by `script_path` in the
+    repository's `repo_path`.
+    Returns the number of seconds the script took to execute, and a `Path` to
+    `rpmbuild`'s topdir, where the RPMs will be located.
+    """
+
     mlog = log.getChild(f"comp[{comp_name}]")
     mlog.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
@@ -158,18 +163,23 @@ async def _build_component(
     return delta, comp_rpms_path
 
 
-# build RPMs for the various components provided in 'components'.
-# relies on a 'build_rpms.sh' script that must be found in the
-# 'components_path' directory, for each specific component.
 async def build_rpms(
     rpms_path: Path,
     el_version: int,
     components_path: Path,
-    components: dict[str, Path],
+    components: dict[str, BuildComponentInfo],
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
 ) -> dict[str, ComponentBuild]:
+    """
+    Build RPMs for the various components provided in `components`.
+    Relies on a `build_rpms.sh` script that must be found in the `components_path`
+    directory, for each specific component.
+    Returns a `ComponentBuild`, containing the component's built version and a
+    `Path` to where its RPMs can be found.
+    """
+
     if not components_path.exists():
         raise BuilderError(f"components path at '{components_path}' not found")
 
@@ -182,7 +192,7 @@ async def build_rpms(
             self.version = version
 
     to_build: dict[str, _ToBuildComponent] = {}
-    for comp_name, comp_repo in components.items():
+    for comp_name, comp_info in components.items():
         comp_path = components_path.joinpath(comp_name)
         if not comp_path.exists():
             log.warning(
@@ -206,7 +216,7 @@ async def build_rpms(
 
         try:
             comp_version = await _get_component_version(
-                comp_name, comp_scripts_path, comp_repo
+                comp_name, comp_scripts_path, comp_info.repo_path
             )
         except BuilderError as e:
             msg = f"error building RPMs for '{comp_name}', unable to find version: {e}"
@@ -229,7 +239,7 @@ async def build_rpms(
                         el_version,
                         name,
                         to_build[name].build_script,
-                        components[name],
+                        components[name].repo_path,
                         to_build[name].version,
                         ccache_path=ccache_path,
                         skip_build=skip_build,

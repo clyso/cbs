@@ -199,3 +199,29 @@ class ComponentContainer:
                 raise ContainerError(msg)
 
         pass
+
+    async def apply_config(self, container: BuildahContainer) -> None:
+        if not self.desc.config:
+            log.debug("no config to apply")
+            return
+
+        env: dict[str, str] | None = None
+        labels: dict[str, str] | None = None
+        annotations: dict[str, str] | None = None
+
+        if len(self.desc.config.env) > 0:
+            env = self.desc.config.env
+        if len(self.desc.config.labels) > 0:
+            labels = self.desc.config.labels
+        if len(self.desc.config.annotations) > 0:
+            annotations = self.desc.config.annotations
+
+        if not env and not labels and not annotations:
+            log.debug("empty config section")
+            return
+
+        await container.set_config(
+            env=env,
+            labels=labels,
+            annotations=annotations,
+        )

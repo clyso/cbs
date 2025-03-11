@@ -222,3 +222,14 @@ def git_apply(repo_path: Path, patch_path: Path) -> None:
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
     pass
+
+
+def git_get_sha1(repo_path: Path) -> str:
+    """For the repository in `repo_path`, obtain its currently checked out SHA1."""
+    val = run_git("rev-parse HEAD", path=repo_path)
+    if len(val) == 0:
+        msg = f"unable to obtain current SHA1 on repository '{repo_path}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+    return val.strip()

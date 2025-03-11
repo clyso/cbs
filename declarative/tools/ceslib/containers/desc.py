@@ -66,7 +66,14 @@ class ContainerPostScript(pydantic.BaseModel):
     run: str
 
 
+class ContainerConfig(pydantic.BaseModel):
+    env: dict[str, str] = pydantic.Field(default={})
+    labels: dict[str, str] = pydantic.Field(default={})
+    annotations: dict[str, str] = pydantic.Field(default={})
+
+
 class ContainerDescriptor(pydantic.BaseModel):
+    config: ContainerConfig | None = pydantic.Field(default=None)
     pre: ContainerPre
     packages: ContainerPackages
     post: list[ContainerPostScript] = pydantic.Field(default=[])
