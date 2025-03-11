@@ -189,11 +189,19 @@ class ContainerBuilder:
             msg = f"error installing packages: {e}"
             log.error(msg)
             raise ContainerError(msg)
-        pass
 
     async def apply_post(self, components: dict[str, ComponentContainer]) -> None:
         log.info("apply POST from components")
         assert self.container
+
+        log.info("run final container update")
+        try:
+            cmd = ["dnf", "update", "-y"]
+            await self.container.run(cmd)
+        except (BuildahError, Exception) as e:
+            msg = f"error running final container update: {e}"
+            log.error(msg)
+            raise ContainerError(msg)
 
         for comp_name, comp_container in components.items():
             log.info(f"apply POST for component '{comp_name}'")
