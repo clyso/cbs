@@ -130,6 +130,56 @@ async def _build_component(
     return delta, comp_rpms_path
 
 
+async def _install_deps(
+    components_path: Path,
+    components: dict[str, BuildComponentInfo],
+) -> None:
+    """Install dependencies for all components, sequentially."""
+
+    for name, comp in components.items():
+        comp_scripts_path = get_component_scripts_path(components_path, comp.name)
+        if not comp_scripts_path:
+            log.warning(f"scripts for component '{comp.name}' not found, continue")
+            continue
+
+        install_deps_script = get_script_path(comp_scripts_path, "install_deps.*")
+        if not install_deps_script:
+            log.info(f"no dependencies to install for component '{comp.name}'")
+            continue
+
+        clog = log.getChild(f"comp[{name}]")
+
+        def _comp_out(s: str) -> None:
+            clog.debug(s)
+
+        repo_path = comp.repo_path.resolve()
+        cmd = [
+            install_deps_script.resolve().as_posix(),
+            repo_path.as_posix(),
+        ]
+
+        try:
+            rc, _, stderr = await async_run_cmd(
+                cmd,
+                outcb=_comp_out,
+                cwd=repo_path,
+                reset_python_env=True,
+            )
+        except CommandError as e:
+            msg = f"error installing dependencies for '{comp.name}': {e}"
+            clog.error(msg)
+            raise BuilderError(msg)
+        except Exception as e:
+            msg = f"unknown error installing dependencies for '{comp.name}': {e}"
+            clog.error(msg)
+            raise BuilderError(msg)
+
+        if rc != 0:
+            msg = f"error installing dependencies for '{comp.name}': {stderr}"
+            clog.error(msg)
+            raise BuilderError(msg)
+
+
 async def build_rpms(
     rpms_path: Path,
     el_version: int,
@@ -149,6 +199,13 @@ async def build_rpms(
 
     if not components_path.exists():
         raise BuilderError(f"components path at '{components_path}' not found")
+
+    try:
+        await _install_deps(components_path, components)
+    except BuilderError as e:
+        msg = f"error installing components' dependencies: {e}"
+        log.error(msg)
+        raise BuilderError(msg)
 
     class _ToBuildComponent:
         build_script: Path
