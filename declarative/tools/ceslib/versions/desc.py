@@ -37,7 +37,7 @@ class VersionImage(pydantic.BaseModel):
 class VersionComponent(pydantic.BaseModel):
     name: str
     repo: str
-    version: str
+    ref: str
 
 
 class VersionDescriptor(pydantic.BaseModel):

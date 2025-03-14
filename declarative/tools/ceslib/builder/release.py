@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pydantic
@@ -112,6 +113,83 @@ async def _get_comp_release_rpm(
     return stdout.strip()
 
 
+async def release_component_desc(
+    components_path: Path,
+    component_name: str,
+    component_infos: BuildComponentInfo,
+    component_s3_locs: S3ComponentLocation,
+    build_el_version: int,
+) -> ReleaseComponent | None:
+    """Create a component release descriptor."""
+
+    rpm_release_loc = await _get_comp_release_rpm(
+        components_path,
+        component_name,
+        build_el_version,
+    )
+    if not rpm_release_loc:
+        msg = (
+            "unable to find component release RPM location "
+            + f"for '{component_name}', "
+            + f"el version: {build_el_version}"
+        )
+        log.error(msg)
+        return None
+
+    return ReleaseComponent(
+        name=component_name,
+        repo_url=component_infos.repo_url,
+        version=component_infos.long_version,
+        sha1=component_infos.sha1,
+        loc=component_s3_locs.location,
+        release_rpm_loc=f"{component_s3_locs.location}/{rpm_release_loc}",
+    )
+
+
+async def release_upload_components(
+    secrets: SecretsVaultMgr,
+    component_releases: dict[str, ReleaseComponent],
+) -> None:
+    """Upload component release descriptors to S3, in parallel."""
+
+    log.info(f"upload release for components '{component_releases.keys()}' to S3")
+
+    components_loc = "releases/components"
+
+    async def _put_component(comp_rel: ReleaseComponent) -> str:
+        """Write a component's release descriptor to S3."""
+        location = f"{components_loc}/{comp_rel.name}/{comp_rel.version}.json"
+        data = comp_rel.model_dump_json(indent=2)
+
+        try:
+            await s3_upload_json(secrets, location, data)
+        except BuilderError as e:
+            msg = (
+                f"error uploading component release desc for '{comp_rel.name}' "
+                + f"to '{location}': {e}"
+            )
+            log.error(msg)
+            raise BuilderError(msg)
+        return location
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            task_dict = {
+                name: tg.create_task(_put_component(rel))
+                for name, rel in component_releases.items()
+            }
+    except ExceptionGroup as e:
+        log.error("error uploading release descriptors for components:")
+        excs = e.subgroup(BuilderError)
+        if excs is not None:
+            for exc in excs.exceptions:
+                log.error(f"- {exc}")
+        raise BuilderError("error uploading release descriptors")
+
+    for name, task in task_dict.items():
+        log.debug(f"uploaded '{name}' to '{task.result()}'")
+
+
 async def release_desc_build(
     desc: VersionDescriptor,
     components_info: dict[str, BuildComponentInfo],
@@ -126,22 +204,16 @@ async def release_desc_build(
             log.error(msg)
             raise BuilderError(msg)
 
-        rpm_release_loc = await _get_comp_release_rpm(
-            components_path, name, desc.el_version
+        comp_release = await release_component_desc(
+            components_path, name, components_info[name], loc, desc.el_version
         )
-        if not rpm_release_loc:
-            msg = f"unable to find component release RPM location for '{name}', ignore"
-            log.error(msg)
+        if not comp_release:
+            log.error(
+                f"unable to find component release RPM location for '{name}', ignore"
+            )
             continue
 
-        components[name] = ReleaseComponent(
-            name=name,
-            repo_url=components_info[name].repo_url,
-            version=loc.version,
-            sha1=components_info[name].sha1,
-            loc=loc.location,
-            release_rpm_loc=f"{loc.location}/{rpm_release_loc}",
-        )
+        components[name] = comp_release
 
     return ReleaseDesc(
         version=desc.version, el_version=desc.el_version, components=components
@@ -198,3 +270,73 @@ async def check_release_exists(
         msg = f"unknown exception validating release data: {e}"
         log.error(msg)
         raise BuilderError(msg)
+
+
+async def check_released_components(
+    secrets: SecretsVaultMgr, components: dict[str, BuildComponentInfo]
+) -> dict[str, ReleaseComponent]:
+    """
+    Checks whether the components for a release have been previously built and
+    uploaded to S3.
+
+    Returns a `dict` mapping names of components existing in S3, to their
+    `ReleaseComponent` entry (obtained from S3).
+
+    It's the caller's responsibility to decide whether a component should be built
+    or not, regardless of it existing.
+    """
+
+    log.debug("check if components exist in S3")
+
+    components_loc = "releases/components"
+
+    async def _get_component(info: BuildComponentInfo) -> ReleaseComponent | None:
+        """Obtain `ReleaseComponent` from S3, if available."""
+        location = f"{components_loc}/{info.name}/{info.long_version}.json"
+        try:
+            data = await s3_download_json(secrets, location)
+        except BuilderError as e:
+            msg = (
+                f"error checking if component '{info.name}' "
+                + f"version '{info.long_version}' exists in S3: {e}"
+            )
+            log.error(msg)
+            raise BuilderError(msg)
+
+        if not data:
+            return None
+
+        try:
+            return ReleaseComponent.model_validate_json(data)
+        except pydantic.ValidationError:
+            msg = f"invalid component release data from '{location}'"
+            log.error(msg)
+            raise BuilderError(msg)
+        except Exception as e:
+            msg = f"unknown error validating component release data: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            task_dict = {
+                name: tg.create_task(_get_component(info))
+                for name, info in components.items()
+            }
+    except ExceptionGroup as e:
+        log.error("error checking released components:")
+        excs = e.subgroup(BuilderError)
+        if excs is not None:
+            for exc in excs.exceptions:
+                log.error(f"- {exc}")
+        raise BuilderError("error checking released components")
+
+    existing: dict[str, ReleaseComponent] = {}
+    for name, task in task_dict.items():
+        res = task.result()
+        if not res:
+            continue
+        log.debug(f"component '{name}' release exists, s3 loc: {res.loc}")
+        existing[name] = res
+
+    return existing

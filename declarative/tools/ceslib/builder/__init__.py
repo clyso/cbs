@@ -13,6 +13,7 @@
 
 from pathlib import Path
 import stat
+from typing import override
 from ceslib.errors import CESError
 from ceslib.logging import log as root_logger
 
@@ -20,7 +21,23 @@ log = root_logger.getChild("builder")
 
 
 class BuilderError(CESError):
-    pass
+    @override
+    def __str__(self) -> str:
+        return f"Builder Error: {self.msg}"
+
+
+class MissingScriptError(BuilderError):
+    """Represents a missing script, required for execution."""
+
+    script: str
+
+    def __init__(self, script: str, *, msg: str | None = None) -> None:
+        super().__init__(msg)
+        self.script = script
+
+    @override
+    def __str__(self) -> str:
+        return f"Missing script '{self.script}'" + f": {self.msg}" if self.msg else ""
 
 
 def get_component_scripts_path(

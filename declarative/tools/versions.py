@@ -323,7 +323,7 @@ def build_create(
             comp_repo = component_overrides_map[comp_name]
 
         component_res.append(
-            VersionComponent(name=comp_name, repo=comp_repo, version=comp_version)
+            VersionComponent(name=comp_name, repo=comp_repo, ref=comp_version)
         )
 
     image_tag_str = image_tag if image_tag else version_str

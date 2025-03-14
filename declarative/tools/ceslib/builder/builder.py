@@ -15,14 +15,21 @@ from pathlib import Path
 
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
-from ceslib.builder.prepare import prepare_builder, prepare_components
+from ceslib.builder.prepare import (
+    BuildComponentInfo,
+    prepare_builder,
+    prepare_components,
+)
 from ceslib.builder.release import (
+    ReleaseComponent,
     ReleaseDesc,
     check_release_exists,
-    release_desc_build,
+    check_released_components,
+    release_component_desc,
     release_desc_upload,
+    release_upload_components,
 )
-from ceslib.builder.rpmbuild import build_rpms
+from ceslib.builder.rpmbuild import ComponentBuild, build_rpms
 from ceslib.builder.signing import sign_rpms
 from ceslib.builder.upload import s3_upload_rpms
 from ceslib.containers import ContainerError
@@ -95,7 +102,7 @@ class Builder:
         release_desc = await check_release_exists(self.secrets, self.desc.version)
         if not release_desc or self.force:
             try:
-                release_desc = await self._build()
+                release_desc = await self._build_release()
             except (BuilderError, Exception) as e:
                 msg = f"error building components: {e}"
                 log.error(msg)
@@ -103,12 +110,14 @@ class Builder:
 
             if not release_desc:
                 if self.upload:
-                    msg = "unexpected error building components"
+                    # this should not happen!
+                    msg = "unexpected missing release descriptor!"
                     log.error(msg)
                     raise BuilderError(msg)
 
-                log.warning("not uploading, finish build")
+                log.warning("not uploading, build done")
                 return
+
         else:
             log.info(
                 f"found existing release for version '{self.desc.version}', not building"
@@ -127,7 +136,19 @@ class Builder:
 
     pass
 
-    async def _build(self) -> ReleaseDesc | None:
+    async def _build_release(self) -> ReleaseDesc | None:
+        """
+        Builds a release, returning a `ReleaseDesc`. This function will first prepare
+        the builder, assess which components need to be built and which already exist
+        in S3, and then build (and sign) those that can't be found otherwise.
+
+        Returns a `ReleaseDesc`, composed of all the components that belong to the
+        wanted version, composing it from the already existing components (if any) and
+        the built components (if any needed to be built).
+
+        Will return `None` if `self.upload` is `False`.
+        """
+        log.info(f"build release for '{self.desc.version}'")
         log.info(f"prepare components for version '{self.desc.version}'")
         try:
             components = await prepare_components(
@@ -142,22 +163,137 @@ class Builder:
             log.error(msg)
             raise BuilderError(msg)
 
-        log.info("build RPMs")
+        # Check if any of the components have been previously built, and, if so,
+        # reuse them instead of building them.
+        #
+        # If the 'force' flag has been set, assume we have no existing components,
+        # and force all components to be built.
+        #
+        existing: dict[str, ReleaseComponent] = {}
+
+        if not self.force:
+            try:
+                existing = await check_released_components(self.secrets, components)
+            except (BuilderError, Exception) as e:
+                msg = f"error checking released components: {e}"
+                log.error(msg)
+                raise BuilderError(msg)
+
+        to_build = {
+            name: info for name, info in components.items() if name not in existing
+        }
+
+        built: dict[str, ReleaseComponent] = {}
+        if to_build:
+            # build RPMs for required components
+            try:
+                built = await self._build(to_build)
+            except (BuilderError, Exception) as e:
+                msg = f"error building components '{to_build.keys()}': {e}"
+                log.error(msg)
+                raise BuilderError(msg)
+
+        if not self.upload:
+            log.warning("not uploading per config, stop release build")
+            return None
+
+        comp_releases = existing.copy()
+        comp_releases.update(built)
+
+        if not comp_releases:
+            msg = (
+                f"no component releases found, existing: {existing.keys()}, "
+                + f"built: {built.keys()}"
+            )
+            log.error(msg)
+            raise BuilderError(msg)
+
+        release = ReleaseDesc(
+            version=self.desc.version,
+            el_version=self.desc.el_version,
+            components=comp_releases,
+        )
+
+        try:
+            await release_desc_upload(self.secrets, release)
+        except (BuilderError, Exception) as e:
+            msg = f"error uploading release desc to S3: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        return release
+
+    async def _build(
+        self, components: dict[str, BuildComponentInfo]
+    ) -> dict[str, ReleaseComponent]:
+        """
+        Builds all the specified components, signs them, and uploads them to S3
+        (unless the `upload` flag is `False`).
+
+        Returns a dict of component names to `ReleaseComponent`, representing
+        each finished build that has been uploaded to S3.
+        """
+
+        log.debug(f"build components '{components.keys()}")
+
+        if not components:
+            log.info("no components to build")
+            return {}
+
+        try:
+            comp_builds = await self._build_rpms(components)
+        except (BuilderError, Exception) as e:
+            msg = f"error building RPMs for '{components.keys()}: {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        if not self.upload:
+            return {}
+
+        try:
+            comp_descs = await self._upload(components, comp_builds)
+        except (BuilderError, Exception) as e:
+            msg = f"error uploading component builds '{comp_builds.keys()}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        return comp_descs
+
+    async def _build_rpms(
+        self, components: dict[str, BuildComponentInfo]
+    ) -> dict[str, ComponentBuild]:
+        """
+        Build, sign, and upload components specified in the `components` `dict`.
+
+        Returns a `dict` of component names to their S3 location.
+        """
+
+        log.info(f"build RPMs for components '{components.keys()}'")
+
+        if not components:
+            log.info("no components to build RPMs for, return")
+            return {}
+
         rpms_path = self.scratch_path.joinpath("rpms")
         rpms_path.mkdir(exist_ok=True)
 
-        comp_rpms_paths = await build_rpms(
-            rpms_path,
-            self.desc.el_version,
-            self.components_path,
-            components,
-            ccache_path=self.ccache_path,
-            skip_build=self.skip_build,
-        )
+        try:
+            comp_builds = await build_rpms(
+                rpms_path,
+                self.desc.el_version,
+                self.components_path,
+                components,
+                ccache_path=self.ccache_path,
+                skip_build=self.skip_build,
+            )
+        except (BuilderError, Exception) as e:
+            msg = f"error building components ({components.keys()}): {e}"
+            log.error(msg)
+            raise BuilderError(msg)
 
         log.info("sign RPMs")
         try:
-            await sign_rpms(self.secrets, comp_rpms_paths)
+            await sign_rpms(self.secrets, comp_builds)
         except BuilderError as e:
             msg = f"error signing component RPMs: {e}"
             log.error(msg)
@@ -167,36 +303,83 @@ class Builder:
             log.error(msg)
             raise BuilderError(msg)
 
-        if not self.upload:
-            return None
+        return comp_builds
 
-        log.info(f"upload RPMs: {self.upload}")
+    async def _upload(
+        self,
+        comp_infos: dict[str, BuildComponentInfo],
+        comp_builds: dict[str, ComponentBuild],
+    ) -> dict[str, ReleaseComponent]:
+        """
+        Upload the provided component builds to S3, along with a component release
+        descriptor.
+
+        Returns a dict of component names to their corresponding component release
+        descriptor.
+        """
+
+        log.info(f"upload RPMs: {self.upload}, components: {comp_builds.keys()}")
+        if not self.upload:
+            return {}
+
+        if not comp_builds:
+            msg = "unexpected empty 'components' builds dict, can't upload"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        if not comp_infos:
+            msg = "unexpected empty 'components' infos dict, can't upload"
+            log.error(msg)
+            raise BuilderError(msg)
+
         try:
             s3_comp_loc = await s3_upload_rpms(
-                self.secrets, comp_rpms_paths, self.desc.el_version
+                self.secrets, comp_builds, self.desc.el_version
             )
-        except BuilderError as e:
+        except (BuilderError, Exception) as e:
             msg = f"error uploading RPMs to S3: {e}"
             log.error(msg)
             raise BuilderError(msg)
-        except Exception as e:
-            msg = f"unknown error uploading RPMs to S3: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
 
-        log.info(f"create release descriptor for '{self.desc.version}'")
-        release_desc = await release_desc_build(
-            self.desc, components, self.components_path, s3_comp_loc
-        )
+        # create individual component's release descriptors, which will then
+        # be returned.
+        #
+        comp_releases: dict[str, ReleaseComponent] = {}
+        for name, infos in comp_infos.items():
+            if name not in s3_comp_loc:
+                msg = f"unexpected missing component '{name}' in S3 upload result"
+                log.error(msg)
+                raise BuilderError(msg)
 
-        try:
-            await release_desc_upload(self.secrets, release_desc)
-        except BuilderError as e:
-            msg = (
-                "error uploading release descriptor for version "
-                + f"'{release_desc.version}' to S3: {e}"
+            if name not in comp_builds:
+                msg = f"unexpected missing component '{name}' in builds"
+                log.error(msg)
+                raise BuilderError(msg)
+
+            comp_release = await release_component_desc(
+                self.components_path,
+                name,
+                infos,
+                s3_comp_loc[name],
+                self.desc.el_version,
             )
+            if not comp_release:
+                log.error(
+                    f"unable to obtain component '{name}' "
+                    + "release descriptor, ignore"
+                )
+                continue
+
+            comp_releases[name] = comp_release
+
+        # Upload the components' release descriptors. This operation will be performed
+        # in parallel, hence why we are doing it outside of the loop above.
+        #
+        try:
+            await release_upload_components(self.secrets, comp_releases)
+        except (BuilderError, Exception) as e:
+            msg = f"error uploading release descriptors for components: {e}"
             log.error(msg)
             raise BuilderError(msg)
 
-        return release_desc
+        return comp_releases

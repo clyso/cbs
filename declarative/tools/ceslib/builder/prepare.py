@@ -17,9 +17,9 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
-
 from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
+from ceslib.builder.utils import get_component_version
 from ceslib.utils import CommandError, async_run_cmd, git
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionComponent
@@ -31,10 +31,12 @@ log = parent_logger.getChild("prepare")
 class BuildComponentInfo(pydantic.BaseModel):
     """Contains information about a component to be built"""
 
+    name: str
     repo_path: Path
     repo_url: str
-    ref: str
+    base_ref: str
     sha1: str
+    long_version: str
 
 
 async def prepare_builder() -> None:
@@ -174,12 +176,15 @@ async def prepare_components(
     Prepares all components by cloning them and applying required patches,
     parallelizing on a per-component basis.
 
+    The `components_path` argument refers to the directory under which we can find the
+    components supported.
+
     Returns a `dict` of `BuildComponentInfo` per component name, containing the
     component's git repository, version, and SHA1, alongside the `Path` on which the
     repository has been cloned.
     """
 
-    async def _clone_repo(comp: VersionComponent) -> BuildComponentInfo:
+    async def _clone_repo(comp: VersionComponent) -> Path:
         """
         Clone component repository, returns a `BuildComponentInfo` containing its
         original repository `URL`, the `Path` to which it has been cloned, alongside
@@ -187,7 +192,7 @@ async def prepare_components(
         """
         log.debug(
             f"clone repo '{comp.repo}' to '{scratch_path}', "
-            + f"name: '{comp.name}', version: '{comp.version}'"
+            + f"name: '{comp.name}', ref: '{comp.ref}'"
         )
         start = dt.now()
         try:
@@ -196,13 +201,13 @@ async def prepare_components(
                     comp_url,
                     scratch_path,
                     comp.name,
-                    ref=comp.version,
+                    ref=comp.ref,
                     update_if_exists=True,
                     clean_if_exists=True,
                 )
         except git.GitError as e:
             log.error(
-                f"error cloning '{comp.repo}' to '{scratch_path}', version: {comp.version}: {e}"
+                f"error cloning '{comp.repo}' to '{scratch_path}', ref: {comp.ref}: {e}"
             )
             raise BuilderError(f"error cloning '{comp.repo}': {e}")
         except Exception as e:
@@ -212,19 +217,7 @@ async def prepare_components(
         delta = dt.now() - start
         log.info(f"component '{comp.name}' cloned in {delta.seconds}")
 
-        try:
-            sha1 = git.git_get_sha1(cloned_path)
-        except (git.GitError, Exception) as e:
-            msg = f"error obtaining SHA1 for repository '{cloned_path}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
-
-        return BuildComponentInfo(
-            repo_path=cloned_path,
-            repo_url=comp.repo,
-            ref=comp.version,
-            sha1=sha1,
-        )
+        return cloned_path
 
     async def _apply_patches(comp: VersionComponent, repo: Path) -> None:
         """Apply required patches to component's repository."""
@@ -263,25 +256,67 @@ async def prepare_components(
 
         patches_lst = sorted(patches_lst, key=lambda item: item[0])
 
+    async def _get_component_info(
+        comp: VersionComponent, repo_path: Path
+    ) -> BuildComponentInfo:
+        """
+        Obtain `BuildComponentInfo`, holding all the required information to build a
+        given component.
+        """
+
+        try:
+            sha1 = git.git_get_sha1(repo_path)
+        except (git.GitError, Exception) as e:
+            msg = f"error obtaining SHA1 for repository '{repo_path}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        try:
+            long_version = await get_component_version(
+                comp.name,
+                components_path,
+                repo_path,
+            )
+        except (BuilderError, Exception) as e:
+            msg = f"error obtaining version for component '{comp.name}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
+
+        return BuildComponentInfo(
+            name=comp.name,
+            repo_path=repo_path,
+            repo_url=comp.repo,
+            base_ref=comp.ref,
+            sha1=sha1,
+            long_version=long_version,
+        )
+
     async def _do_component(comp: VersionComponent) -> BuildComponentInfo:
         """
         Prepares a component, by cloning and then applying any required patches to the
         repository.
         """
         try:
-            info = await _clone_repo(comp)
+            repo_path = await _clone_repo(comp)
         except BuilderError as e:
             log.error(f"error cloning component '{comp.name}': {e}")
             raise e
 
         try:
-            await _apply_patches(comp, info.repo_path)
+            await _apply_patches(comp, repo_path)
         except BuilderError as e:
             log.error(f"error applying component patches: {e}")
             raise e
         except Exception as e:
             log.error(f"error applying component patches: {e}")
             raise e
+
+        try:
+            info = await _get_component_info(comp, repo_path)
+        except (BuilderError, Exception) as e:
+            msg = f"error obtaining version for component '{comp.name}': {e}"
+            log.error(msg)
+            raise BuilderError(msg)
 
         return info
 

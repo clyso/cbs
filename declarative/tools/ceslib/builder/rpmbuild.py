@@ -33,39 +33,6 @@ class ComponentBuild:
         self.rpms_path = rpms_path
 
 
-async def _get_component_version(
-    component_name: str, component_scripts_path: Path, repo_path: Path
-) -> str | None:
-    version_script_path = get_script_path(component_scripts_path, "get_version.*")
-    if not version_script_path:
-        log.error(
-            f"unable to find 'get_version' script for component '{component_name}'"
-        )
-        return None
-
-    cmd = [
-        version_script_path.resolve().as_posix(),
-    ]
-
-    try:
-        rc, stdout, stderr = await async_run_cmd(cmd, cwd=repo_path)
-    except CommandError as e:
-        msg = f"error running version script for '{component_name}': {e}"
-        log.error(msg)
-        raise BuilderError(msg)
-    except Exception as e:
-        msg = f"unknown exception running version script for '{component_name}: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
-
-    if rc != 0:
-        msg = f"error running version script for '{component_name}': {stderr}"
-        log.error(msg)
-        raise BuilderError(msg)
-
-    return stdout.strip()
-
-
 def _get_component_build_script(
     component_name: str, component_scripts_path: Path
 ) -> Path | None:
@@ -214,21 +181,9 @@ async def build_rpms(
             log.warning(f"build script not found for '{comp_name}'")
             continue
 
-        try:
-            comp_version = await _get_component_version(
-                comp_name, comp_scripts_path, comp_info.repo_path
-            )
-        except BuilderError as e:
-            msg = f"error building RPMs for '{comp_name}', unable to find version: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
-
-        if not comp_version:
-            msg = f"unable to obtain version for '{comp_name}'"
-            log.error(msg)
-            raise BuilderError(msg)
-
-        to_build[comp_name] = _ToBuildComponent(build_script_path, comp_version)
+        to_build[comp_name] = _ToBuildComponent(
+            build_script_path, comp_info.long_version
+        )
 
     try:
         async with asyncio.TaskGroup() as tg:
