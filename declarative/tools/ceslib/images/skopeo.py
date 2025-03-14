@@ -24,7 +24,7 @@ from ceslib.images import get_image_name
 from ceslib.images import log as parent_logger
 from ceslib.images.errors import SkopeoError
 from ceslib.images.signing import sign
-from ceslib.utils import run_cmd
+from ceslib.utils import CmdArgs, Password, run_cmd
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
 log = parent_logger.getChild("skopeo")
@@ -35,8 +35,8 @@ class SkopeoTagListResult(pydantic.BaseModel):
     tags: list[str] = pydantic.Field(alias="Tags")
 
 
-def skopeo(args: list[str]) -> tuple[int, str, str]:
-    cmd = ["skopeo"] + args
+def skopeo(args: CmdArgs) -> tuple[int, str, str]:
+    cmd: CmdArgs = ["skopeo"] + args
     return run_cmd(cmd)
 
 
@@ -75,7 +75,7 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
             [
                 "copy",
                 "--dest-creds",
-                f"{user}:{passwd}",
+                Password(f"{user}:{passwd}"),
                 f"docker://{src}",
                 f"docker://{dst}",
             ]

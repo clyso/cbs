@@ -16,7 +16,7 @@ from typing import override
 
 from ceslib.errors import CESError
 from ceslib.images import log as parent_logger
-from ceslib.utils import CommandError, async_run_cmd, run_cmd
+from ceslib.utils import CmdArgs, CommandError, PasswordArg, async_run_cmd, run_cmd
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
 log = parent_logger.getChild("sign")
@@ -35,12 +35,12 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
         log.error(f"error obtaining harbor credentials: {e}")
         raise e
 
-    cmd = [
+    cmd: CmdArgs = [
         "cosign",
         "sign",
         "--key=hashivault://container-image-key",
-        f"--registry-username={username}",
-        f"--registry-password={password}",
+        PasswordArg("--registry-username", username),
+        PasswordArg("--registry-password", password),
         "--tlog-upload=false",
         "--upload=true",
         img,
@@ -74,12 +74,12 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
         log.error(msg)
         raise SigningError(msg)
 
-    cmd = [
+    cmd: CmdArgs = [
         "cosign",
         "sign",
         "--key=hashivault://container-image-key",
-        f"--registry-username={username}",
-        f"--registry-password={password}",
+        PasswordArg("--registry-username", username),
+        PasswordArg("--registry-password", password),
         "--tlog-upload=false",
         "--upload=true",
         img,

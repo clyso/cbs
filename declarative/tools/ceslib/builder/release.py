@@ -27,7 +27,7 @@ from ceslib.builder import (
 )
 from ceslib.builder.prepare import BuildComponentInfo
 from ceslib.builder.upload import S3ComponentLocation, s3_download_json, s3_upload_json
-from ceslib.utils import CommandError, async_run_cmd
+from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
 
@@ -89,7 +89,7 @@ async def _get_comp_release_rpm(
         )
         return None
 
-    cmd = [
+    cmd: CmdArgs = [
         release_rpm_script.resolve().as_posix(),
         str(el_version),
     ]

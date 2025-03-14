@@ -11,6 +11,11 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+# NOTE: pydantic makes basedpyright complain about 'Any' when using Field
+# defaults. Disable temporarily.
+#
+# pyright: reportAny=false, reportUnknownArgumentType=false
+
 from __future__ import annotations
 
 import logging
@@ -28,7 +33,7 @@ from typing import override
 
 import pydantic
 from ceslib.errors import CESError
-from ceslib.utils import log as parent_logger
+from ceslib.utils import MaybeSecure, Password, SecureURL, log as parent_logger
 from ceslib.utils.vault import Vault, VaultError
 
 log = parent_logger.getChild("secrets")
@@ -144,7 +149,7 @@ class SecretsVaultMgr:
         self.log = log.getChild("secrets-vault-mgr")
 
     @contextmanager
-    def git_url_for(self, url: str) -> Generator[str]:
+    def git_url_for(self, url: str) -> Generator[MaybeSecure]:
         entry: GitSSHSecrets | GitHTTPSSecrets | None = None
         pattern = re.compile(r"^(?:https:\/\/)?([^./]+(?:\.[^./]+)+(?:\/.*)?)$")
         for target, secrets_entry in self.secrets.git.items():
@@ -247,8 +252,13 @@ Host {remote_name}
             except KeyError as e:
                 raise SecretsVaultError(f"error obtaining https credentials: {e}")
 
-            https_url = f"https://{username}:{password}@{matched_url}"
-            yield https_url
+            https_secure_url = SecureURL(
+                "https://{username}:{password}@{url}",
+                username=username,
+                password=Password(password),
+                url=matched_url,
+            )
+            yield https_secure_url
 
     def harbor_creds(self) -> tuple[str, str, str]:
         try:

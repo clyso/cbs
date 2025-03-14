@@ -19,7 +19,7 @@ from pathlib import Path
 from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
 from ceslib.builder import log as parent_logger
 from ceslib.builder.prepare import BuildComponentInfo
-from ceslib.utils import CommandError, async_run_cmd
+from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 
 log = parent_logger.getChild("rpmbuild")
 
@@ -88,7 +88,7 @@ async def _build_component(
     if skip_build:
         return 1, comp_rpms_path
 
-    cmd = [
+    cmd: CmdArgs = [
         script_path.resolve().as_posix(),
         repo_path.resolve().as_posix(),
         str(el_version),
@@ -153,7 +153,7 @@ async def _install_deps(
             clog.debug(s)
 
         repo_path = comp.repo_path.resolve()
-        cmd = [
+        cmd: CmdArgs = [
             install_deps_script.resolve().as_posix(),
             repo_path.as_posix(),
         ]

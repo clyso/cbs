@@ -15,7 +15,7 @@ from typing import override
 
 from ceslib.errors import CESError
 
-from . import async_run_cmd
+from . import CmdArgs, async_run_cmd
 from . import log as parent_logger
 
 log = parent_logger.getChild("podman")
@@ -46,7 +46,7 @@ async def podman_run(
     use_host_network: bool = False,
     unconfined: bool = False,
 ) -> tuple[int, str, str]:
-    cmd = ["podman", "run", "--security-opt", "label=disable"]
+    cmd: CmdArgs = ["podman", "run", "--security-opt", "label=disable"]
 
     if use_user_ns:
         cmd.extend(["--userns", "keep-id"])

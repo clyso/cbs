@@ -21,7 +21,7 @@ from typing import Callable, override
 
 from ceslib.errors import CESError
 from ceslib.images.signing import SigningError, async_sign
-from ceslib.utils import CommandError, async_run_cmd
+from ceslib.utils import CmdArgs, CommandError, Password, async_run_cmd
 from ceslib.utils import log as parent_logger
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
@@ -36,7 +36,7 @@ class BuildahError(CESError):
 
 
 async def _buildah_run(
-    cmd: list[str],
+    cmd: CmdArgs,
     *,
     cid: str | None = None,
     args: list[str] | None = None,
@@ -94,28 +94,28 @@ class BuildahContainer:
         labels: dict[str, str] | None = None,
         env: dict[str, str] | None = None,
     ) -> None:
-        args: list[str] = []
+        cmd: CmdArgs = []
 
         if author:
-            args.extend(["--author", author])
+            cmd.extend(["--author", author])
 
         if annotations:
             for key, value in annotations.items():
-                args.extend(["--annotation", f"{key}={value}"])
+                cmd.extend(["--annotation", f"{key}={value}"])
 
         if labels:
             for key, value in labels.items():
-                args.extend(["--label", f"{key}={value}"])
+                cmd.extend(["--label", f"{key}={value}"])
 
         if env:
             for key, value in env.items():
-                args.extend(["--env", f"{key.upper()}={value}"])
+                cmd.extend(["--env", f"{key.upper()}={value}"])
 
-        if len(args) == 0:
+        if len(cmd) == 0:
             log.warning("set config called without arguments")
             return
 
-        cmd = ["config"] + args
+        cmd = ["config"] + cmd
         try:
             rc, _, stderr = await _buildah_run(cmd, cid=self.cid)
         except BuildahError as e:
@@ -130,7 +130,7 @@ class BuildahContainer:
 
     async def copy(self, source: Path, dest: str) -> None:
         log.debug(f"copy from '{source}' to '{dest}'")
-        cmd = ["copy"]
+        cmd: CmdArgs = ["copy"]
         args = [source.resolve().as_posix(), dest]
         try:
             rc, _, stderr = await _buildah_run(
@@ -151,7 +151,7 @@ class BuildahContainer:
             log.debug(s)
 
         log.debug(f"run '{args}'")
-        cmd = ["run", "--isolation", "chroot"]
+        cmd: CmdArgs = ["run", "--isolation", "chroot"]
         try:
             rc, _, stderr = await _buildah_run(
                 cmd, cid=self.cid, args=args, with_args_divider=True, outcb=_out
@@ -239,7 +239,7 @@ class BuildahContainer:
                 [
                     "push",
                     "--creds",
-                    f"{username}:{password}",
+                    Password(f"{username}:{password}"),
                     "--digestfile",
                     digest_file,
                     url,
@@ -285,7 +285,7 @@ class BuildahContainer:
 
 
 async def buildah_new_container(desc: VersionDescriptor) -> BuildahContainer:
-    create_args = ["from", desc.distro]
+    create_args: CmdArgs = ["from", desc.distro]
     try:
         rc, stdout, stderr = await _buildah_run(create_args)
     except BuildahError as e:
