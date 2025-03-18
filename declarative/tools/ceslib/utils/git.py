@@ -200,6 +200,16 @@ async def _clean(repo_path: Path) -> None:
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
 
+async def git_checkout(ref: str, repo_path: Path) -> None:
+    """Checkout a reference pointed to by `ref`, in repository `repo_path`."""
+    try:
+        _ = await run_git(["checkout", "--quiet", ref], path=repo_path)
+    except GitError as e:
+        msg = f"unable to checkout ref '{ref}' in repository '{repo_path}': {e}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+
 async def git_clone(
     repo: MaybeSecure,
     dest: Path,
@@ -249,12 +259,11 @@ async def git_clone(
 
     if ref is not None:
         try:
-            _ = await run_git(["checkout", "--quiet", ref], path=repo_path)
+            await git_checkout(ref, repo_path)
         except GitError as e:
-            log.error(f"unable to checkout ref '{ref}' in '{repo_path}': {e}")
-            raise GitError(
-                errno.ENOTRECOVERABLE, f"unable to checkout '{ref}' in '{repo_path}'"
-            )
+            msg = f"error cloning repository: {e}"
+            log.error(msg)
+            raise GitError(errno.ENOTRECOVERABLE, msg)
 
     return repo_path
 
@@ -275,6 +284,20 @@ async def git_get_sha1(repo_path: Path) -> str:
     val = await run_git(["rev-parse", "HEAD"], path=repo_path)
     if len(val) == 0:
         msg = f"unable to obtain current SHA1 on repository '{repo_path}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+    return val.strip()
+
+
+async def git_get_current_branch(repo_path: Path) -> str:
+    """Obtain the name of the currently checked out branch."""
+    val = await run_git(["rev-parse", "--abbrev-ref", "HEAD"], path=repo_path)
+    if not val:
+        msg = (
+            "unable to obtain current checked out branch's "
+            + f"name on repository '{repo_path}'"
+        )
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
