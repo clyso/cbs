@@ -42,6 +42,10 @@ class GitConfigNotSetError(GitError):
 
 
 async def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
+    """
+    Runs a git command within the repository in `path`, if provided, or in the
+    current directory otherwise
+    """
     cmd: CmdArgs = ["git"]
     if path is not None:
         cmd.extend(["-C", path.resolve().as_posix()])
@@ -63,6 +67,10 @@ async def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
 
 
 async def get_git_user() -> tuple[str, str]:
+    """
+    Obtains the current repository's git user and email, returned as a tuple.
+    """
+
     async def _run_git_config_for(v: str) -> str:
         val = await run_git(["config", v])
         if len(val) == 0:
@@ -78,6 +86,7 @@ async def get_git_user() -> tuple[str, str]:
 
 
 async def get_git_repo_root() -> Path:
+    """Obtain the root of the current git repository."""
     val = await run_git(["rev-parse", "--show-toplevel"])
     if len(val) == 0:
         log.error("unable to obtain toplevel git directory path")
@@ -93,6 +102,10 @@ async def get_git_modified_paths(
     in_repo_path: str | None = None,
     repo_path: Path | None = None,
 ) -> tuple[list[Path], list[Path]]:
+    """
+    Obtains all modifications since `ref` on the repository specified by `path`, or,
+    if not specified, on the git repository existing in current directory.
+    """
     try:
         cmd: CmdArgs = [
             "diff-tree",
@@ -154,6 +167,7 @@ async def get_git_modified_paths(
 
 
 async def _clone(repo: MaybeSecure, dest_path: Path) -> None:
+    """Clones a repository from `repo` to `dest_path`."""
     try:
         _ = await run_git(["clone", "--quiet", repo, dest_path.resolve().as_posix()])
     except GitError as e:
@@ -164,6 +178,7 @@ async def _clone(repo: MaybeSecure, dest_path: Path) -> None:
 
 
 async def _update(repo: MaybeSecure, repo_path: Path) -> None:
+    """Update a git repository in `repo_path` from its upstream at `repo`."""
     try:
         _ = await run_git(["remote", "set-url", "origin", repo], path=repo_path)
         _ = await run_git(["remote", "update"], path=repo_path)
@@ -174,6 +189,7 @@ async def _update(repo: MaybeSecure, repo_path: Path) -> None:
 
 
 async def _clean(repo_path: Path) -> None:
+    """Clean up the git repository in `repo_path`, including submodules."""
     try:
         _ = await run_git(["reset", "--hard"], path=repo_path)
         _ = await run_git(["submodule", "foreach", "git clean -fdx"], path=repo_path)
@@ -193,6 +209,15 @@ async def git_clone(
     update_if_exists: bool = False,
     clean_if_exists: bool = False,
 ) -> Path:
+    """
+    Clone a git repository from `repo` to `dest`, using `name` for the repository, if
+    it doesn't currently exist.
+    If a `ref` is provided, checkout said reference.
+    If `update_if_exists` is True, update the repository if it already exists.
+    If `clean_if_exists` is True, clean up the existing repository.
+
+    Returns the path to the repository.
+    """
     if not dest.exists():
         log.error(f"destination path at '{dest}' does not exist")
         raise GitError(errno.ENOENT, f"path at '{dest}' does not exist")
@@ -235,6 +260,7 @@ async def git_clone(
 
 
 async def git_apply(repo_path: Path, patch_path: Path) -> None:
+    """Apply a patch onto the repository specified by `repo_path`."""
     try:
         _ = await run_git(["apply", patch_path.resolve().as_posix()], path=repo_path)
     except GitError as e:
