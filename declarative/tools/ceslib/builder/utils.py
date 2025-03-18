@@ -20,7 +20,7 @@ from ceslib.builder import (
     get_script_path,
 )
 from ceslib.builder import log as parent_logger
-from ceslib.utils import CommandError, async_run_cmd
+from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 
 log = parent_logger.getChild("utils")
 
@@ -53,7 +53,7 @@ async def get_component_version(
         log.error(msg)
         raise MissingScriptError("get_version", msg=msg)
 
-    cmd = [
+    cmd: CmdArgs = [
         version_script_path.resolve().as_posix(),
     ]
 

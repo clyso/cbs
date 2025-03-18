@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 from typing import override
+
 from ceslib.errors import CESError
 
 

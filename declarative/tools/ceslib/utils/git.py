@@ -14,12 +14,11 @@
 
 import errno
 import re
-import subprocess
 from pathlib import Path
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.utils import CmdArgs, MaybeSecure, get_unsecured_cmd
+from ceslib.utils import CmdArgs, MaybeSecure, async_run_cmd
 from ceslib.utils import log as parent_logger
 
 log = parent_logger.getChild("git")
@@ -42,7 +41,7 @@ class GitConfigNotSetError(GitError):
         super().__init__(errno.ENOENT, f"{what} not set in config")
 
 
-def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
+async def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
     cmd: CmdArgs = ["git"]
     if path is not None:
         cmd.extend(["-C", path.resolve().as_posix()])
@@ -50,36 +49,36 @@ def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
     cmd.extend(args)
     log.debug(f"run {cmd}")
     try:
-        p = subprocess.run(get_unsecured_cmd(cmd), capture_output=True)
+        rc, stdout, stderr = await async_run_cmd(cmd)
     except Exception as e:
         msg = f"unexpected error running command: {e}"
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
-    if p.returncode != 0:
-        log.error(f"unable to obtain result from git '{args}': {p.stderr}")
-        raise GitError(p.returncode, p.stderr.decode("utf-8"))
+    if rc != 0:
+        log.error(f"unable to obtain result from git '{args}': {stderr}")
+        raise GitError(rc, stderr)
 
-    return p.stdout.decode("utf-8")
+    return stdout
 
 
-def get_git_user() -> tuple[str, str]:
-    def _run_git_config_for(v: str) -> str:
-        val = run_git(["config", v])
+async def get_git_user() -> tuple[str, str]:
+    async def _run_git_config_for(v: str) -> str:
+        val = await run_git(["config", v])
         if len(val) == 0:
             log.error(f"'{v}' not set in git config")
             raise GitConfigNotSetError(v)
 
         return val.strip()
 
-    user_name = _run_git_config_for("user.name")
-    user_email = _run_git_config_for("user.email")
+    user_name = await _run_git_config_for("user.name")
+    user_email = await _run_git_config_for("user.email")
     assert len(user_name) > 0 and len(user_email) > 0
     return (user_name, user_email)
 
 
-def get_git_repo_root() -> Path:
-    val = run_git(["rev-parse", "--show-toplevel"])
+async def get_git_repo_root() -> Path:
+    val = await run_git(["rev-parse", "--show-toplevel"])
     if len(val) == 0:
         log.error("unable to obtain toplevel git directory path")
         raise GitError(errno.ENOENT, "top-level git directory not found")
@@ -87,7 +86,7 @@ def get_git_repo_root() -> Path:
     return Path(val.strip())
 
 
-def get_git_modified_paths(
+async def get_git_modified_paths(
     base_sha: str,
     ref: str,
     *,
@@ -109,7 +108,7 @@ def get_git_modified_paths(
         if in_repo_path:
             cmd.extend(["--", in_repo_path])
 
-        val = run_git(cmd, path=repo_path)
+        val = await run_git(cmd, path=repo_path)
     except GitError as e:
         log.error(f"error: unable to obtain latest patch: {e}")
         raise GitError(
@@ -154,9 +153,9 @@ def get_git_modified_paths(
     return descs_modified, descs_deleted
 
 
-def _clone(repo: MaybeSecure, dest_path: Path) -> None:
+async def _clone(repo: MaybeSecure, dest_path: Path) -> None:
     try:
-        _ = run_git(["clone", "--quiet", repo, dest_path.resolve().as_posix()])
+        _ = await run_git(["clone", "--quiet", repo, dest_path.resolve().as_posix()])
     except GitError as e:
         log.error(f"unable to clone '{repo}' to '{dest_path}': {e}")
         raise GitError(
@@ -164,28 +163,28 @@ def _clone(repo: MaybeSecure, dest_path: Path) -> None:
         )
 
 
-def _update(repo: MaybeSecure, repo_path: Path) -> None:
+async def _update(repo: MaybeSecure, repo_path: Path) -> None:
     try:
-        _ = run_git(["remote", "set-url", "origin", repo], path=repo_path)
-        _ = run_git(["remote", "update"], path=repo_path)
+        _ = await run_git(["remote", "set-url", "origin", repo], path=repo_path)
+        _ = await run_git(["remote", "update"], path=repo_path)
     except GitError as e:
         msg = f"unable to update '{repo_path}': {e}'"
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
 
-def _clean(repo_path: Path) -> None:
+async def _clean(repo_path: Path) -> None:
     try:
-        _ = run_git(["reset", "--hard"], path=repo_path)
-        _ = run_git(["submodule", "foreach", "git clean -fdx"], path=repo_path)
-        _ = run_git(["clean", "-fdx"], path=repo_path)
+        _ = await run_git(["reset", "--hard"], path=repo_path)
+        _ = await run_git(["submodule", "foreach", "git clean -fdx"], path=repo_path)
+        _ = await run_git(["clean", "-fdx"], path=repo_path)
     except GitError as e:
         msg = f"unable to clean '{repo_path}': {e}"
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
 
-def git_clone(
+async def git_clone(
     repo: MaybeSecure,
     dest: Path,
     name: str,
@@ -208,10 +207,10 @@ def git_clone(
         log.info(f"destination repo at '{repo_path}' exists, update instead")
 
         try:
-            _update(repo, repo_path)
+            await _update(repo, repo_path)
 
             if clean_if_exists:
-                _clean(repo_path)
+                await _clean(repo_path)
 
         except GitError as e:
             msg = f"unable to update '{repo}' at '{repo_path}': {e}"
@@ -221,11 +220,11 @@ def git_clone(
     else:
         log.info(f"cloning '{repo}' to new destination '{repo_path}'")
         # propagate exception to caller
-        _clone(repo, repo_path)
+        await _clone(repo, repo_path)
 
     if ref is not None:
         try:
-            _ = run_git(["checkout", "--quiet", ref], path=repo_path)
+            _ = await run_git(["checkout", "--quiet", ref], path=repo_path)
         except GitError as e:
             log.error(f"unable to checkout ref '{ref}' in '{repo_path}': {e}")
             raise GitError(
@@ -235,9 +234,9 @@ def git_clone(
     return repo_path
 
 
-def git_apply(repo_path: Path, patch_path: Path) -> None:
+async def git_apply(repo_path: Path, patch_path: Path) -> None:
     try:
-        _ = run_git(["apply", patch_path.resolve().as_posix()], path=repo_path)
+        _ = await run_git(["apply", patch_path.resolve().as_posix()], path=repo_path)
     except GitError as e:
         msg = f"error applying patch '{patch_path}' to '{repo_path}': {e}"
         log.error(msg)
@@ -245,9 +244,9 @@ def git_apply(repo_path: Path, patch_path: Path) -> None:
     pass
 
 
-def git_get_sha1(repo_path: Path) -> str:
+async def git_get_sha1(repo_path: Path) -> str:
     """For the repository in `repo_path`, obtain its currently checked out SHA1."""
-    val = run_git(["rev-parse", "HEAD"], path=repo_path)
+    val = await run_git(["rev-parse", "HEAD"], path=repo_path)
     if len(val) == 0:
         msg = f"unable to obtain current SHA1 on repository '{repo_path}"
         log.error(msg)

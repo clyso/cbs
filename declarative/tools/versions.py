@@ -13,6 +13,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
 import enum
 import errno
 import logging
@@ -21,16 +22,16 @@ import sys
 from typing import cast
 
 import click
+from ceslib.errors import CESError, NoSuchVersionError
+from ceslib.images.desc import get_image_desc
+from ceslib.logging import log as root_logger
+from ceslib.utils.git import get_git_repo_root, get_git_user
 from ceslib.versions.desc import (
     VersionComponent,
     VersionDescriptor,
     VersionImage,
     VersionSignedOffBy,
 )
-from ceslib.errors import CESError, NoSuchVersionError
-from ceslib.images.desc import get_image_desc
-from ceslib.logging import log as root_logger
-from ceslib.utils.git import get_git_repo_root, get_git_user
 
 log = root_logger.getChild("builds")
 
@@ -166,6 +167,118 @@ def _get_build_type(types_lst: list[tuple[str, int]]) -> BuildType:
     return what
 
 
+async def _create(
+    version: str,
+    build_types: list[str],
+    components: list[str],
+    component_overrides: list[str],
+    distro: str,
+    el_version: int,
+    registry: str,
+    image_name: str,
+    image_tag: str | None,
+) -> None:
+    if not _validate_version(version):
+        log.error(f"malformed version '{version}'")
+        sys.exit(errno.EINVAL)
+
+    types_lst = _parse_types(build_types)
+    build_type_dir_name = (
+        "testing" if _get_build_type(types_lst) == BuildType.TESTING else "releases"
+    )
+
+    components_map = _parse_components(components)
+    if len(components_map) == 0:
+        log.error("missing valid components")
+        sys.exit(errno.EINVAL)
+
+    for c in components_map.keys():
+        if c not in component_repos:
+            log.error(f"unknown component '{c}' specified")
+            sys.exit(errno.ENOENT)
+
+    component_overrides_map = _parse_component_overrides(component_overrides)
+    for c in component_overrides_map:
+        if c not in components_map:
+            log.error(f"missing component '{c}' for override")
+            sys.exit(errno.ENOENT)
+
+    version_types = "-".join([f"{t}.{n}" for t, n in types_lst])
+    version_str = f"{version}" + (f"-{version_types}" if version_types else "")
+    version_types_title = " ".join(
+        [f"{release_types[t][1]} #{n}" for t, n in types_lst]
+    )
+    version_title = f"Release {version}" + (
+        f", {version_types_title}" if version_types_title else ""
+    )
+
+    print(f"version types: {version_types}")
+    print(f"version str: {version_str}")
+    print(f"version types title: {version_types_title}")
+    print(f"version title: {version_title}")
+
+    user_name, user_email = await get_git_user()
+
+    repo_path = await get_git_repo_root()
+    version_path = (
+        repo_path.joinpath("versions")
+        .joinpath(build_type_dir_name)
+        .joinpath(f"{version_str}.json")
+    )
+    if version_path.exists():
+        log.error(f"version for {version_str} already exists")
+        sys.exit(errno.EEXIST)
+
+    version_path.parent.mkdir(parents=True, exist_ok=True)
+
+    component_res: list[VersionComponent] = []
+    for comp_name, comp_version in components_map.items():
+        comp_repo = component_repos[comp_name]
+        if comp_name in component_overrides_map:
+            comp_repo = component_overrides_map[comp_name]
+
+        component_res.append(
+            VersionComponent(name=comp_name, repo=comp_repo, ref=comp_version)
+        )
+
+    image_tag_str = image_tag if image_tag else version_str
+
+    desc = VersionDescriptor(
+        version=version_str,
+        title=version_title,
+        signed_off_by=VersionSignedOffBy(
+            user=user_name,
+            email=user_email,
+        ),
+        image=VersionImage(
+            registry=registry,
+            name=image_name,
+            tag=image_tag_str,
+        ),
+        components=component_res,
+        distro=distro,
+        el_version=el_version,
+    )
+    desc_json = desc.model_dump_json(indent=2)
+    print(desc_json)
+
+    try:
+        desc.write(version_path)
+    except Exception as e:
+        log.error(f"unable to write descriptor at '{version_path}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    log.info(f"-> written to {version_path}")
+
+    # check if image descriptor for this version exists
+    try:
+        _ = await get_image_desc(version_str)
+    except NoSuchVersionError:
+        log.warning(f"image descriptor for version '{version_str}' missing")
+    except CESError as e:
+        log.error(f"error obtaining image descriptor for '{version_str}': {e}")
+
+
 _create_help_msg = f"""Creates a new version descriptor file.
 
 Requires a VERSION to be provided, which this descriptor describes.
@@ -263,105 +376,21 @@ def build_create(
     image_name: str,
     image_tag: str | None,
 ):
-    if not _validate_version(version):
-        log.error(f"malformed version '{version}'")
-        sys.exit(errno.EINVAL)
-
-    types_lst = _parse_types(build_types)
-    build_type_dir_name = (
-        "testing" if _get_build_type(types_lst) == BuildType.TESTING else "releases"
-    )
-
-    components_map = _parse_components(components)
-    if len(components_map) == 0:
-        log.error("missing valid components")
-        sys.exit(errno.EINVAL)
-
-    for c in components_map.keys():
-        if c not in component_repos:
-            log.error(f"unknown component '{c}' specified")
-            sys.exit(errno.ENOENT)
-
-    component_overrides_map = _parse_component_overrides(component_overrides)
-    for c in component_overrides_map:
-        if c not in components_map:
-            log.error(f"missing component '{c}' for override")
-            sys.exit(errno.ENOENT)
-
-    version_types = "-".join([f"{t}.{n}" for t, n in types_lst])
-    version_str = f"{version}" + (f"-{version_types}" if version_types else "")
-    version_types_title = " ".join(
-        [f"{release_types[t][1]} #{n}" for t, n in types_lst]
-    )
-    version_title = f"Release {version}" + (
-        f", {version_types_title}" if version_types_title else ""
-    )
-
-    print(f"version types: {version_types}")
-    print(f"version str: {version_str}")
-    print(f"version types title: {version_types_title}")
-    print(f"version title: {version_title}")
-
-    user_name, user_email = get_git_user()
-
-    repo_path = get_git_repo_root()
-    version_path = (
-        repo_path.joinpath("versions")
-        .joinpath(build_type_dir_name)
-        .joinpath(f"{version_str}.json")
-    )
-    if version_path.exists():
-        log.error(f"version for {version_str} already exists")
-        sys.exit(errno.EEXIST)
-
-    version_path.parent.mkdir(parents=True, exist_ok=True)
-
-    component_res: list[VersionComponent] = []
-    for comp_name, comp_version in components_map.items():
-        comp_repo = component_repos[comp_name]
-        if comp_name in component_overrides_map:
-            comp_repo = component_overrides_map[comp_name]
-
-        component_res.append(
-            VersionComponent(name=comp_name, repo=comp_repo, ref=comp_version)
+    asyncio.run(
+        _create(
+            version,
+            build_types,
+            components,
+            component_overrides,
+            distro,
+            el_version,
+            registry,
+            image_name,
+            image_tag,
         )
-
-    image_tag_str = image_tag if image_tag else version_str
-
-    desc = VersionDescriptor(
-        version=version_str,
-        title=version_title,
-        signed_off_by=VersionSignedOffBy(
-            user=user_name,
-            email=user_email,
-        ),
-        image=VersionImage(
-            registry=registry,
-            name=image_name,
-            tag=image_tag_str,
-        ),
-        components=component_res,
-        distro=distro,
-        el_version=el_version,
     )
-    desc_json = desc.model_dump_json(indent=2)
-    print(desc_json)
 
-    try:
-        desc.write(version_path)
-    except Exception as e:
-        log.error(f"unable to write descriptor at '{version_path}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    log.info(f"-> written to {version_path}")
-
-    # check if image descriptor for this version exists
-    try:
-        _ = get_image_desc(version_str)
-    except NoSuchVersionError:
-        log.warning(f"image descriptor for version '{version_str}' missing")
-    except CESError as e:
-        log.error(f"error obtaining image descriptor for '{version_str}': {e}")
+    pass
 
 
 if __name__ == "__main__":

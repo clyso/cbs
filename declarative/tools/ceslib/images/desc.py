@@ -38,7 +38,7 @@ class ImageDescriptor(pydantic.BaseModel):
     images: list[ImageLocations]
 
 
-def get_image_desc(version: str) -> ImageDescriptor:
+async def get_image_desc(version: str) -> ImageDescriptor:
     m = re.match(r".*v(\d+\.\d+\.\d+).*", version)
     if m is None:
         raise MalformedVersionError()
@@ -51,7 +51,7 @@ def get_image_desc(version: str) -> ImageDescriptor:
     def _gen_candidates(base_path: Path, files: list[str]) -> list[Path]:
         return [base_path.joinpath(f) for f in files if _file_matches(f)]
 
-    desc_path = get_git_repo_root().joinpath("desc")
+    desc_path = (await get_git_repo_root()).joinpath("desc")
     if not desc_path.exists():
         log.error(f"descriptor directory not found at '{desc_path}'")
         raise NoSuchVersionError()

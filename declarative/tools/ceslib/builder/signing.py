@@ -19,7 +19,7 @@ from pathlib import Path
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
 from ceslib.builder.rpmbuild import ComponentBuild
-from ceslib.utils import CommandError, async_run_cmd
+from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
 
 log = parent_logger.getChild("signing")
@@ -28,7 +28,7 @@ log = parent_logger.getChild("signing")
 async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) -> None:
     log.debug(f"sign rpm '{rpm_path}'")
 
-    cmd = [
+    cmd: CmdArgs = [
         "rpm",
         "--addsign",
         "--define",

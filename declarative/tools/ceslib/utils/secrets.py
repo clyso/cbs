@@ -33,7 +33,8 @@ from typing import override
 
 import pydantic
 from ceslib.errors import CESError
-from ceslib.utils import MaybeSecure, Password, SecureURL, log as parent_logger
+from ceslib.utils import MaybeSecure, Password, SecureURL
+from ceslib.utils import log as parent_logger
 from ceslib.utils.vault import Vault, VaultError
 
 log = parent_logger.getChild("secrets")

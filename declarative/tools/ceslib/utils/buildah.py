@@ -12,11 +12,11 @@
 # GNU General Public License for more details.
 
 
+import os
+import tempfile
 from datetime import datetime as dt
 from datetime import timezone as tz
-import os
 from pathlib import Path
-import tempfile
 from typing import Callable, override
 
 from ceslib.errors import CESError

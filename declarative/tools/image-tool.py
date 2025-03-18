@@ -13,6 +13,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
 import logging
 import os
 import sys
@@ -31,31 +32,7 @@ ourdir = os.path.dirname(os.path.realpath(__file__))
 log = root_logger.getChild("images-tool")
 
 
-@click.group()
-@click.option("-d", "--debug", envvar="CES_TOOL_DEBUG", is_flag=True)
-def main(debug: bool) -> None:
-    if debug:
-        root_logger.setLevel(logging.DEBUG)
-    pass
-
-
-@main.command()
-@click.argument("version", type=str)
-@click.option("-f", "--force", is_flag=True, default=False)
-@click.option("--dry-run", is_flag=True, default=False)
-@click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
-@click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
-@click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
-@click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
-@click.option(
-    "--secrets",
-    "secrets_path",
-    type=click.Path(
-        exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path
-    ),
-    required=True,
-)
-def sync(
+async def _sync(
     version: str,
     force: bool,
     dry_run: bool,
@@ -66,7 +43,7 @@ def sync(
     secrets_path: Path,
 ) -> None:
     try:
-        desc = get_image_desc(version)
+        desc = await get_image_desc(version)
     except CESError as e:
         click.echo(f"error: {e}")
         sys.exit(1)
@@ -105,6 +82,56 @@ def sync(
             sys.exit(1)
 
         log.info(f"copied image from '{image.src}' to '{image.dst}'")
+    pass
+
+
+@click.group()
+@click.option("-d", "--debug", envvar="CES_TOOL_DEBUG", is_flag=True)
+def main(debug: bool) -> None:
+    if debug:
+        root_logger.setLevel(logging.DEBUG)
+    pass
+
+
+@main.command()
+@click.argument("version", type=str)
+@click.option("-f", "--force", is_flag=True, default=False)
+@click.option("--dry-run", is_flag=True, default=False)
+@click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
+@click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
+@click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
+@click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
+@click.option(
+    "--secrets",
+    "secrets_path",
+    type=click.Path(
+        exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path
+    ),
+    required=True,
+)
+def sync(
+    version: str,
+    force: bool,
+    dry_run: bool,
+    vault_addr: str,
+    vault_role_id: str,
+    vault_secret_id: str,
+    vault_transit: str,
+    secrets_path: Path,
+) -> None:
+    asyncio.run(
+        _sync(
+            version,
+            force,
+            dry_run,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit,
+            secrets_path,
+        )
+    )
+    pass
 
 
 @main.command()

@@ -13,6 +13,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
 import errno
 import logging
 import re
@@ -45,14 +46,28 @@ class DescriptorEntry:
     version_desc: VersionDescriptor
     image_desc: ImageDescriptor
 
-    def __init__(self, build_name: str, build_type: str, path: Path):
+    def __init__(
+        self,
+        build_name: str,
+        build_type: str,
+        version_desc: VersionDescriptor,
+        image_desc: ImageDescriptor,
+    ):
         self.build_name = build_name
         self.build_type = build_type
-        self.version_desc = VersionDescriptor.read(path)
+        self.version_desc = version_desc
+        self.image_desc = image_desc
+        self.version_desc = version_desc
+        self.image_desc = image_desc
 
-        # propagate exception
-        raw_version = get_raw_version(self.version_desc.version)
-        self.image_desc = get_image_desc(raw_version)
+
+async def get_descriptor_entry(
+    build_name: str, build_type: str, path: Path
+) -> DescriptorEntry:
+    version_desc = VersionDescriptor.read(path)
+    raw_version = get_raw_version(version_desc.version)
+    image_desc = await get_image_desc(raw_version)
+    return DescriptorEntry(build_name, build_type, version_desc, image_desc)
 
 
 def attempt_sync_images(
@@ -95,35 +110,23 @@ def attempt_sync_images(
     return True
 
 
-@click.command()
-@click.option("-d", "--debug", is_flag=True)
-@click.option("--base-path", envvar="VERSIONS_BASE_PATH", type=str, required=True)
-@click.option("--base-sha", envvar="BUILD_BASE_SHA", type=str, required=True)
-@click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
-@click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
-@click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
-@click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
-def main(
-    debug: bool,
+async def _handle_builds(
     base_path: str,
     base_sha: str,
     vault_addr: str,
     vault_role_id: str,
     vault_secret_id: str,
     vault_transit: str,
-):
-    if debug:
-        root_logger.setLevel(logging.DEBUG)
-
-    log.debug(f"base_path: {base_path}, base_sha: {base_sha}")
-
+) -> None:
     secrets_path = Path(base_path).joinpath("secrets.json")
     if not secrets_path.exists():
         log.error(f"missing secrets file at '{secrets_path}'")
         sys.exit(errno.ENOENT)
 
     try:
-        modified, deleted = get_git_modified_paths(base_sha, "HEAD", base_path)
+        modified, deleted = await get_git_modified_paths(
+            base_sha, "HEAD", in_repo_path=base_path
+        )
     except GitError as e:
         log.error(f"unable to obtain modified paths: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -146,7 +149,7 @@ def main(
         build_type = build_desc_file.parent.name
 
         try:
-            desc = DescriptorEntry(build_name, build_type, build_desc_file)
+            desc = await get_descriptor_entry(build_name, build_type, build_desc_file)
         except MalformedVersionError:
             log.error(f"malformed CES version '{build_name}'")
             sys.exit(1)
@@ -160,7 +163,7 @@ def main(
         print(f"-    version: {desc.version_desc.version}")
         print("- components:")
         for c in desc.version_desc.components:
-            print(f"-- {c.name}: {c.version}")
+            print(f"-- {c.name}: {c.ref}")
         print("- images:")
         for img in desc.image_desc.images:
             print(f"-- needs: {img.dst}")
@@ -180,6 +183,40 @@ def main(
         log.info(f"images for '{desc.build_name}' synchronized")
 
         # TODO: call 'ces-build.sh' with info for this build
+    pass
+
+
+@click.command()
+@click.option("-d", "--debug", is_flag=True)
+@click.option("--base-path", envvar="VERSIONS_BASE_PATH", type=str, required=True)
+@click.option("--base-sha", envvar="BUILD_BASE_SHA", type=str, required=True)
+@click.option("--vault-addr", envvar="VAULT_ADDR", type=str, required=True)
+@click.option("--vault-role-id", envvar="VAULT_ROLE_ID", type=str, required=True)
+@click.option("--vault-secret-id", envvar="VAULT_SECRET_ID", type=str, required=True)
+@click.option("--vault-transit", envvar="VAULT_TRANSIT", type=str, required=True)
+def main(
+    debug: bool,
+    base_path: str,
+    base_sha: str,
+    vault_addr: str,
+    vault_role_id: str,
+    vault_secret_id: str,
+    vault_transit: str,
+):
+    if debug:
+        root_logger.setLevel(logging.DEBUG)
+
+    log.debug(f"base_path: {base_path}, base_sha: {base_sha}")
+    asyncio.run(
+        _handle_builds(
+            base_path,
+            base_sha,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit,
+        )
+    )
 
 
 if __name__ == "__main__":

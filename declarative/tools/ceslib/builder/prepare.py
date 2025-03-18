@@ -197,7 +197,7 @@ async def prepare_components(
         start = dt.now()
         try:
             with secrets.git_url_for(comp.repo) as comp_url:
-                cloned_path = git.git_clone(
+                cloned_path = await git.git_clone(
                     comp_url,
                     scratch_path,
                     comp.name,
@@ -237,7 +237,7 @@ async def prepare_components(
         for patch_path in patches_to_apply:
             log.info(f"applying patch from '{patch_path}'")
             try:
-                git.git_apply(repo, patch_path)
+                await git.git_apply(repo, patch_path)
             except git.GitError as e:
                 msg = f"unable to apply patch from '{patch_path}' to '{repo}': {e}"
                 log.error(msg)
@@ -265,7 +265,7 @@ async def prepare_components(
         """
 
         try:
-            sha1 = git.git_get_sha1(repo_path)
+            sha1 = await git.git_get_sha1(repo_path)
         except (git.GitError, Exception) as e:
             msg = f"error obtaining SHA1 for repository '{repo_path}': {e}"
             log.error(msg)

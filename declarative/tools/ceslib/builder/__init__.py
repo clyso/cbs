@@ -11,9 +11,10 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from pathlib import Path
 import stat
+from pathlib import Path
 from typing import override
+
 from ceslib.errors import CESError
 from ceslib.logging import log as root_logger
 
