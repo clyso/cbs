@@ -210,6 +210,31 @@ async def git_checkout(ref: str, repo_path: Path) -> None:
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
 
+async def git_pull(
+    remote: MaybeSecure,
+    *,
+    from_branch: str | None = None,
+    to_branch: str | None = None,
+    repo_path: Path | None = None,
+) -> None:
+    """Pulls commits from `remote`."""
+    log.debug(f"Pull from '{remote}' (from: {from_branch}, to: {to_branch})")
+    try:
+        cmd: CmdArgs = ["pull", remote]
+        branches: str | None = None
+        if from_branch:
+            branches = from_branch
+            if to_branch:
+                branches = f"{branches}:{to_branch}"
+        if branches:
+            cmd.append(branches)
+        _ = await run_git(cmd, path=repo_path)
+    except GitError as e:
+        msg = f"unable to pull from '{remote}': {e}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+
 async def git_clone(
     repo: MaybeSecure,
     dest: Path,
@@ -260,6 +285,14 @@ async def git_clone(
     if ref is not None:
         try:
             await git_checkout(ref, repo_path)
+
+            cur_branch = await git_get_current_branch(repo_path)
+            if cur_branch == ref:
+                # must pull in new updates
+                log.info(f"pull in updates for branch '{ref}'")
+                await git_pull(
+                    repo, from_branch=ref, to_branch=ref, repo_path=repo_path
+                )
         except GitError as e:
             msg = f"error cloning repository: {e}"
             log.error(msg)
