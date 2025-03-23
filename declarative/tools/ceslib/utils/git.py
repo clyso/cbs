@@ -210,6 +210,22 @@ async def git_checkout(ref: str, repo_path: Path) -> None:
         raise GitError(errno.ENOTRECOVERABLE, msg)
 
 
+async def git_fetch(
+    remote: str, from_ref: str, to_branch: str, *, repo_path: Path | None = None
+) -> None:
+    """Fetch a reference pointed to by `from_ref` from remote `remote` to a new branch
+    `to_branch`. If `repo_path` is specified, run the command in said path; otherwise,
+    run in current directory.
+    """
+    log.debug(f"fetch from '{remote}', source: {from_ref}, dest: {to_branch}")
+    try:
+        _ = await run_git(["fetch", remote, f"{from_ref}:{to_branch}"], path=repo_path)
+    except GitError as e:
+        msg = f"unable to fetch '{from_ref}' from '{remote}' to '{to_branch}': {e}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+
 async def git_pull(
     remote: MaybeSecure,
     *,
@@ -231,6 +247,25 @@ async def git_pull(
         _ = await run_git(cmd, path=repo_path)
     except GitError as e:
         msg = f"unable to pull from '{remote}': {e}"
+        log.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg)
+
+
+async def git_cherry_pick(
+    sha: str, *, sha_end: str | None = None, repo_path: Path | None = None
+) -> None:
+    """
+    Cherry-picks a given `sha` to the currently checked out branch. If `sha_end` is
+    provided, will cherry-pick the patches `[sha~1, sha_end]`.
+    If `repo_path` is provided, run the command in said repository; otherwise, run
+    in the current directory.
+    """
+    commit_to_pick = sha if not sha_end else f"{sha}~1..{sha_end}"
+    log.debug(f"cherry-pick commit '{commit_to_pick}'")
+    try:
+        _ = await run_git(["cherry-pick", "-x", commit_to_pick], path=repo_path)
+    except GitError as e:
+        msg = f"unable to cherry-pick '{commit_to_pick}': {e}"
         log.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg)
 

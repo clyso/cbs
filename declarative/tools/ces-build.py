@@ -21,7 +21,7 @@ from pathlib import Path
 import click
 from ceslib.builder.builder import Builder
 from ceslib.errors import CESError
-from ceslib.logging import log as root_logger
+from ceslib.logger import log as root_logger
 from ceslib.utils.podman import PodmanError, podman_run
 from ceslib.versions.desc import VersionDescriptor
 

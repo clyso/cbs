@@ -24,7 +24,7 @@ from typing import cast
 import click
 from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_image_desc
-from ceslib.logging import log as root_logger
+from ceslib.logger import log as root_logger
 from ceslib.utils.git import get_git_repo_root, get_git_user
 from ceslib.versions.desc import (
     VersionComponent,

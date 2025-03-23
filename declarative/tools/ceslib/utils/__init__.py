@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, override
 
 from ceslib.errors import CESError
-from ceslib.logging import log as root_logger
+from ceslib.logger import log as root_logger
 
 log = root_logger.getChild("utils")
 

@@ -22,7 +22,7 @@ from typing import override
 import hvac
 import hvac.exceptions
 from ceslib.errors import CESError
-from ceslib.logging import log as parent_logger
+from ceslib.utils import log as parent_logger
 
 log = parent_logger.getChild("vault")
 

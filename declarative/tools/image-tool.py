@@ -23,7 +23,7 @@ import click
 from ceslib.errors import CESError
 from ceslib.images.desc import get_image_desc
 from ceslib.images.sync import sync_image
-from ceslib.logging import log as root_logger
+from ceslib.logger import log as root_logger
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 

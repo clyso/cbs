@@ -24,7 +24,7 @@ import click
 from ceslib.errors import CESError, MalformedVersionError, NoSuchVersionError
 from ceslib.images.desc import ImageDescriptor, get_image_desc
 from ceslib.images.sync import sync_image
-from ceslib.logging import log as root_logger
+from ceslib.logger import log as root_logger
 from ceslib.utils.git import GitError, get_git_modified_paths
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
