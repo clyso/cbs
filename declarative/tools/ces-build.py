@@ -22,14 +22,16 @@ import click
 from ceslib.builder.builder import Builder
 from ceslib.errors import CESError
 from ceslib.logger import log as root_logger
-from ceslib.utils.podman import PodmanError, podman_run
+from ceslib.runner import RunnerError, runner
 from ceslib.versions.desc import VersionDescriptor
 
 log = root_logger.getChild("ces-build")
 
 
 @click.group()
-@click.option("-d", "--debug", help="Enable debug output", is_flag=True)
+@click.option(
+    "-d", "--debug", help="Enable debug output", is_flag=True, envvar="CBS_DEBUG"
+)
 def main(debug: bool) -> None:
     if debug:
         root_logger.setLevel(logging.DEBUG)
@@ -178,80 +180,31 @@ def build(
     skip_build: bool,
     force: bool,
 ) -> None:
-    log.info(f"build desc: {desc_path}, upload: {upload}")
-    log.info(f"with ccache path: {ccache_dir}")
-
-    if not desc_path.exists():
-        log.error(f"build descriptor does not exist at '{desc_path}'")
-
-    try:
-        desc = VersionDescriptor.read(desc_path)
-    except CESError as e:
-        log.error(f"unable to read descriptor: {e}")
-        sys.exit(1)
-
     our_dir = Path(sys.argv[0]).parent
-
-    podman_volumes = {
-        desc_path.resolve().as_posix(): f"/builder/{desc_path.name}",
-        our_dir.resolve().as_posix(): "/builder/tools",
-        scratch_dir.resolve().as_posix(): "/builder/scratch",
-        scratch_containers_dir.resolve().as_posix(): "/var/lib/containers:Z",
-        secrets_path.resolve().as_posix(): "/builder/secrets.json",
-        components_dir.resolve().as_posix(): "/builder/components",
-        containers_dir.resolve().as_posix(): "/builder/containers",
-    }
-
-    podman_args: list[str] = ["--desc", f"/builder/{desc_path.name}"]
-
-    if ccache_dir:
-        ccache_dir_str = ccache_dir.resolve().as_posix()
-        podman_volumes[ccache_dir_str] = "/builder/ccache"
-        podman_args.extend(["--ccache-path", "/builder/ccache"])
-
-    if skip_build:
-        podman_args.append("--skip-build")
-
-    if upload:
-        podman_args.append("--upload")
-
-    if force:
-        podman_args.append("--force")
-
     try:
         loop = asyncio.new_event_loop()
-        retcode, stdout, stderr = loop.run_until_complete(
-            podman_run(
-                image=desc.distro,
-                env={
-                    "VAULT_ADDR": vault_addr,
-                    "VAULT_ROLE_ID": vault_role_id,
-                    "VAULT_SECRET_ID": vault_secret_id,
-                    "VAULT_TRANSIT": vault_transit,
-                    "WITH_DEBUG": "1"
-                    if log.getEffectiveLevel() == logging.DEBUG
-                    else "0",
-                },
-                args=podman_args,
-                volumes=podman_volumes,
-                devices={"/dev/fuse": "/dev/fuse:rw"},
-                entrypoint="/builder/tools/ctr-build-entrypoint.sh",
-                use_user_ns=False,
-                use_host_network=True,
-                unconfined=True,
+        loop.run_until_complete(
+            runner(
+                desc_path,
+                our_dir,
+                secrets_path,
+                scratch_dir,
+                scratch_containers_dir,
+                components_dir,
+                containers_dir,
+                vault_addr,
+                vault_role_id,
+                vault_secret_id,
+                vault_transit,
+                ccache_path=ccache_dir,
+                upload=upload,
+                skip_build=skip_build,
+                force=force,
             )
         )
-        log.debug(f"podman run: rc = {retcode}")
-        log.debug(f"podman run: stdout = {stdout}")
-        log.debug(f"podman run: stderr = {stderr}")
-
-    except PodmanError as e:
-        log.error(f"error running build image: {e}")
+    except (RunnerError, Exception) as e:
+        log.error(f"error building '{desc_path}': {e}")
         sys.exit(1)
-    except Exception as e:
-        log.error(f"unknown error running build image: {e}")
-        sys.exit(1)
-    pass
 
 
 @main.command()

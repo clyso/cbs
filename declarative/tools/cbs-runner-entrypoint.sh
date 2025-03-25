@@ -15,37 +15,39 @@
 
 ourpath="$(dirname "$(realpath "$0")")"
 
+RUNNER_DIR="/runner"
+
 if [[ -z "${HOME}" ]] || [[ "${HOME}" == "/" ]]; then
-  HOME=/builder
-  export HOME
+	HOME="${RUNNER_DIR}"
+	export HOME
 fi
 
-mkdir /builder/bin || true
+mkdir "${RUNNER_DIR}"/bin || true
 
-PATH="/builder/bin:$PATH"
+PATH="${RUNNER_DIR}/bin:$PATH"
 export PATH
 
 curl -LsSf https://astral.sh/uv/install.sh |
-  UV_INSTALL_DIR=/builder/bin \
-    UV_DISABLE_UPDATE=1 \
-    UV_NO_MODIFY_PATH=1 \
-    sh
+	UV_INSTALL_DIR="${RUNNER_DIR}"/bin \
+		UV_DISABLE_UPDATE=1 \
+		UV_NO_MODIFY_PATH=1 \
+		sh
 
-cd /builder || exit 1
+cd "${RUNNER_DIR}" || exit 1
 
-uv venv --python 3.13 /builder/venv
+uv venv --python 3.13 "${RUNNER_DIR}"/venv
 
 # shellcheck source=/dev/null
-source /builder/venv/bin/activate
+source "${RUNNER_DIR}"/venv/bin/activate
 
 uv pip install -r "${ourpath}/requirements.txt" || exit 1
 
 dbg=
-[[ -n "${WITH_DEBUG}" ]] && [[ "${WITH_DEBUG}" == "1" ]] && dbg="-d"
+[[ -n "${CBS_DEBUG}" ]] && [[ "${CBS_DEBUG}" == "1" ]] && dbg="--debug"
 # shellcheck disable=2048,SC2086
 python3 "${ourpath}"/ces-build.py ${dbg} ctr-build \
-  --scratch-dir /builder/scratch \
-  --secrets-path /builder/secrets.json \
-  --components-dir /builder/components \
-  --containers-dir /builder/containers \
-  $* || exit 1
+	--scratch-dir "${RUNNER_DIR}"/scratch \
+	--secrets-path "${RUNNER_DIR}"/secrets.json \
+	--components-dir "${RUNNER_DIR}"/components \
+	--containers-dir "${RUNNER_DIR}"/containers \
+	$* || exit 1
