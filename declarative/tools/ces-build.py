@@ -37,7 +37,7 @@ def main(debug: bool) -> None:
         root_logger.setLevel(logging.DEBUG)
 
 
-@main.command()
+@main.command("build", help="Start a containerized build")
 @click.argument(
     "desc_path",
     metavar="DESCRIPTOR",
@@ -207,7 +207,18 @@ def build(
         sys.exit(1)
 
 
-@main.command()
+@main.group("runner", help="Build Runner related operations")
+def runner_grp() -> None:
+    pass
+
+
+@runner_grp.command(
+    "build",
+    help="""Perform a build (internal use).
+
+Should not be called by the user directly. Use 'build' instead.
+""",
+)
 @click.option(
     "--desc",
     "desc_path",
@@ -318,7 +329,7 @@ def build(
     is_flag=True,
     default=False,
 )
-def ctr_build(
+def runner_build(
     desc_path: Path,
     vault_addr: str,
     vault_role_id: str,

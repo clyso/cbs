@@ -45,7 +45,7 @@ uv pip install -r "${ourpath}/requirements.txt" || exit 1
 dbg=
 [[ -n "${CBS_DEBUG}" ]] && [[ "${CBS_DEBUG}" == "1" ]] && dbg="--debug"
 # shellcheck disable=2048,SC2086
-python3 "${ourpath}"/ces-build.py ${dbg} ctr-build \
+python3 "${ourpath}"/ces-build.py ${dbg} runner build \
 	--scratch-dir "${RUNNER_DIR}"/scratch \
 	--secrets-path "${RUNNER_DIR}"/secrets.json \
 	--components-dir "${RUNNER_DIR}"/components \
