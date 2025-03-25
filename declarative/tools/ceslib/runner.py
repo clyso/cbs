@@ -13,6 +13,8 @@
 
 import logging
 from pathlib import Path
+import random
+import string
 from typing import override
 
 from ceslib.errors import CESError
@@ -45,6 +47,7 @@ async def runner(
     vault_transit: str,
     *,
     ccache_path: Path | None = None,
+    timeout: float | None = None,
     upload: bool = True,
     skip_build: bool = False,
     force: bool = False,
@@ -59,7 +62,9 @@ async def runner(
     containers path:         {containers_path}
     ccache path:             {ccache_path}
     vault: addr = {vault_addr}, role id = {vault_role_id}, transit = {vault_transit}
+    timeout: {timeout}
     upload: {upload}, skip_build: {skip_build}, force: {force}
+
 """)
 
     if not desc_file_path.exists():
@@ -101,6 +106,8 @@ async def runner(
     if force:
         podman_args.append("--force")
 
+    ctr_name = "cbs_" + "".join(random.choices(string.ascii_lowercase, k=10))
+
     try:
         rc, _, stderr = await podman_run(
             image=desc.distro,
@@ -115,7 +122,9 @@ async def runner(
             volumes=podman_volumes,
             devices={"/dev/fuse": "/dev/fuse:rw"},
             entrypoint="/runner/tools/cbs-runner-entrypoint.sh",
+            name=ctr_name,
             use_user_ns=False,
+            timeout=timeout,
             use_host_network=True,
             unconfined=True,
         )

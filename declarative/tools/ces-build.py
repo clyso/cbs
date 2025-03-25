@@ -153,6 +153,12 @@ def main(debug: bool) -> None:
     required=False,
 )
 @click.option(
+    "--timeout",
+    help="Specify how long the build should be allowed to take",
+    type=float,
+    required=False,
+)
+@click.option(
     "--skip-build",
     help="Skip building RPMs for components",
     is_flag=True,
@@ -177,6 +183,7 @@ def build(
     components_dir: Path,
     containers_dir: Path,
     ccache_dir: Path | None,
+    timeout: float | None,
     skip_build: bool,
     force: bool,
 ) -> None:
@@ -197,6 +204,7 @@ def build(
                 vault_secret_id,
                 vault_transit,
                 ccache_path=ccache_dir,
+                timeout=timeout,
                 upload=upload,
                 skip_build=skip_build,
                 force=force,

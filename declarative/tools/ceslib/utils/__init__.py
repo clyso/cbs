@@ -203,7 +203,7 @@ async def async_run_cmd(
     cmd: CmdArgs,
     *,
     outcb: Callable[[str], None] | None = None,
-    timeout: float = 2 * 60 * 60,  # 2h in seconds, because why not.
+    timeout: float | None = None,  # 2h in seconds, because why not.
     cwd: Path | None = None,
     reset_python_env: bool = False,
     extra_env: dict[str, str] | None = None,

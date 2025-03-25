@@ -41,15 +41,22 @@ async def podman_run(
     volumes: dict[str, str] | None = None,
     devices: dict[str, str] | None = None,
     entrypoint: str | None = None,
+    name: str | None = None,
     use_user_ns: bool = False,
-    timeout: float = 2 * 60 * 60,  # 2 hours, because why not.
+    timeout: float | None = None,
     use_host_network: bool = False,
     unconfined: bool = False,
 ) -> tuple[int, str, str]:
     cmd: CmdArgs = ["podman", "run", "--security-opt", "label=disable"]
 
+    if name:
+        cmd.extend(["--name", name])
+
     if use_user_ns:
         cmd.extend(["--userns", "keep-id"])
+
+    if timeout:
+        cmd.extend(["--timeout", str(int(timeout))])
 
     if unconfined:
         cmd.extend(["--security-opt", "seccomp=unconfined"])
