@@ -11,15 +11,26 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from typing import Annotated
+import dbm
+from pathlib import Path
+from typing import Annotated, override
 
 import pydantic
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import log as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
+from cbslib.config.server import get_config
 from fastapi import Depends, HTTPException, status
 
+from ceslib.errors import CESError
+
 log = parent_logger.getChild("users")
+
+
+class UsersDBError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "Users DB Error" + (f": {self.msg}" if self.msg else "")
 
 
 class User(pydantic.BaseModel):
@@ -29,10 +40,12 @@ class User(pydantic.BaseModel):
 
 
 class Users:
+    _db_path: Path
     _users_db: dict[str, User]
     _tokens_db: dict[bytes, CBSToken]
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
         self._users_db = {}
         self._tokens_db = {}
 
@@ -47,6 +60,7 @@ class Users:
 
         self._tokens_db[token.token] = token
         self._users_db[email] = User(email=email, name=name, token=token)
+        await self.save()
         return token
 
     async def get_user_token(self, email: str) -> CBSToken:
@@ -60,13 +74,42 @@ class Users:
             raise AuthNoSuchUserError(email)
         return self._users_db[email]
 
+    async def load(self) -> None:
+        try:
+            with dbm.open(self._db_path, "c") as db:
+                if "users" in db:
+                    users_adapter = pydantic.TypeAdapter(dict[str, User])
+                    self._users_db = users_adapter.validate_json(db["users"])
+
+                for user in self._users_db.values():
+                    self._tokens_db[user.token.token] = user.token
+        except Exception as e:
+            msg = f"error loading users from db '{self._db_path}': {e}"
+            log.error(msg)
+            raise UsersDBError(msg)
+
+        log.info(f"loaded {len(self._users_db)} users from database")
+
+    async def save(self) -> None:
+        try:
+            with dbm.open(self._db_path, "w") as db:
+                users_adapter = pydantic.TypeAdapter(dict[str, User])
+                users_json = users_adapter.dump_json(self._users_db)
+                db["users"] = users_json
+        except Exception as e:
+            msg = f"error saving users to db '{self._db_path}': {e}"
+            log.error(msg)
+            raise UsersDBError(msg)
+
 
 _auth_users: Users | None = None
 
 
 async def auth_users_init() -> None:
     global _auth_users
-    _auth_users = Users()
+    config = get_config()
+    _auth_users = Users(config.db_path)
+    await _auth_users.load()
 
 
 def get_auth_users() -> Users:
