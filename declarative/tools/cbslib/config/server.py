@@ -55,17 +55,20 @@ class _GoogleOAuthSecrets(pydantic.BaseModel):
             raise CESError(f"error loading oauth2 config from '{path}': {e}")
 
 
+class ServerSecretsConfig(pydantic.BaseModel):
+    # secrets generated with
+    #   openssl rand -hex 32
+    session_secret_key: str
+    token_secret_key: str
+    token_secret_ttl_minutes: int
+
+
 # config
 #
 class SecretsConfig(pydantic.BaseModel):
-    oauth2_secrets: str
+    oauth2_secrets_file: str
+    server: ServerSecretsConfig
 
-    # secrets generated with
-    #   openssl rand -hex 32
-    server_secret: str
-    jwt_secret: str
-    jwt_algorithm: str
-    jwt_ttl_minutes: int
 
 
 class Config(pydantic.BaseModel):
@@ -102,7 +105,7 @@ class Config(pydantic.BaseModel):
                 )
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
-        return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets))
+        return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))
 
 
 _config: Config | None = None
@@ -110,12 +113,14 @@ _config: Config | None = None
 
 def config_init() -> Config:
     global _config
+    if _config:
+        return _config
+
     _config = Config.load()
     return _config
 
 
 def cbs_config() -> Config:
-    log.debug(f"config: {_config}")
     if not _config:
         raise CESError("config not set!")
     return _config

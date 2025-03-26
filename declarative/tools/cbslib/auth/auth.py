@@ -42,13 +42,15 @@ def token_create(user: str) -> CBSToken:
     config = get_config()
     expiration = (
         None
-        if not config.secrets.jwt_ttl_minutes
-        else dt.now(tz.utc) + td(minutes=config.secrets.jwt_ttl_minutes)
+        if not config.secrets.server.token_secret_ttl_minutes
+        else dt.now(tz.utc) + td(minutes=config.secrets.server.token_secret_ttl_minutes)
     )
     info = CBSTokenInfo(user=user, expires=expiration)
     info_payload = pydantic_core.to_jsonable_python(info)  # pyright: ignore[reportAny]
 
-    key = pyseto.Key.new(version=4, purpose="local", key=config.secrets.jwt_secret)
+    key = pyseto.Key.new(
+        version=4, purpose="local", key=config.secrets.server.token_secret_key
+    )
     token = pyseto.encode(  # pyright: ignore[reportUnknownMemberType]
         key,
         payload=info_payload,  # pyright: ignore[reportAny]
@@ -64,7 +66,9 @@ def token_decode(token: _AuthToken) -> CBSTokenInfo:
     print(f"token_decode, token: {token}")
 
     config = get_config()
-    key = pyseto.Key.new(version=4, purpose="local", key=config.secrets.jwt_secret)
+    key = pyseto.Key.new(
+        version=4, purpose="local", key=config.secrets.server.token_secret_key
+    )
     try:
         decoded_token = pyseto.decode(key, token)
     except Exception as e:

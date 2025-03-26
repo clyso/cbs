@@ -61,8 +61,11 @@ def get_oauth_config() -> GoogleOAuthSecrets:
     return _oauth_config
 
 
-def oauth_init() -> OAuth:
+def oauth_init() -> None:
     global _oauth_client
+
+    if _oauth_client:
+        return
 
     oauth_init_config()
     #    config = get_config()
@@ -81,7 +84,6 @@ def oauth_init() -> OAuth:
         prompt="select_account",
     )
     _oauth_client = oauth
-    return oauth
 
 
 def cbs_oauth() -> OAuth:

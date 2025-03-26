@@ -41,7 +41,7 @@ log = parent_logger.getChild("server")
 #
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
-    setup_logging()
+    log.info("Preparing server init")
 
     try:
         await auth_users_init()
@@ -49,10 +49,15 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         log.error(f"error initializing users db: {e}")
         sys.exit(1)
 
+    try:
+        oauth_init()
+    except (CESError, Exception) as e:
+        log.error(f"error initiating server: {e}")
+        sys.exit(1)
+
     log.info("Starting ces build server")
     yield
     log.info("Shutting down ces build server")
-    pass
 
 
 def factory() -> FastAPI:
@@ -71,19 +76,18 @@ def factory() -> FastAPI:
         openapi_tags=api_tags_meta,
     )
 
+    setup_logging()
+
     try:
+        log.debug("init config")
         config = config_init()
     except Exception as e:
         log.error(f"error setting up config state: {e}")
         sys.exit(1)
 
-    api.add_middleware(SessionMiddleware, secret_key=config.secrets.server_secret)
-
-    try:
-        _ = oauth_init()
-    except (CESError, Exception) as e:
-        log.error(f"error initiating oauth2: {e}")
-        sys.exit(1)
+    api.add_middleware(
+        SessionMiddleware, secret_key=config.secrets.server.session_secret_key
+    )
 
     api.include_router(auth.router)
     app.mount("/api", api)
