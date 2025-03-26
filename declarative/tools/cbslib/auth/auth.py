@@ -22,7 +22,10 @@ import pyseto
 from cbslib.auth import log as parent_logger
 from cbslib.config.server import get_config
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2AuthorizationCodeBearer
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
 
 log = parent_logger.getChild("auth")
 
@@ -58,8 +61,27 @@ def token_create(user: str) -> CBSToken:
     return CBSToken(token=token, info=info)
 
 
-_oauth_scheme = OAuth2AuthorizationCodeBearer("/api/auth/login", "/api/auth/login")
-_AuthToken = Annotated[str, Depends(_oauth_scheme)]
+_http_bearer = HTTPBearer()
+
+
+def _token_auth(
+    authorization: Annotated[HTTPAuthorizationCredentials, Depends(_http_bearer)],
+) -> str:
+    failed_error = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authorization",
+        headers={"WWW-Authorization": "Bearer"},
+    )
+
+    if authorization.scheme.lower() != "bearer":
+        raise failed_error
+    elif not authorization.credentials:
+        raise failed_error
+
+    return authorization.credentials
+
+
+_AuthToken = Annotated[str, Depends(_token_auth)]
 
 
 def token_decode(token: _AuthToken) -> CBSTokenInfo:
