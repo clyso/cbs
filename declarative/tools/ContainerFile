@@ -1,0 +1,47 @@
+# CBS - CES Build Service
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+FROM python:3.13-alpine3.20
+
+WORKDIR /cbs/server
+
+RUN apk --no-cache add podman=5.2.5-r0
+
+#RUN mkdir /cbs/server
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r ./requirements.txt
+
+COPY ces-build-server.py ./
+COPY ceslib/ ./ceslib/
+COPY cbslib/ ./cbslib/
+
+RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+
+VOLUME [ "/cbs/scratch" ]
+VOLUME [ "/cbs/config" ]
+VOLUME [ "/var/lib/containers" ]
+VOLUME [ "/cbs/components" ]
+VOLUME [ "/cbs/containers" ]
+VOLUME [ "/cbs/ccache" ]
+
+RUN ls -la
+
+ENTRYPOINT [ "uvicorn", \
+  "--factory", \
+  "--host", "0.0.0.0", \
+  "--port", "8080", \ 
+  "--ssl-keyfile", "/cbs/config/cbs-key.pem", \
+  "--ssl-certfile", "/cbs/config/cbs-cert.pem", \
+  "ces-build-server:factory" \
+  ]
+

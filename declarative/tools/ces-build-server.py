@@ -26,10 +26,11 @@ import uvicorn
 import uvicorn.config
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
+
 from cbslib.config.server import config_init
 from cbslib.logger import log as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
-from cbslib.routes import auth
+from cbslib.routes import auth, builds
 from ceslib.errors import CESError
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -90,6 +91,7 @@ def factory() -> FastAPI:
     )
 
     api.include_router(auth.router)
+    api.include_router(builds.router)
     app.mount("/api", api)
 
     return app
@@ -110,8 +112,8 @@ def main() -> None:
         port=8080,
         factory=True,
         log_config=uvicorn_logging_config(),
-        ssl_certfile=config.cert_path,
-        ssl_keyfile=config.key_path,
+        ssl_certfile=config.server.cert_path,
+        ssl_keyfile=config.server.key_path,
     )
 
 

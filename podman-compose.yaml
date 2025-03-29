@@ -1,0 +1,89 @@
+# CBS - CES Build Service
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+services:
+  worker:
+    build: ./declarative/tools
+    container_name: clyso-cbs-worker
+    entrypoint: celery -A cbslib.worker worker --loglevel=info
+    privileged: true
+    volumes:
+      - ./declarative/tools/cbs-config.worker.json:/cbs/config/cbs-config.json
+      - ./declarative/tools:/cbs/tools
+
+      - ./versions/secrets.json:/cbs/secrets/secrets.json
+      - /mnt/pci4-scratch/ces-scratch:/cbs/scratch
+      - /mnt/pci4-scratch/ces-scratch/containers:/var/lib/containers
+      - /mnt/pci4-scratch/ces-scratch/ccache:/cbs/ccache
+      - ./components:/cbs/components
+      - ./containers:/cbs/containers
+      - /dev/fuse:/dev/fuse:rw
+    cap_add:
+      - MKNOD
+      - SYS_ADMIN
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_DEBUG: 1
+    network_mode: host
+    depends_on:
+      - redis
+
+  cbs:
+    build: ./declarative/tools
+    container_name: clyso-cbs
+    ports:
+      - "8080:8080"
+    restart: "no"
+    privileged: true
+    volumes:
+      - ./declarative/tools/cbs-config.server.json:/cbs/config/cbs-config.json
+
+      - ./declarative/tools/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
+      - ./versions/secrets.json:/cbs/secrets/secrets.json
+      - ./declarative/tools/cbs.db:/cbs/data/cbs.db
+      - ./declarative/tools/cbs-cert.pem:/cbs/config/cbs-cert.pem
+      - ./declarative/tools/cbs-key.pem:/cbs/config/cbs-key.pem
+      - ./declarative/tools:/cbs/tools
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_DEBUG: 1
+    depends_on:
+      - redis
+
+  flower:
+    build: ./declarative/tools
+    container_name: clyso-cbs-worker-flower
+    entrypoint: celery --broker=redis://redis:6379/0 -A cbslib.worker flower
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./declarative/tools/cbs-config.server.json:/cbs/config/cbs-config.json
+    environment:
+      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_DEBUG: 1
+    security_opt:
+      - label=disable
+    depends_on:
+      - worker
+      - redis
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"

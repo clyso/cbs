@@ -108,7 +108,7 @@ _auth_users: Users | None = None
 async def auth_users_init() -> None:
     global _auth_users
     config = get_config()
-    _auth_users = Users(config.db_path)
+    _auth_users = Users(config.server.db_path)
     await _auth_users.load()
 
 

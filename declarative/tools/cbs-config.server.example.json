@@ -1,0 +1,34 @@
+{
+  "secrets": {
+    "server": {
+      "oauth2_secrets_file": "/cbs/secrets/google-client-cbs.json",
+      "session_secret_key": "session-key",
+      "token_secret_key": "token-key",
+      "token_secret_ttl_minutes": 30
+    },
+    "vault": {
+      "addr": "https://vault.addr.tld",
+      "role_id": "VAULT_ROLE_ID",
+      "secret_id": "VAULT_SECRET_ID",
+      "transit": "VAULT_TRANSIT"
+    }
+  },
+  "server": {
+    "cert_path": "/cbs/config/cbs-cert.pem",
+    "key_path": "/cbs/config/cbs-key.pem",
+    "db_path": "/cbs/data/cbs.db"
+  },
+  "worker": {
+    "paths": {
+      "secrets_file_path": "/cbs/secrets/secrets.json",
+      "tools_path": "/cbs/tools",
+      "scratch_path": "/cbs/scratch",
+      "scratch_container_path": "/var/lib/containers",
+      "components_path": "/cbs/components",
+      "containers_path": "/cbs/containers",
+      "ccache_path": "/cbs/ccache"
+    },
+    "broker_url": "redis://redis:6379/0",
+    "result_backend_url": "redis://redis:6379/0"
+  }
+}

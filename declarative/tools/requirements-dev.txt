@@ -1,2 +1,3 @@
 ruff
 basedpyright
+celery-types==0.23.0

@@ -12,17 +12,16 @@
 # GNU General Public License for more details.
 
 import logging
-from pathlib import Path
 import random
 import string
+from pathlib import Path
 from typing import override
 
 from ceslib.errors import CESError
 from ceslib.logger import log as root_logger
+from ceslib.utils.podman import PodmanError, podman_run
 from ceslib.versions.desc import VersionDescriptor
 from ceslib.versions.errors import NoSuchVersionDescriptorError
-from ceslib.utils.podman import PodmanError, podman_run
-
 
 log = root_logger.getChild("runner")
 

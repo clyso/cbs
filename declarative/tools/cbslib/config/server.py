@@ -56,6 +56,7 @@ class _GoogleOAuthSecrets(pydantic.BaseModel):
 
 
 class ServerSecretsConfig(pydantic.BaseModel):
+    oauth2_secrets_file: str
     # secrets generated with
     #   openssl rand -hex 32
     session_secret_key: str
@@ -63,25 +64,52 @@ class ServerSecretsConfig(pydantic.BaseModel):
     token_secret_ttl_minutes: int
 
 
+class VaultSecretsConfig(pydantic.BaseModel):
+    addr: str
+    role_id: str
+    secret_id: str
+    transit: str
+
+
 # config
 #
 class SecretsConfig(pydantic.BaseModel):
-    oauth2_secrets_file: str
     server: ServerSecretsConfig
+    vault: VaultSecretsConfig
 
 
+class PathsConfig(pydantic.BaseModel):
+    secrets_file_path: Path
+    tools_path: Path
+    scratch_path: Path
+    scratch_container_path: Path
+    components_path: Path
+    containers_path: Path
+    ccache_path: Path
 
-class Config(pydantic.BaseModel):
-    secrets: SecretsConfig
 
+class ServerConfig(pydantic.BaseModel):
     # ssl certs
     #
     cert_path: Path
     key_path: Path
 
-    # db path
+    # database path
     #
     db_path: Path
+
+
+class WorkerConfig(pydantic.BaseModel):
+    paths: PathsConfig
+
+    broker_url: str
+    result_backend_url: str
+
+
+class Config(pydantic.BaseModel):
+    secrets: SecretsConfig
+    server: ServerConfig
+    worker: WorkerConfig
 
     @classmethod
     def load(cls, *, path: Path | None = None) -> Config:
@@ -105,7 +133,7 @@ class Config(pydantic.BaseModel):
                 )
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
-        return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))
+        return _GoogleOAuthSecrets.load(Path(self.secrets.server.oauth2_secrets_file))
 
 
 _config: Config | None = None
