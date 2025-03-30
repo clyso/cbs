@@ -11,10 +11,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+import logging
+import os
 import sys
+from typing import Any
 
 from cbslib.config.server import config_init
 from celery import Celery
+from celery import signals
 from ceslib.errors import CESError
 
 from kombu.serialization import register
@@ -48,6 +52,25 @@ def _init() -> None:
         content_type="application/json",
         content_encoding="utf-8",
     )
+
+
+# pyright: reportUnknownArgumentType=false
+# pyright: reportUnusedParameter=false
+# pyright: reportExplicitAny=false, reportAny=false
+# pyright: reportMissingParameterType=false
+# pyright: reportUnknownParameterType=false
+#
+@signals.after_setup_task_logger.connect
+def setup_task_logger(
+    sender: Any,
+    logger: logging.Logger,
+    loglevel: int,
+    logfile: str,
+    format: str,
+    **kwargs,
+) -> None:
+    if os.environ.get("CBS_DEBUG"):
+        logging.getLogger("ces").setLevel(logging.DEBUG)
 
 
 _init()
