@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -26,11 +27,11 @@ import uvicorn
 import uvicorn.config
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
-
 from cbslib.config.server import config_init
 from cbslib.logger import log as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds
+from cbslib.worker.monitor import monitor
 from ceslib.errors import CESError
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -56,9 +57,13 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         log.error(f"error initiating server: {e}")
         sys.exit(1)
 
+    thread = threading.Thread(target=monitor)
+    thread.start()
+
     log.info("Starting ces build server")
     yield
     log.info("Shutting down ces build server")
+    thread.join()
 
 
 def factory() -> FastAPI:
@@ -95,10 +100,6 @@ def factory() -> FastAPI:
     app.mount("/api", api)
 
     return app
-
-
-# uvicorn logging setup
-#
 
 
 # main
