@@ -17,7 +17,13 @@ from typing import override
 from ceslib.errors import CESError
 
 
-class InvalidVersionDescriptorError(CESError):
+class VersionError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "Version Error" + (f": {self.msg}" if self.msg else "")
+
+
+class InvalidVersionDescriptorError(VersionError):
     path: Path | None
 
     def __init__(self, path: Path | None = None) -> None:
@@ -31,7 +37,7 @@ class InvalidVersionDescriptorError(CESError):
         )
 
 
-class NoSuchVersionDescriptorError(CESError):
+class NoSuchVersionDescriptorError(VersionError):
     path: Path | None
 
     def __init__(self, path: Path | None = None) -> None:
