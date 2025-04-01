@@ -18,15 +18,19 @@ import sys
 from copy import copy
 from functools import update_wrapper, wraps
 from pathlib import Path
-from typing import Callable, Concatenate, ParamSpec, TypeVar, override
+from typing import Any, Callable, Concatenate, ParamSpec, TypeVar, override
 
 import click
 import httpx
 import pydantic
 from cbslib.auth.users import User
 from cbslib.config.user import CBSUserConfig
+from cbslib.routes.models import NewBuildResponse
 from ceslib.errors import CESError
 from ceslib.logger import log as parent_logger
+from ceslib.versions.create import create
+from ceslib.versions.desc import VersionDescriptor
+from ceslib.versions.errors import VersionError
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
@@ -158,6 +162,22 @@ class CBCClient:
             self._logger.error(msg)
             raise CBCError(msg)
 
+    def post(
+        self,
+        ep: str,
+        data: Any,  # pyright: ignore[reportExplicitAny]
+    ) -> httpx.Response:
+        try:
+            return self._client.post(ep, json=data)
+        except httpx.ConnectError as e:
+            msg = f"error connecting to '{self._client.base_url}': {e}"
+            self._logger.error(msg)
+            raise CBCConnectionError(msg)
+        except Exception as e:
+            msg = f"error posting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg)
+
 
 _WithEPFn = Callable[Concatenate[logging.Logger, CBCClient, str, P], R]
 _WithClientFn = Callable[Concatenate[logging.Logger, CBSUserConfig, P], R]
@@ -189,7 +209,7 @@ def endpoint(ep: str, *, verify: bool = False) -> _EPFnWrapper[P, R]:
 
 
 def _auth_ping(logger: logging.Logger, host: str, verify: bool = False) -> bool:
-    """Ping the build service server."""
+    """Ping ggthe build service server."""
     try:
         host = host.rstrip("/")
         client = CBCClient(logger, host, verify=verify)
@@ -221,6 +241,27 @@ def _auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[st
         raise CBCError(msg)
 
     return (user.email, user.name)
+
+
+@endpoint("/builds/new")
+def _build_new(
+    logger: logging.Logger, client: CBCClient, ep: str, desc: VersionDescriptor
+) -> NewBuildResponse:
+    data = desc.model_dump(mode="json")
+    try:
+        r = client.post(ep, data)
+        res = r.json()
+        logger.debug(f"new build: {res}")
+    except CBCError as e:
+        logger.error(f"unable to create new build: {e}")
+        raise e
+
+    try:
+        return NewBuildResponse.model_validate(res)
+    except pydantic.ValidationError:
+        msg = f"error validating server result: {res}"
+        logger.error(msg)
+        raise CBCError(msg)
 
 
 _cbc_help_message = """CES Build Service Client
@@ -309,6 +350,135 @@ def whoami(config: CBSUserConfig, logger: logging.Logger) -> None:
     except Exception as e:
         click.echo(f"error obtaining whoami: {e}")
         sys.exit(1)
+
+
+@main.group(help="build related commands")
+@update_ctx
+def build() -> None:
+    pass
+
+
+@build.command("new", help="Create new build")
+@click.argument("version", type=str, metavar="VERSION", required=True)
+@click.option(
+    "-t",
+    "--type",
+    "version_types",
+    type=str,
+    multiple=True,
+    required=True,
+    metavar="TYPE=N",
+    help="Type of build, including its iteration",
+)
+@click.option(
+    "-c",
+    "--component",
+    "components",
+    type=str,
+    multiple=True,
+    required=True,
+    metavar="NAME@VERSION",
+    help="Component's version (e.g., 'ceph@abcde1234')",
+)
+@click.option(
+    "--override-component",
+    "component_overrides",
+    type=str,
+    multiple=True,
+    required=False,
+    metavar="COMPONENT=URL",
+    help="Override component's location",
+)
+@click.option(
+    "--distro",
+    type=str,
+    required=False,
+    default="rockylinux:9",
+    metavar="NAME",
+    help="Distribution to use for this release",
+)
+@click.option(
+    "--el-version",
+    type=int,
+    required=False,
+    default=9,
+    metavar="VERSION",
+    help="Distribution's EL version",
+)
+@click.option(
+    "--registry",
+    type=str,
+    required=False,
+    default="harbor.clyso.com",
+    metavar="URL",
+    help="Registry for this release's image",
+)
+@click.option(
+    "--image-name",
+    type=str,
+    required=False,
+    default="ces/ceph/ceph",
+    metavar="NAME",
+    help="Name for this release's image",
+)
+@click.option(
+    "--image-tag",
+    type=str,
+    required=False,
+    metavar="TAG",
+    help="Tag for this release's image",
+)
+@update_ctx
+@pass_logger
+@pass_config
+def new_build(
+    config: CBSUserConfig,
+    logger: logging.Logger,
+    version: str,
+    version_types: list[str],
+    components: list[str],
+    component_overrides: list[str],
+    distro: str,
+    el_version: int,
+    registry: str,
+    image_name: str,
+    image_tag: str | None,
+) -> None:
+    try:
+        email, name = _auth_whoami(logger, config)
+    except Exception as e:
+        click.echo(f"error obtaining user's info: {e}", err=True)
+        sys.exit(1)
+
+    try:
+        version_type, desc = create(
+            version,
+            version_types,
+            components,
+            component_overrides,
+            distro,
+            el_version,
+            registry,
+            image_name,
+            image_tag,
+            name,
+            email,
+        )
+    except (VersionError, Exception) as e:
+        click.echo(f"error creating version descriptor: {e}")
+        sys.exit(1)
+
+    try:
+        res = _build_new(logger, config, desc)
+    except CBCError as e:
+        click.echo(f"error triggering build: {e}")
+        sys.exit(1)
+
+    click.echo(f"version type: {version_type.name}")
+    click.echo(f"     task id: {res.task_id}")
+    click.echo(f"       state: {res.state}")
+
+    pass
 
 
 if __name__ == "__main__":

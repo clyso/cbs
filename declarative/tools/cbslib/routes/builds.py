@@ -13,13 +13,15 @@
 
 
 from typing import Any
+
 from cbslib.auth.users import CBSAuthUser
 from cbslib.routes import log as parent_logger
+from cbslib.routes.models import NewBuildResponse
 from cbslib.worker.celery import celery_app
 from cbslib.worker.tasks import build
 from celery.result import AsyncResult
 from ceslib.versions.desc import VersionDescriptor
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
 log = parent_logger.getChild("builds")
@@ -31,13 +33,22 @@ router = APIRouter(prefix="/builds")
 async def builds_new(
     user: CBSAuthUser,
     descriptor: VersionDescriptor,
-) -> JSONResponse:
+) -> NewBuildResponse:
     log.debug(f"build new version: {descriptor}, user: {user}")
+
+    user_info = descriptor.signed_off_by
+    if user_info.email != user.email or user_info.user != user.name:
+        log.error(f"unexpected user/email combination: {user_info}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="issuing user does not match token's user",
+        )
+
     task = build.apply_async(
         (descriptor,), serializer="pydantic"
     )  #    task = build.delay(descriptor.model_dump())
     log.info(f"building, task id: {task.id}")
-    return JSONResponse({"task_id": task.id})
+    return NewBuildResponse(task_id=task.id, state=task.state)
 
 
 @router.get("/status/{task_id}")
