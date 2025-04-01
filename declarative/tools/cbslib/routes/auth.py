@@ -20,7 +20,7 @@ from typing import cast
 
 from cbslib.auth import AuthError
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
-from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB
+from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB, User
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes import log as parent_logger
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -94,7 +94,7 @@ async def auth_callback(
 
 
 @router.get("/whoami")
-async def auth_whoami(user: CBSAuthUser) -> CBSAuthUser:
+async def auth_whoami(user: CBSAuthUser) -> User:
     log.debug(f"auth token info: {user}")
     return user
 
