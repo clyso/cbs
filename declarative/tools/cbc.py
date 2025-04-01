@@ -16,19 +16,34 @@
 import logging
 import sys
 from copy import copy
-from functools import update_wrapper
+from functools import update_wrapper, wraps
 from pathlib import Path
-from typing import Callable, Concatenate, ParamSpec, TypeVar
+from typing import Callable, Concatenate, ParamSpec, TypeVar, override
 
 import click
 import httpx
+import pydantic
+from cbslib.auth.users import User
 from cbslib.config.user import CBSUserConfig
+from ceslib.errors import CESError
 from ceslib.logger import log as parent_logger
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
 
 log = parent_logger.getChild("cbc")
+
+
+class CBCError(CESError):
+    @override
+    def __str__(self) -> str:
+        return "CBC Error" + (f": {self.msg}" if self.msg else "")
+
+
+class CBCConnectionError(CBCError):
+    @override
+    def __str__(self) -> str:
+        return "Connection Error" + (f": {self.msg}" if self.msg else "")
 
 
 class Ctx:
@@ -107,16 +122,105 @@ def pass_logger(f: Callable[Concatenate[logging.Logger, P], R]) -> Callable[P, R
     return update_wrapper(inner, f)
 
 
-def auth_ping(logger: logging.Logger, host: str) -> bool:
+class CBCClient:
+    _client: httpx.Client
+    _logger: logging.Logger
+
+    def __init__(
+        self,
+        logger: logging.Logger,
+        base_url: str,
+        *,
+        token: str | None = None,
+        verify: bool = False,
+    ) -> None:
+        self._logger = logger
+
+        headers = None if not token else {"Authorization": f"Bearer {token}"}
+
+        self._client = httpx.Client(
+            base_url=f"{base_url}/api",
+            headers=headers,
+            verify=verify,
+        )
+
+    def get(
+        self, ep: str, *, params: httpx.QueryParams | None = None
+    ) -> httpx.Response:
+        try:
+            return self._client.get(ep, params=params)
+        except httpx.ConnectError as e:
+            msg = f"error connecting to '{self._client.base_url}': {e}"
+            self._logger.error(msg)
+            raise CBCConnectionError(msg)
+        except Exception as e:
+            msg = f"error getting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg)
+
+
+_WithEPFn = Callable[Concatenate[logging.Logger, CBCClient, str, P], R]
+_WithClientFn = Callable[Concatenate[logging.Logger, CBSUserConfig, P], R]
+_EPFnWrapper = Callable[[_WithEPFn[P, R]], _WithClientFn[P, R]]
+
+
+def endpoint(ep: str, *, verify: bool = False) -> _EPFnWrapper[P, R]:
+    ep = ep.lstrip("/")
+
+    def inner(
+        fn: _WithEPFn[P, R],
+    ) -> _WithClientFn[P, R]:
+        @wraps(fn)
+        def wrapper(
+            logger: logging.Logger,
+            cfg: CBSUserConfig,
+            *args: P.args,
+            **kwargs: P.kwargs,
+        ) -> R:
+            host = cfg.host.rstrip("/")
+            client = CBCClient(
+                logger, host, token=cfg.login_info.token.decode("utf-8"), verify=verify
+            )
+            return fn(logger, client, ep, *args, **kwargs)
+
+        return wrapper
+
+    return inner
+
+
+def _auth_ping(logger: logging.Logger, host: str, verify: bool = False) -> bool:
     """Ping the build service server."""
     try:
-        res = httpx.get(f"{host}/api/auth/ping", verify=False)
-    except httpx.ConnectError as e:
-        log.error(f"unable to connect to '{host}': {e}")
+        host = host.rstrip("/")
+        client = CBCClient(logger, host, verify=verify)
+        _ = client.get("/auth/ping")
+        return True
+    except CBCConnectionError as e:
+        logger.error(f"unable to connect to server: {e}")
+        return False
+    except CBCError as e:
+        logger.error(f"unexpected error pinging server: {e}")
         return False
 
-    logger.debug(res)
-    return True
+
+@endpoint("/auth/whoami")
+def _auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[str, str]:
+    try:
+        r = client.get(ep)
+        res = r.read()
+        logger.debug(f"whoami: {res}")
+    except CBCError as e:
+        logger.error(f"unable to obtain whoami: {e}")
+        raise e
+
+    try:
+        user = User.model_validate_json(res)
+    except pydantic.ValidationError:
+        msg = f"error validating server result: {res}"
+        logger.error(msg)
+        raise CBCError(msg)
+
+    return (user.email, user.name)
 
 
 _cbc_help_message = """CES Build Service Client
@@ -180,7 +284,7 @@ def auth() -> None:
 @pass_logger
 def login(logger: logging.Logger, host: str) -> None:
     logger.debug(f"login to {host}")
-    if not auth_ping(logger, host):
+    if not _auth_ping(logger, host):
         click.echo(f"server at '{host}' not reachable")
         sys.exit(1)
 
@@ -198,6 +302,13 @@ def login(logger: logging.Logger, host: str) -> None:
 @pass_config
 def whoami(config: CBSUserConfig, logger: logging.Logger) -> None:
     logger.debug(f"config: {config}")
+    try:
+        email, name = _auth_whoami(logger, config)
+        click.echo(f"email: {email}")
+        click.echo(f" name: {name}")
+    except Exception as e:
+        click.echo(f"error obtaining whoami: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
