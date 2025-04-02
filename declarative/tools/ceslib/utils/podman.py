@@ -90,3 +90,14 @@ async def podman_run(
     if rc != 0:
         log.error(f"running podman: {stderr} ({rc})")
     return rc, stdout, stderr
+
+
+async def podman_stop(*, name: str | None = None, timeout: int = 1) -> None:
+    """Stop either the specified container (with `name`) or all running containers."""
+
+    cmd: CmdArgs = ["podman", "stop", "--time", str(timeout)]
+    cmd.append(name if name else "--all")
+
+    rc, _, stderr = await async_run_cmd(cmd)
+    if rc != 0:
+        log.error(f"error stopping container: {stderr}")

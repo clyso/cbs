@@ -12,20 +12,57 @@
 # GNU Affero General Public License for more details.
 
 import asyncio
+from typing import Any, ParamSpec, cast, override
 
-from cbslib.worker.builder import Builder, BuilderError
+from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
 from cbslib.worker.celery import celery_app, log
+from celery import Task
+from celery.worker.request import Request
 from ceslib.versions.desc import VersionDescriptor
 
+Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIssue]
+    lambda cls, *args, **kwargs: cls,
+)
 
-@celery_app.task(pydantic=True)
-def build(version_desc: VersionDescriptor) -> None:
+_P = ParamSpec("_P")
+
+
+class BuilderRequest(Request):
+    @override
+    def terminate(
+        self,
+        pool: Any,  # pyright: ignore[reportExplicitAny,reportAny]
+        signal: int | None = None,
+    ) -> None:
+        log.info(f"request terminated: {self.task_id}, signal: {signal}")
+        super().terminate(pool, signal)  # pyright: ignore[reportAny]
+        task = cast("BuilderTask[None]", self.task)
+        task.on_termination(self.task_id)
+
+
+class BuilderTask(Task[_P, None]):
+    Request = BuilderRequest  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    builder: WorkerBuilder
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.builder = WorkerBuilder()
+
+    def on_termination(self, task_id: str) -> None:
+        log.info(f"revoked {task_id}")
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.builder.kill())
+
+
+@celery_app.task(pydantic=True, base=BuilderTask, bind=True)
+def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
     log.info(f"build version: {version_desc}")
 
     loop = asyncio.new_event_loop()
     try:
-        builder = Builder()
-        loop.run_until_complete(builder.build(version_desc))
-    except (BuilderError, Exception) as e:
+        # loop.run_until_complete(asyncio.sleep(120))
+        loop.run_until_complete(self.builder.build(version_desc))
+    except (WorkerBuilderError, Exception) as e:
         log.error(f"error running build: {e}")
         return

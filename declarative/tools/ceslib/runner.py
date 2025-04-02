@@ -19,7 +19,7 @@ from typing import override
 
 from ceslib.errors import CESError
 from ceslib.logger import log as root_logger
-from ceslib.utils.podman import PodmanError, podman_run
+from ceslib.utils.podman import PodmanError, podman_run, podman_stop
 from ceslib.versions.desc import VersionDescriptor
 from ceslib.versions.errors import NoSuchVersionDescriptorError
 
@@ -30,6 +30,10 @@ class RunnerError(CESError):
     @override
     def __str__(self) -> str:
         return f"Runner error: {self.msg}"
+
+
+def gen_run_name(prefix: str = "ces_") -> str:
+    return prefix + "".join(random.choices(string.ascii_lowercase, k=10))
 
 
 async def runner(
@@ -45,6 +49,7 @@ async def runner(
     vault_secret_id: str,
     vault_transit: str,
     *,
+    run_name: str | None = None,
     ccache_path: Path | None = None,
     timeout: float | None = None,
     upload: bool = True,
@@ -105,7 +110,7 @@ async def runner(
     if force:
         podman_args.append("--force")
 
-    ctr_name = "cbs_" + "".join(random.choices(string.ascii_lowercase, k=10))
+    ctr_name = run_name if run_name else gen_run_name()
 
     try:
         rc, _, stderr = await podman_run(
@@ -140,3 +145,8 @@ async def runner(
         msg = f"error running build (rc={rc}): {stderr}"
         log.error(msg)
         raise RunnerError(msg)
+
+
+async def stop(*, name: str | None = None, timeout: int = 1) -> None:
+    """Stop the specified container (with `name`), or all containers on the host."""
+    await podman_stop(name=name, timeout=timeout)
