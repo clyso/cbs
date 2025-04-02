@@ -15,7 +15,7 @@ services:
   worker:
     build: ./declarative/tools
     container_name: clyso-cbs-worker
-    entrypoint: celery -A cbslib.worker worker --loglevel=info
+    entrypoint: celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
       - ./declarative/tools/cbs-config.worker.json:/cbs/config/cbs-config.json
