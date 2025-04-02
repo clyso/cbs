@@ -1,4 +1,4 @@
-# CBS - routes - models
+# CBS - builds - types
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,13 +11,16 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+from datetime import datetime as dt
+
 import pydantic
+from ceslib.versions.desc import VersionDescriptor
 
 
-class BaseErrorModel(pydantic.BaseModel):
-    detail: str
-
-
-class NewBuildResponse(pydantic.BaseModel):
+class BuildEntry(pydantic.BaseModel):
     task_id: str
+    desc: VersionDescriptor
+    user: str
+    submitted: dt
     state: str
+    finished: dt | None

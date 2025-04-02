@@ -24,13 +24,15 @@ import click
 import httpx
 import pydantic
 from cbslib.auth.users import User
+from cbslib.builds.types import BuildEntry
 from cbslib.config.user import CBSUserConfig
-from cbslib.routes.models import NewBuildResponse
+from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from ceslib.errors import CESError
 from ceslib.logger import log as parent_logger
 from ceslib.versions.create import create
 from ceslib.versions.desc import VersionDescriptor
 from ceslib.versions.errors import VersionError
+from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
@@ -148,11 +150,23 @@ class CBCClient:
             verify=verify,
         )
 
+    def _maybe_handle_error(self, res: httpx.Response) -> None:
+        if res.is_error:
+            try:
+                err = BaseErrorModel.model_validate(res.json())
+                msg = err.detail
+            except pydantic.ValidationError:
+                msg = res.read().decode("utf-8")
+
+            raise CBCError(msg)
+
     def get(
-        self, ep: str, *, params: httpx.QueryParams | None = None
+        self, ep: str, *, params: httpx_types.QueryParamTypes | None = None
     ) -> httpx.Response:
         try:
-            return self._client.get(ep, params=params)
+            res = self._client.get(ep, params=params)
+            self._maybe_handle_error(res)
+            return res
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
@@ -168,13 +182,31 @@ class CBCClient:
         data: Any,  # pyright: ignore[reportExplicitAny]
     ) -> httpx.Response:
         try:
-            return self._client.post(ep, json=data)
+            res = self._client.post(ep, json=data)
+            self._maybe_handle_error(res)
+            return res
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
             raise CBCConnectionError(msg)
         except Exception as e:
             msg = f"error posting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg)
+
+    def delete(
+        self, ep: str, params: httpx_types.QueryParamTypes | None = None
+    ) -> httpx.Response:
+        try:
+            res = self._client.delete(ep, params=params)
+            self._maybe_handle_error(res)
+            return res
+        except httpx.ConnectError as e:
+            msg = f"error connecting to '{self._client.base_url}': {e}"
+            self._logger.error(msg)
+            raise CBCConnectionError(msg)
+        except Exception as e:
+            msg = f"error deleting '{ep}': {e}"
             self._logger.error(msg)
             raise CBCError(msg)
 
@@ -262,6 +294,38 @@ def _build_new(
         msg = f"error validating server result: {res}"
         logger.error(msg)
         raise CBCError(msg)
+
+
+@endpoint("/builds/status")
+def _build_list(
+    logger: logging.Logger, client: CBCClient, ep: str, all: bool
+) -> list[BuildEntry]:
+    try:
+        r = client.get(ep, params={"all": all})
+        res = r.json()
+    except CBCError as e:
+        logger.error(f"unable to list builds: {e}")
+        raise e
+
+    ta = pydantic.TypeAdapter(list[BuildEntry])
+    try:
+        return ta.validate_python(res)
+    except pydantic.ValidationError:
+        msg = f"error validating server result: {res}"
+        logger.error(msg)
+        raise CBCError(msg)
+
+
+@endpoint("/builds/abort")
+def _build_abort(
+    logger: logging.Logger, client: CBCClient, ep: str, build_id: str, force: bool
+) -> None:
+    try:
+        params = {"force": force} if force else None
+        _ = client.delete(f"{ep}/{build_id}", params=params)
+    except CBCError as e:
+        logger.error(f"unable to abort build '{build_id}': {e}")
+        raise e
 
 
 _cbc_help_message = """CES Build Service Client
@@ -478,7 +542,56 @@ def new_build(
     click.echo(f"     task id: {res.task_id}")
     click.echo(f"       state: {res.state}")
 
+
+@build.command("list", help="List builds from the build service")
+@click.option("--all", is_flag=True, default=False, help="List all known builds")
+@update_ctx
+@pass_logger
+@pass_config
+def build_list(config: CBSUserConfig, logger: logging.Logger, all: bool) -> None:
+    try:
+        lst = _build_list(logger, config, all)
+    except CBCError as e:
+        click.echo(f"error obtaining build list: {e}", err=True)
+        sys.exit(1)
+
+    if not lst:
+        click.echo("no builds found")
+        return
+
+    for entry in lst:
+        click.echo("---")
+        click.echo(f" build id: {entry.task_id}")
+        click.echo(f"     user: {entry.user}")
+        click.echo(f"    state: {entry.state}")
+        click.echo(f"submitted: {entry.submitted}")
+        click.echo(f" finished: {entry.finished}")
+
     pass
+
+
+@build.command("abort", help="Abort an existing build")
+@click.argument("build_id", type=str, required=True, metavar="ID")
+@click.option(
+    "--force",
+    is_flag=True,
+    required=False,
+    default=False,
+    help="Force aborting build, regardless of whom has created it",
+)
+@update_ctx
+@pass_logger
+@pass_config
+def build_abort(
+    config: CBSUserConfig, logger: logging.Logger, build_id: str, force: bool
+) -> None:
+    try:
+        _build_abort(logger, config, build_id, force)
+    except CBCError as e:
+        click.echo(f"error aborting build '{build_id}': {e}", err=True)
+        sys.exit(1)
+
+    click.echo(f"successfully aborted build '{build_id}'")
 
 
 if __name__ == "__main__":
