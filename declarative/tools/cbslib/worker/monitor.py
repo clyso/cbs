@@ -11,10 +11,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from functools import wraps
+import asyncio
+import datetime
+from collections.abc import Awaitable
+from datetime import datetime as dt
 from typing import Any, Callable, Concatenate, ParamSpec, TypeVar
 
 import pydantic
+from cbslib.builds.tracker import BuildsTracker
 from cbslib.logger import log as parent_logger
 from cbslib.worker.celery import celery_app
 
@@ -33,21 +37,24 @@ _P = ParamSpec("_P")
 _R = TypeVar("_R")
 _BM = TypeVar("_BM", bound=pydantic.BaseModel)
 
-_ModelFn = Callable[Concatenate[_BM, _P], _R]
-_DictFn = Callable[Concatenate[_EventDict, _P], _R]
-_ToModelFnWrapper = Callable[[_ModelFn[_BM, _P, _R]], _DictFn[_P, _R]]
 
-
-def _as_model(bm: type[_BM]) -> _ToModelFnWrapper[_BM, _P, _R]:
-    def inner(fn: _ModelFn[_BM, _P, _R]) -> _DictFn[_P, _R]:
-        @wraps(fn)
-        def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-            m = bm(**e)
-            return fn(m, *args, **kwargs)
-
-        return wrapper
-
-    return inner
+# Keep this here for future reference, because it might come in handy at some point.
+#
+# _ModelFn = Callable[Concatenate[_BM, _P], _R]
+# _DictFn = Callable[Concatenate[_EventDict, _P], _R]
+# _ToModelFnWrapper = Callable[[_ModelFn[_BM, _P, _R]], _DictFn[_P, _R]]
+#
+#
+# def _as_model(bm: type[_BM]) -> _ToModelFnWrapper[_BM, _P, _R]:
+#     def inner(fn: _ModelFn[_BM, _P, _R]) -> _DictFn[_P, _R]:
+#         @wraps(fn)
+#         def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+#             m = bm(**e)
+#             return fn(m, *args, **kwargs)
+#
+#         return wrapper
+#
+#     return inner
 
 
 class _EventTaskStarted(pydantic.BaseModel):
@@ -79,48 +86,83 @@ class _EventTaskRevoked(pydantic.BaseModel):
     expired: bool
 
 
-@_as_model(_EventTaskStarted)
-def _event_task_started(event: _EventTaskStarted) -> None:
+_ModelFn = Callable[Concatenate[BuildsTracker, _BM, _P], Awaitable[_R]]
+_DictFn = Callable[Concatenate[_EventDict, _P], _R]
+
+
+def _with_tracker(
+    tracker: BuildsTracker, bm: type[_BM], fn: _ModelFn[_BM, _P, _R]
+) -> _DictFn[_P, _R]:
+    def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        m = bm(**e)
+        loop = asyncio.new_event_loop()
+        return loop.run_until_complete(fn(tracker, m, *args, **kwargs))
+
+    return wrapper
+
+
+async def _event_task_started(tracker: BuildsTracker, event: _EventTaskStarted) -> None:
     log.info(f"task started: uuid = {event.uuid}, ts = {event.timestamp}")
+    await tracker.mark_started(
+        event.uuid, dt.fromtimestamp(event.timestamp, datetime.UTC)
+    )
 
 
-@_as_model(_EventTaskSucceeded)
-def _event_task_succeeded(event: _EventTaskSucceeded) -> None:
+async def _event_task_succeeded(
+    tracker: BuildsTracker, event: _EventTaskSucceeded
+) -> None:
     log.info(f"task succeeded, uuid: {event.uuid}, runtime: {event.runtime}")
+    await tracker.mark_succeeded(
+        event.uuid, dt.fromtimestamp(event.timestamp, datetime.UTC)
+    )
 
 
-@_as_model(_EventTaskFailed)
-def _event_task_failed(event: _EventTaskFailed) -> None:
+async def _event_task_failed(tracker: BuildsTracker, event: _EventTaskFailed) -> None:
     log.info(
         f"task failed, uuid: {event.uuid}, exception: {event.exception}, "
         + f"ts: {event.timestamp}"
     )
+    await tracker.mark_failed(
+        event.uuid, dt.fromtimestamp(event.timestamp, datetime.UTC)
+    )
 
 
-@_as_model(_EventTaskRejected)
-def _event_task_rejected(event: _EventTaskRejected) -> None:
+async def _event_task_rejected(
+    tracker: BuildsTracker, event: _EventTaskRejected
+) -> None:
     log.info(f"task rejected, uuid: {event.uuid}")
+    await tracker.mark_rejected(event.uuid)
 
 
-@_as_model(_EventTaskRevoked)
-def _event_task_revoked(event: _EventTaskRevoked) -> None:
+async def _event_task_revoked(tracker: BuildsTracker, event: _EventTaskRevoked) -> None:
     log.info(
         f"task revoked, uuid: {event.uuid}, terminated: {event.terminated}, "
         + f"signum: {event.signum}, expired: {event.expired}"
     )
+    await tracker.mark_revoked(event.uuid)
 
 
-def monitor() -> None:
+def monitor(builds_tracker: BuildsTracker) -> None:
     try:
         with celery_app.connection() as conn:
             recv = celery_app.events.Receiver(
                 conn,
                 handlers={
-                    "task-started": _event_task_started,
-                    "task-succeeded": _event_task_succeeded,
-                    "task-failed": _event_task_failed,
-                    "task-rejected": _event_task_rejected,
-                    "task-revoked": _event_task_revoked,
+                    "task-started": _with_tracker(
+                        builds_tracker, _EventTaskStarted, _event_task_started
+                    ),
+                    "task-succeeded": _with_tracker(
+                        builds_tracker, _EventTaskSucceeded, _event_task_succeeded
+                    ),
+                    "task-failed": _with_tracker(
+                        builds_tracker, _EventTaskFailed, _event_task_failed
+                    ),
+                    "task-rejected": _with_tracker(
+                        builds_tracker, _EventTaskRejected, _event_task_rejected
+                    ),
+                    "task-revoked": _with_tracker(
+                        builds_tracker, _EventTaskRevoked, _event_task_revoked
+                    ),
                 },
             )
             recv.capture(limit=None, timeout=None, wakeup=None)

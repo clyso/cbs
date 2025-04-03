@@ -55,7 +55,7 @@ class BuilderTask(Task[_P, None]):
         loop.run_until_complete(self.builder.kill())
 
 
-@celery_app.task(pydantic=True, base=BuilderTask, bind=True)
+@celery_app.task(pydantic=True, base=BuilderTask, bind=True, track_started=True)
 def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
     log.info(f"build version: {version_desc}")
 
@@ -65,4 +65,4 @@ def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
         loop.run_until_complete(self.builder.build(version_desc))
     except (WorkerBuilderError, Exception) as e:
         log.error(f"error running build: {e}")
-        return
+        raise e

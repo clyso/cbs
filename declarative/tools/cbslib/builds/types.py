@@ -12,9 +12,20 @@
 # GNU Affero General Public License for more details.
 
 from datetime import datetime as dt
+import enum
 
 import pydantic
 from ceslib.versions.desc import VersionDescriptor
+
+
+class EntryState(str, enum.Enum):
+    pending = "PENDING"
+    started = "STARTED"
+    retry = "RETRY"
+    failure = "FAILURE"
+    success = "SUCCESS"
+    revoked = "REVOKED"
+    rejected = "REJECTED"
 
 
 class BuildEntry(pydantic.BaseModel):
@@ -22,5 +33,6 @@ class BuildEntry(pydantic.BaseModel):
     desc: VersionDescriptor
     user: str
     submitted: dt
-    state: str
+    state: EntryState
+    started: dt | None
     finished: dt | None

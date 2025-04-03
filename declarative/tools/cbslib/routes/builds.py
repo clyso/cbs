@@ -97,12 +97,13 @@ async def get_builds_status(
     user: CBSAuthUser,
     tracker: CBSBuildsTracker,
     all: bool,
+    from_backend: bool = False,
 ) -> list[BuildEntry]:
     log.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
 
     owner = user.email if not all else None
     try:
-        return await tracker.builds(owner)
+        return await tracker.list(owner=owner, from_backend=from_backend)
     except Exception as e:
         log.error(f"unexpected error: {e}")
         raise HTTPException(

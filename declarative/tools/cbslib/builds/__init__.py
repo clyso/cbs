@@ -11,3 +11,6 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+from cbslib.logger import log as parent_logger
+
+log = parent_logger.getChild("builds")

@@ -27,6 +27,7 @@ import uvicorn
 import uvicorn.config
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
+from cbslib.builds.tracker import get_builds_tracker
 from cbslib.config.server import config_init
 from cbslib.logger import log as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
@@ -57,7 +58,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         log.error(f"error initiating server: {e}")
         sys.exit(1)
 
-    thread = threading.Thread(target=monitor)
+    thread = threading.Thread(target=monitor, args=(get_builds_tracker(),))
     thread.start()
 
     log.info("Starting ces build server")
