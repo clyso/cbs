@@ -1,0 +1,5 @@
+[ganesha]
+name = ganesha
+baseurl = https://mirror.stream.centos.org/SIGs/$releasever-stream/storage/$basearch/nfsganesha-4/
+gpgcheck = 0
+enabled = 1
