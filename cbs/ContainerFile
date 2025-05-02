@@ -13,19 +13,29 @@
 
 FROM python:3.13-alpine3.20
 
+# hadolint ignore=DL3018
+RUN apk --no-cache add podman=5.2.5-r0 curl
+
+# hadolint ignore=DL4006
+RUN curl -LsSf https://astral.sh/uv/install.sh | \
+  UV_INSTALL_DIR=/usr/bin \
+  UV_DISABLE_UPDATE=1 \
+  UV_NO_MODIFY_PATH=1 \
+  /bin/sh
+
+
 WORKDIR /cbs/server
 
-RUN apk --no-cache add podman=5.2.5-r0
-
-#RUN mkdir /cbs/server
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r ./requirements.txt
+COPY pyproject.toml ./
+COPY uv.lock ./
 
 COPY ces-build-server.py ./
 COPY ceslib/ ./ceslib/
 COPY cbslib/ ./cbslib/
 
 RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+
+RUN uv sync --frozen --no-cache --no-dev
 
 VOLUME [ "/cbs/scratch" ]
 VOLUME [ "/cbs/config" ]
@@ -34,9 +44,8 @@ VOLUME [ "/cbs/components" ]
 VOLUME [ "/cbs/containers" ]
 VOLUME [ "/cbs/ccache" ]
 
-RUN ls -la
-
-ENTRYPOINT [ "uvicorn", \
+ENTRYPOINT [ "uv", "run", "--no-sync", \
+  "uvicorn", \
   "--factory", \
   "--host", "0.0.0.0", \
   "--port", "8080", \ 

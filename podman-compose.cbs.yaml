@@ -13,13 +13,13 @@
 
 services:
   worker:
-    build: ./tools
+    build: ./cbs
     container_name: clyso-cbs-worker
-    entrypoint: celery -A cbslib.worker worker --loglevel=info --concurrency=1
+    entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
-      - ./tools/cbs-config.worker.json:/cbs/config/cbs-config.json
-      - ./tools:/cbs/tools
+      - ./cbs/cbs-config.worker.json:/cbs/config/cbs-config.json
+      - ./cbs:/cbs/tools
 
       - ./versions/secrets.json:/cbs/secrets/secrets.json
       - /mnt/pci4-scratch/ces-scratch:/cbs/scratch
@@ -42,21 +42,21 @@ services:
       - redis
 
   cbs:
-    build: ./tools
+    build: ./cbs
     container_name: clyso-cbs
     ports:
       - "8080:8080"
     restart: "no"
     privileged: true
     volumes:
-      - ./tools/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./cbs/cbs-config.server.json:/cbs/config/cbs-config.json
 
-      - ./tools/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
+      - ./cbs/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
       - ./versions/secrets.json:/cbs/secrets/secrets.json
-      - ./tools/cbs.db:/cbs/data/cbs.db
-      - ./tools/cbs-cert.pem:/cbs/config/cbs-cert.pem
-      - ./tools/cbs-key.pem:/cbs/config/cbs-key.pem
-      - ./tools:/cbs/tools
+      - ./cbs/cbs.db:/cbs/data/cbs.db
+      - ./cbs/cbs-cert.pem:/cbs/config/cbs-cert.pem
+      - ./cbs/cbs-key.pem:/cbs/config/cbs-key.pem
+      - ./cbs:/cbs/tools
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -67,13 +67,13 @@ services:
       - redis
 
   flower:
-    build: ./tools
+    build: ./cbs
     container_name: clyso-cbs-worker-flower
-    entrypoint: celery --broker=redis://redis:6379/0 -A cbslib.worker flower
+    entrypoint: uv run --no-sync celery --broker=redis://redis:6379/0 -A cbslib.worker flower
     ports:
       - "5555:5555"
     volumes:
-      - ./tools/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./cbs/cbs-config.server.json:/cbs/config/cbs-config.json
     environment:
       CBS_CONFIG: /cbs/config/cbs-config.json
       CBS_DEBUG: 1
