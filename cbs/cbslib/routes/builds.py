@@ -78,16 +78,16 @@ async def builds_new(
     try:
         task_id, task_state = await tracker.new(descriptor)
     except BuildExistsError as e:
-        log.error(f"build exists: {e}")
+        log.exception("build exists")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Build already exists"
-        )
+        ) from e
     except Exception as e:
-        log.error(f"unexpected error: {e}")
+        log.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
-        )
+        ) from e
 
     return NewBuildResponse(task_id=task_id, state=task_state)
 
@@ -105,11 +105,11 @@ async def get_builds_status(
     try:
         return await tracker.list(owner=owner, from_backend=from_backend)
     except Exception as e:
-        log.error(f"unexpected error: {e}")
+        log.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
-        )
+        ) from e
 
 
 @router.delete("/abort/{build_id}", responses={**_responses})
@@ -123,16 +123,18 @@ async def delete_build_id(
 
     try:
         await tracker.abort_build(build_id, user.email, force)
-        return True
     except UnauthorizedTrackerError as e:
-        log.error(f"unable to abort build '{build_id}': {e}")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        log.exception(f"unable to abort build '{build_id}'")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
+        ) from e
     except Exception as e:
-        log.error(f"unexpected error: {e}")
+        log.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
-        )
+        ) from e
+    return True
 
 
 @router.get("/status/{task_id}")
@@ -166,11 +168,11 @@ async def get_status() -> JSONResponse:
 
     if scheduled:
         for tasks in scheduled.values():
-            scheduled_info.extend([task for task in tasks])
+            scheduled_info.extend(list(tasks))
 
     if reserved:
         for tasks in reserved.values():
-            reserved_info.extend([task for task in tasks])
+            reserved_info.extend(list(tasks))
 
     return JSONResponse(
         {

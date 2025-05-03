@@ -20,7 +20,7 @@ import re
 import tempfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, override
+from typing import Any, cast, override
 
 import aiohttp
 import pydantic
@@ -32,7 +32,7 @@ log = parent_logger.getChild("repos")
 
 
 def repo_discriminator(v: dict[str, Any]) -> str:  # pyright: ignore[reportExplicitAny]
-    source: str = v["source"]
+    source: str = cast(str, v["source"])
     if not source:
         raise pydantic.ValidationError()
 
@@ -76,8 +76,8 @@ class ContainerRepository(pydantic.BaseModel, abc.ABC):
                 await container.copy(src, dst)
             except (BuildahError, Exception) as e:
                 msg = f"unable to copy repository from '{src}' to '{dst}': {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
 
 class ContainerFileRepository(ContainerRepository):
@@ -104,8 +104,8 @@ class ContainerFileRepository(ContainerRepository):
             _ = hint.relative_to(root)
         except ValueError:
             msg = f"hint path '{hint}' not relative to root '{root}'"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from None
 
         name: str = m.group(1)
         p = find_path_relative_to(name, hint, root)
@@ -139,11 +139,13 @@ class ContainerURLRepository(ContainerRepository):
         tmp_fd, tmp_source = tempfile.mkstemp()
         tmp_source_path = Path(tmp_source)
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.source) as response:
-                    data = await response.read()
-                    with tmp_source_path.open("wb") as f:
-                        _ = f.write(data)
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(self.source) as response,
+            ):
+                data = await response.read()
+                with tmp_source_path.open("wb") as f:
+                    _ = f.write(data)
 
             yield tmp_source_path
 
@@ -170,8 +172,8 @@ class ContainerCOPRRepository(ContainerRepository):
             await container.run(cmd)
         except (BuildahError, Exception) as e:
             msg = f"error enabling COPR repository '{copr_source}': {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
     @override
     @contextlib.asynccontextmanager

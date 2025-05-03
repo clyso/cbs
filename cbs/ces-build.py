@@ -210,8 +210,8 @@ def build(
                 force=force,
             )
         )
-    except (RunnerError, Exception) as e:
-        log.error(f"error building '{desc_path}': {e}")
+    except (RunnerError, Exception):
+        log.exception(f"error building '{desc_path}'")
         sys.exit(1)
 
 
@@ -366,8 +366,8 @@ def runner_build(
 
     try:
         desc = VersionDescriptor.read(desc_path)
-    except CESError as e:
-        log.error(f"unable to read descriptor: {e}")
+    except CESError:
+        log.exception("unable to read descriptor")
         sys.exit(1)
 
     builder = Builder(
@@ -389,8 +389,8 @@ def runner_build(
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(builder.run())
-    except Exception as e:
-        log.error(f"unable to run build: {e}")
+    except Exception:
+        log.exception("unable to run build")
         sys.exit(1)
 
 

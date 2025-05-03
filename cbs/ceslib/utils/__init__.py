@@ -17,9 +17,10 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from io import StringIO
 from pathlib import Path
-from typing import Callable, override
+from typing import override
 
 from ceslib.errors import CESError
 from ceslib.logger import log as root_logger
@@ -95,7 +96,7 @@ class SecureURL(SecureArg):
 
     @override
     def __repr__(self) -> str:
-        return "SecureURL({_url})".format(_url=str(self._url))
+        return f"SecureURL({self._url!s})"
 
     @property
     @override
@@ -155,10 +156,10 @@ def get_unsecured_cmd(orig: CmdArgs) -> list[str]:
 def run_cmd(cmd: CmdArgs, env: dict[str, str] | None = None) -> tuple[int, str, str]:
     log.debug(f"sync run '{_sanitize_cmd(cmd)}'")
     try:
-        p = subprocess.run(get_unsecured_cmd(cmd), env=env, capture_output=True)
+        p = subprocess.run(get_unsecured_cmd(cmd), env=env, capture_output=True)  # noqa: S603
     except OSError as e:
-        log.error(f"error running '{_sanitize_cmd(cmd)}': {e}")
-        raise CESError()
+        log.exception(f"error running '{_sanitize_cmd(cmd)}'")
+        raise CESError() from e
 
     if p.returncode != 0:
         log.error(
@@ -234,11 +235,12 @@ async def async_run_cmd(
             _tee(p.stdout, outcb), _tee(p.stderr, outcb)
         )
         retcode = await asyncio.wait_for(p.wait(), timeout)
-    except asyncio.TimeoutError:
-        # attempt to kill the process, if possible. Some states may prevent it from being killed.
+    except TimeoutError:
+        # attempt to kill the process, if possible. Some states may prevent it from
+        # being killed.
         p.kill()
-        log.error(f"running exceeded timeout ({timeout} secs)")
-        raise CommandError("timeout exceeded")
+        log.exception(f"running exceeded timeout ({timeout} secs)")
+        raise CommandError(msg="timeout exceeded") from None
 
     return retcode, stdout, stderr
 

@@ -57,8 +57,8 @@ class ContainerBuilder:
             components = await self.get_components()
         except (ContainerError, Exception) as e:
             msg = f"error obtaining components to build: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         self.container = await buildah_new_container(self.version_desc)
 
@@ -66,29 +66,29 @@ class ContainerBuilder:
             await self.apply_pre(components)
         except (ContainerError, Exception) as e:
             msg = f"error applying PRE sections: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         try:
             await self.install_packages(components)
         except (ContainerError, Exception) as e:
             msg = f"error installing component PACKAGES: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         try:
             await self.apply_post(components)
         except (ContainerError, Exception) as e:
             msg = f"error applying POST sections: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         try:
             await self.apply_config(components)
         except (ContainerError, Exception) as e:
             msg = f"error applying CONFIG section: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         pass
 
@@ -133,15 +133,15 @@ class ContainerBuilder:
                     "unable to obtain container's component descriptor "
                     + f"for '{comp_name}': {e}"
                 )
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
             except Exception as e:
                 msg = (
                     "unknown exception obtaining container's component descriptor for "
                     + f"'{comp_name}: {e}"
                 )
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
             components[comp_name] = component
 
@@ -162,8 +162,8 @@ class ContainerBuilder:
                 await comp_container.apply_pre(self.container)
             except (ContainerError, Exception) as e:
                 msg = f"error applying PRE to component '{comp_name}': {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
         pass
 
     def get_packages(self, components: dict[str, ComponentContainer]) -> list[str]:
@@ -194,13 +194,14 @@ class ContainerBuilder:
                 "--setopt=install_weak_deps=False",
                 "--setopt=skip_missing_names_on_install=False",
                 "--enablerepo=crb",
-            ] + packages
+                *packages,
+            ]
 
             await self.container.run(cmd)
         except (BuildahError, Exception) as e:
             msg = f"error installing packages: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
     async def apply_post(self, components: dict[str, ComponentContainer]) -> None:
         log.info("apply POST from components")
@@ -212,8 +213,8 @@ class ContainerBuilder:
             await self.container.run(cmd)
         except (BuildahError, Exception) as e:
             msg = f"error running final container update: {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e
 
         for comp_name, comp_container in components.items():
             log.info(f"apply POST for component '{comp_name}'")

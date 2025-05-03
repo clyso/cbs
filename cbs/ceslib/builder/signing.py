@@ -13,6 +13,7 @@
 
 
 import asyncio
+import datetime
 from datetime import datetime as dt
 from pathlib import Path
 
@@ -44,12 +45,12 @@ async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) 
         rc, _, stderr = await async_run_cmd(cmd)
     except CommandError as e:
         msg = f"error signing rpm '{rpm_path}': {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
     except Exception as e:
         msg = f"unknown error signing rpm '{rpm_path}': {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     if rc != 0:
         msg = f"unable to sign rpm '{rpm_path}': {stderr}"
@@ -67,7 +68,7 @@ async def _sign_component_rpms(
 
     rpms_to_sign: list[Path] = []
 
-    start = dt.now()
+    start = dt.now(datetime.UTC)
 
     for parent, _, files in path.walk():
         for f in files:
@@ -80,14 +81,14 @@ async def _sign_component_rpms(
             await _sign_rpm(rpm_path, keyring, passphrase, email)
         except BuilderError as e:
             msg = f"unable to sign rpms in '{path}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error signing rpms in '{path}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
-    time_spent = (dt.now() - start).seconds
+    time_spent = (dt.now(tz=datetime.UTC) - start).seconds
     return time_spent, len(rpms_to_sign)
 
 
@@ -115,18 +116,18 @@ async def sign_rpms(
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error signing components RPMs:")
+            log.error("error signing components RPMs:")  # noqa: TRY400
             for exc in excs.exceptions:
-                log.error(f"- {exc}")
+                log.error(f"- {exc}")  # noqa: TRY400
         else:
-            log.error(f"unexpected error signing component RPMs: {e}")
+            log.error(f"unexpected error signing component RPMs: {e}")  # noqa: TRY400
 
-        raise BuilderError(f"error signing component RPMs: {e}")
+        raise BuilderError(msg=f"error signing component RPMs: {e}") from e
 
     except Exception as e:
         msg = f"unexpected error signing RPMs: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     for name, task in tasks.items():
         time_spent, num_signs = task.result()

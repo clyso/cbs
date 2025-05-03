@@ -20,11 +20,17 @@ from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import log as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
 from cbslib.config.server import get_config
+from ceslib.errors import CESError
 from fastapi import Depends, HTTPException, status
 
-from ceslib.errors import CESError
-
 log = parent_logger.getChild("users")
+
+
+class AuthUsersDBMissingError(AuthError):
+    """Auth Users DB is missing."""
+
+    def __init__(self) -> None:
+        super().__init__("missing auth users db!")
 
 
 class UsersDBError(CESError):
@@ -85,8 +91,8 @@ class Users:
                     self._tokens_db[user.token.token] = user.token
         except Exception as e:
             msg = f"error loading users from db '{self._db_path}': {e}"
-            log.error(msg)
-            raise UsersDBError(msg)
+            log.exception(msg)
+            raise UsersDBError(msg) from e
 
         log.info(f"loaded {len(self._users_db)} users from database")
 
@@ -98,8 +104,8 @@ class Users:
                 db["users"] = users_json
         except Exception as e:
             msg = f"error saving users to db '{self._db_path}': {e}"
-            log.error(msg)
-            raise UsersDBError(msg)
+            log.exception(msg)
+            raise UsersDBError(msg) from e
 
 
 _auth_users: Users | None = None
@@ -114,7 +120,7 @@ async def auth_users_init() -> None:
 
 def get_auth_users() -> Users:
     if not _auth_users:
-        raise AuthError("missing auth users db!")
+        raise AuthUsersDBMissingError()
     return _auth_users
 
 
@@ -125,7 +131,7 @@ async def get_user(token_info: AuthTokenInfo, users: CBSAuthUsersDB) -> User:
     try:
         return await users.get_user(token_info.user)
     except AuthNoSuchUserError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized user")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized user") from None
 
 
 CBSAuthUser = Annotated[User, Depends(get_user)]

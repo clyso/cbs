@@ -44,11 +44,11 @@ class Vault:
     ) -> None:
         self.addr = addr
         if not self.addr:
-            raise VaultError("missing vault address")
+            raise VaultError(msg="missing vault address")
         if not role_id:
-            raise VaultError("missing role id")
+            raise VaultError(msg="missing role id")
         if not secret_id:
-            raise VaultError("missing secret id")
+            raise VaultError(msg="missing secret id")
         self.transit = transit
         self.role_id = role_id
         self.secret_id = secret_id
@@ -64,9 +64,9 @@ class Vault:
             )
             log.info("logged in to vault")
         except hvac.exceptions.Forbidden:
-            raise VaultError("permission denied logging in to vault")
+            raise VaultError(msg="permission denied logging in to vault") from None
         except Exception:
-            raise VaultError("error logging in to vault")
+            raise VaultError(msg="error logging in to vault") from None
 
         yield client
 
@@ -80,13 +80,13 @@ class Vault:
                 )
                 log.debug(f"obtained secret '{path}' from vault")
         except hvac.exceptions.Forbidden:
-            raise VaultError("permission denied obtaining secret")
+            raise VaultError(msg="permission denied obtaining secret") from None
         except Exception as e:
-            raise VaultError(f"error obtaining secret: {e}")
+            raise VaultError(msg=f"error obtaining secret: {e}") from e
 
         try:
             entry = res["data"]["data"]
         except KeyError as e:
-            raise VaultError(f"error obtaining secret's entry: {e}")
+            raise VaultError(msg=f"error obtaining secret's entry: {e}") from None
 
         return entry

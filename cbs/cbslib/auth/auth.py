@@ -11,9 +11,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+import datetime
 from datetime import datetime as dt
 from datetime import timedelta as td
-from datetime import timezone as tz
 from typing import Annotated, cast
 
 import pydantic
@@ -41,12 +41,13 @@ class CBSToken(pydantic.BaseModel):
 
 
 def token_create(user: str) -> CBSToken:
-    """Creates a new CBSToken, including its paseto token, for the given user."""
+    """Create a new CBSToken, including its paseto token, for the given user."""
     config = get_config()
     expiration = (
         None
         if not config.secrets.server.token_secret_ttl_minutes
-        else dt.now(tz.utc) + td(minutes=config.secrets.server.token_secret_ttl_minutes)
+        else dt.now(datetime.UTC)
+        + td(minutes=config.secrets.server.token_secret_ttl_minutes)
     )
     info = CBSTokenInfo(user=user, expires=expiration)
     info_payload = pydantic_core.to_jsonable_python(info)  # pyright: ignore[reportAny]
@@ -73,9 +74,7 @@ def _token_auth(
         headers={"WWW-Authorization": "Bearer"},
     )
 
-    if authorization.scheme.lower() != "bearer":
-        raise failed_error
-    elif not authorization.credentials:
+    if authorization.scheme.lower() != "bearer" or not authorization.credentials:
         raise failed_error
 
     return authorization.credentials
@@ -94,13 +93,17 @@ def token_decode(token: _AuthToken) -> CBSTokenInfo:
     try:
         decoded_token = pyseto.decode(key, token)
     except Exception as e:
-        log.error(f"error decoding token: {e}")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid user token")
+        log.exception("error decoding token")
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
+        ) from e
 
     try:
         return CBSTokenInfo.model_validate_json(cast(bytes, decoded_token.payload))
     except pydantic.ValidationError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid user token")
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
+        ) from None
 
 
 AuthTokenInfo = Annotated[CBSTokenInfo, Depends(token_decode)]

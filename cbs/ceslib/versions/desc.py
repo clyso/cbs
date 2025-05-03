@@ -59,12 +59,12 @@ class VersionDescriptor(pydantic.BaseModel):
             return VersionDescriptor.model_validate_json(raw_json)
         except OSError as e:
             if e.errno == errno.ENOENT:
-                raise NoSuchVersionDescriptorError(path)
-            raise e
+                raise NoSuchVersionDescriptorError(path) from None
+            raise e  # noqa: TRY201
         except pydantic.ValidationError:
-            raise InvalidVersionDescriptorError(path)
+            raise InvalidVersionDescriptorError(path) from None
         except Exception as e:
-            raise e
+            raise e  # noqa: TRY201
 
     def write(self, path: Path) -> None:
         # propagate exceptions

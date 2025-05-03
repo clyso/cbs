@@ -13,9 +13,9 @@
 
 import asyncio
 import datetime
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import datetime as dt
-from typing import Any, Callable, Concatenate, ParamSpec, TypeVar
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import pydantic
 from cbslib.builds.tracker import BuildsTracker
@@ -166,7 +166,7 @@ def monitor(builds_tracker: BuildsTracker) -> None:
                 },
             )
             recv.capture(limit=None, timeout=None, wakeup=None)
-    except Exception as e:
-        log.error(f"error capturing events: {e}")
+    except Exception:
+        log.exception("error capturing events")
         pass
     pass

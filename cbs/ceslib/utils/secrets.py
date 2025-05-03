@@ -106,7 +106,7 @@ class Secrets(pydantic.BaseModel):
     @classmethod
     def read(cls, path: Path) -> Secrets:
         if not path.exists() or not path.is_file():
-            raise SecretsError(f"credentials not found at '{path}'")
+            raise SecretsError(msg=f"credentials not found at '{path}'")
 
         with path.open("r") as f:
             raw_json = f.read()
@@ -114,9 +114,11 @@ class Secrets(pydantic.BaseModel):
         try:
             return Secrets.model_validate_json(raw_json)
         except pydantic.ValidationError:
-            raise SecretsError(f"error validating credentials at '{path}'")
+            raise SecretsError(
+                msg=f"error validating credentials at '{path}'"
+            ) from None
         except Exception as e:
-            raise SecretsError(f"error validating credentials at '{path}': {e}")
+            raise SecretsError(msg=f"error validating credentials at '{path}'") from e
 
 
 class GitSSHSecretCtx:
@@ -159,46 +161,55 @@ class SecretsVaultMgr:
                 break
 
         if entry is None:
-            raise SecretsVaultError(f"unable to find secret for '{url}'")
+            raise SecretsVaultError(msg=f"unable to find secret for '{url}'")
 
         m = re.match(pattern, url)
         if m is None:
-            raise SecretsVaultError(f"malformed url '{url}'")
+            raise SecretsVaultError(msg=f"malformed url '{url}'")
 
         matched_url: str = m.group(1)
 
         if isinstance(entry, GitSSHSecrets):
             homedir = os.getenv("HOME")
             if homedir is None:
-                raise SecretsVaultError("unable to obtain home directory for ssh key")
+                raise SecretsVaultError(
+                    msg="unable to obtain home directory for ssh key"
+                )
             ssh_conf_dir = Path(homedir).joinpath(".ssh")
             ssh_conf_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
 
             remote_name = "".join(
-                random.choice(string.ascii_letters) for _ in range(10)
+                random.choice(  # noqa: S311
+                    string.ascii_letters
+                )
+                for _ in range(10)
             )
 
             # split matched url into git repo host and git repo
             idx = matched_url.find("/")
             if idx <= 0 or (len(matched_url) - 1) == idx:
-                raise SecretsVaultError(f"malformed url for ssh git repository: {url}")
+                raise SecretsVaultError(
+                    msg=f"malformed url for ssh git repository: {url}"
+                )
             target_host = matched_url[:idx]
             target_repo = matched_url[idx + 1 :]
 
             # obtain target host key, stash it
             try:
-                p = subprocess.run(
-                    ["ssh-keyscan", "-t", "rsa", target_host], capture_output=True
+                p = subprocess.run(  # noqa: S603
+                    ["ssh-keyscan", "-t", "rsa", target_host],  # noqa: S607
+                    capture_output=True,
                 )
                 assert p.stdout
             except Exception as e:
                 raise SecretsVaultError(
-                    f"error obtaining host key for '{target_host}': {e}"
-                )
+                    msg=f"error obtaining host key for '{target_host}': {e}"
+                ) from e
 
             if p.returncode != 0:
                 raise SecretsVaultError(
-                    f"error obtaining host key for '{target_host}': {p.stderr.decode('utf-8')}"
+                    msg=f"error obtaining host key for '{target_host}': "
+                    + f"{p.stderr.decode('utf-8')}"
                 )
 
             with ssh_conf_dir.joinpath("known_hosts").open("a") as f:
@@ -208,11 +219,13 @@ class SecretsVaultMgr:
             try:
                 ssh_secret = self.vault.read_secret(entry.vault_key)
             except VaultError as e:
-                raise SecretsVaultError(f"error obtaining ssh secret from vault: {e}")
+                raise SecretsVaultError(
+                    msg=f"error obtaining ssh secret from vault: {e}"
+                ) from e
             try:
                 ssh_key = ssh_secret[entry.ssh_key]
             except KeyError as e:
-                raise SecretsVaultError(f"error obtaining ssh key: {e}")
+                raise SecretsVaultError(msg=f"error obtaining ssh key: {e}") from e
 
             ssh_key_path = ssh_conf_dir.joinpath(f"{remote_name}.id")
             with ssh_key_path.open("w") as f:
@@ -244,14 +257,16 @@ Host {remote_name}
                 https_secret = self.vault.read_secret(entry.vault_key)
             except VaultError as e:
                 raise SecretsVaultError(
-                    f"error obtaining https credentials from vault: {e}"
-                )
+                    msg=f"error obtaining https credentials from vault: {e}"
+                ) from e
 
             try:
                 username = https_secret[entry.username]
                 password = https_secret[entry.password]
             except KeyError as e:
-                raise SecretsVaultError(f"error obtaining https credentials: {e}")
+                raise SecretsVaultError(
+                    msg=f"error obtaining https credentials: {e}"
+                ) from e
 
             https_secure_url = SecureURL(
                 "https://{username}:{password}@{url}",
@@ -266,15 +281,17 @@ Host {remote_name}
             harbor_secret = self.vault.read_secret(self.secrets.harbor.vault_key)
         except VaultError as e:
             raise SecretsVaultError(
-                f"error obtaining harbor credentials from vault: {e}"
-            )
+                msg=f"error obtaining harbor credentials from vault: {e}"
+            ) from e
 
         try:
             username = harbor_secret[self.secrets.harbor.username]
             password = harbor_secret[self.secrets.harbor.password]
             address = self.secrets.harbor.extras["address"]
         except KeyError as e:
-            raise SecretsVaultError(f"error obtaining harbor credentials: {e}")
+            raise SecretsVaultError(
+                msg=f"error obtaining harbor credentials: {e}"
+            ) from e
 
         return address, username, password
 
@@ -282,14 +299,16 @@ Host {remote_name}
         try:
             s3_secret = self.vault.read_secret(self.secrets.s3.vault_key)
         except VaultError as e:
-            raise SecretsVaultError(f"error obtaining S3 credentials from vault: {e}")
+            raise SecretsVaultError(
+                msg=f"error obtaining S3 credentials from vault: {e}"
+            ) from e
 
         try:
             hostname = s3_secret[self.secrets.s3.hostname]
             access_id = s3_secret[self.secrets.s3.access_id]
             secret_id = s3_secret[self.secrets.s3.secret_id]
         except KeyError as e:
-            raise SecretsVaultError(f"error obtaining S3 credentials: {e}")
+            raise SecretsVaultError(msg=f"error obtaining S3 credentials: {e}") from e
 
         return hostname, access_id, secret_id
 
@@ -307,19 +326,21 @@ Host {remote_name}
             env = os.environ.copy()
             env["GNUPGHOME"] = keyring_path.resolve().as_posix()
             try:
-                p = subprocess.run(cmd, capture_output=True, env=env)
+                p = subprocess.run(cmd, capture_output=True, env=env)  # noqa: S603
                 self.log.debug(f"stdout: {p.stdout}")
                 self.log.debug(f"stderr: {p.stderr}")
             except Exception as e:
                 msg = f"error importing gpg private key: {e}"
-                self.log.error(msg)
-                raise SecretsVaultError(msg)
+                self.log.exception(msg)
+                raise SecretsVaultError(msg) from e
 
             if p.returncode != 0:
                 log.error(
                     f"error importing gpg private key from '{pvt_key_file}': {p.stderr}"
                 )
-                raise SecretsVaultError(f"error importing gpg private key: {p.stderr}")
+                raise SecretsVaultError(
+                    msg=f"error importing gpg private key: {p.stderr}"
+                )
 
             self.log.debug(
                 f"return keyring at '{keyring_path}', "
@@ -331,8 +352,8 @@ Host {remote_name}
                 shutil.rmtree(keyring_path)
             except Exception as e:
                 msg = f"error cleaning up keyring at '{keyring_path}': {e}"
-                log.error(msg)
-                raise SecretsVaultError(msg)
+                log.exception(msg)
+                raise SecretsVaultError(msg) from e
 
     @contextmanager
     def gpg_private_key_file(self) -> Generator[tuple[Path, str]]:
@@ -340,13 +361,17 @@ Host {remote_name}
         try:
             gpg_pvt_secret = self.vault.read_secret(self.secrets.gpg.private.vault_key)
         except VaultError as e:
-            raise SecretsVaultError(f"error obtaining GPG private key from vault: {e}")
+            raise SecretsVaultError(
+                msg=f"error obtaining GPG private key from vault: {e}"
+            ) from e
 
         try:
             gpg_pvt_key = gpg_pvt_secret[self.secrets.gpg.private.key]
             gpg_pvt_passphrase = gpg_pvt_secret[self.secrets.gpg.private.passphrase]
         except KeyError as e:
-            raise SecretsVaultError(f"error obtaining GPG private key credentials: {e}")
+            raise SecretsVaultError(
+                msg=f"error obtaining GPG private key credentials: {e}"
+            ) from e
 
         try:
             _, gpg_pvt_file = tempfile.mkstemp()
@@ -355,19 +380,19 @@ Host {remote_name}
                 n = f.write(gpg_pvt_key)
         except Exception as e:
             msg = f"error writing gpg private key to file: {e}"
-            self.log.error(msg)
-            raise SecretsVaultError(msg)
+            self.log.exception(msg)
+            raise SecretsVaultError(msg) from e
 
         yield gpg_pvt_path, gpg_pvt_passphrase
 
         try:
             with gpg_pvt_path.open("bw") as f:
-                _ = f.write(random.randbytes(n))
+                _ = f.write(random.randbytes(n))  # noqa: S311
             gpg_pvt_path.unlink()
         except Exception as e:
             msg = f"error cleaning up gpg private key file: {e}"
-            self.log.error(msg)
-            raise SecretsVaultError(msg)
+            self.log.exception(msg)
+            raise SecretsVaultError(msg) from e
 
     @contextmanager
     def gpg_public_key_file(self) -> Generator[str]:
@@ -375,12 +400,14 @@ Host {remote_name}
         try:
             gpg_pub_secret = self.vault.read_secret(self.secrets.gpg.public.vault_key)
         except VaultError as e:
-            raise SecretsVaultError(f"error obtainin GPG public key from vault: {e}")
+            raise SecretsVaultError(
+                msg=f"error obtainin GPG public key from vault: {e}"
+            ) from e
 
         try:
             gpg_pub_key = gpg_pub_secret[self.secrets.gpg.public.key]
         except KeyError as e:
-            raise SecretsVaultError(f"error obtaining GPG public key: {e}")
+            raise SecretsVaultError(msg=f"error obtaining GPG public key: {e}") from e
 
         _, gpg_pub_path = tempfile.mkstemp()
         with Path(gpg_pub_path).open("w") as f:
@@ -389,5 +416,5 @@ Host {remote_name}
         yield gpg_pub_path
 
         with Path(gpg_pub_path).open("bw") as f:
-            _ = f.write(random.randbytes(n))
+            _ = f.write(random.randbytes(n))  # noqa: S311
         os.unlink(gpg_pub_path)

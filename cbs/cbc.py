@@ -15,10 +15,11 @@
 
 import logging
 import sys
+from collections.abc import Callable
 from copy import copy
 from functools import update_wrapper, wraps
 from pathlib import Path
-from typing import Any, Callable, Concatenate, ParamSpec, TypeVar, override
+from typing import Any, Concatenate, ParamSpec, TypeVar, override
 
 import click
 import httpx
@@ -166,15 +167,15 @@ class CBCClient:
         try:
             res = self._client.get(ep, params=params)
             self._maybe_handle_error(res)
-            return res
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
-            self._logger.error(msg)
-            raise CBCConnectionError(msg)
+            self._logger.exception(msg)
+            raise CBCConnectionError(msg) from e
         except Exception as e:
             msg = f"error getting '{ep}': {e}"
-            self._logger.error(msg)
-            raise CBCError(msg)
+            self._logger.exception(msg)
+            raise CBCError(msg) from e
+        return res
 
     def post(
         self,
@@ -184,15 +185,15 @@ class CBCClient:
         try:
             res = self._client.post(ep, json=data)
             self._maybe_handle_error(res)
-            return res
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
-            self._logger.error(msg)
-            raise CBCConnectionError(msg)
+            self._logger.exception(msg)
+            raise CBCConnectionError(msg) from e
         except Exception as e:
             msg = f"error posting '{ep}': {e}"
-            self._logger.error(msg)
-            raise CBCError(msg)
+            self._logger.exception(msg)
+            raise CBCError(msg) from e
+        return res
 
     def delete(
         self, ep: str, params: httpx_types.QueryParamTypes | None = None
@@ -200,15 +201,15 @@ class CBCClient:
         try:
             res = self._client.delete(ep, params=params)
             self._maybe_handle_error(res)
-            return res
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
-            self._logger.error(msg)
-            raise CBCConnectionError(msg)
+            self._logger.exception(msg)
+            raise CBCConnectionError(msg) from e
         except Exception as e:
             msg = f"error deleting '{ep}': {e}"
-            self._logger.error(msg)
-            raise CBCError(msg)
+            self._logger.exception(msg)
+            raise CBCError(msg) from e
+        return res
 
 
 _WithEPFn = Callable[Concatenate[logging.Logger, CBCClient, str, P], R]
@@ -241,18 +242,18 @@ def endpoint(ep: str, *, verify: bool = False) -> _EPFnWrapper[P, R]:
 
 
 def _auth_ping(logger: logging.Logger, host: str, verify: bool = False) -> bool:
-    """Ping ggthe build service server."""
+    """Ping the build service server."""
     try:
         host = host.rstrip("/")
         client = CBCClient(logger, host, verify=verify)
         _ = client.get("/auth/ping")
-        return True
-    except CBCConnectionError as e:
-        logger.error(f"unable to connect to server: {e}")
+    except CBCConnectionError:
+        logger.exception("unable to connect to server")
         return False
-    except CBCError as e:
-        logger.error(f"unexpected error pinging server: {e}")
+    except CBCError:
+        logger.exception("unexpected error pinging server")
         return False
+    return True
 
 
 @endpoint("/auth/whoami")
@@ -262,15 +263,15 @@ def _auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[st
         res = r.read()
         logger.debug(f"whoami: {res}")
     except CBCError as e:
-        logger.error(f"unable to obtain whoami: {e}")
-        raise e
+        logger.exception("unable to obtain whoami")
+        raise e  # noqa: TRY201
 
     try:
         user = User.model_validate_json(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.error(msg)
-        raise CBCError(msg)
+        logger.exception(msg)
+        raise CBCError(msg) from None
 
     return (user.email, user.name)
 
@@ -285,15 +286,15 @@ def _build_new(
         res = r.json()
         logger.debug(f"new build: {res}")
     except CBCError as e:
-        logger.error(f"unable to create new build: {e}")
-        raise e
+        logger.exception("unable to create new build")
+        raise e  # noqa: TRY201
 
     try:
         return NewBuildResponse.model_validate(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.error(msg)
-        raise CBCError(msg)
+        logger.exception(msg)
+        raise CBCError(msg) from None
 
 
 @endpoint("/builds/status")
@@ -304,16 +305,16 @@ def _build_list(
         r = client.get(ep, params={"all": all})
         res = r.json()
     except CBCError as e:
-        logger.error(f"unable to list builds: {e}")
-        raise e
+        logger.exception("unable to list builds")
+        raise e  # noqa: TRY201
 
     ta = pydantic.TypeAdapter(list[BuildEntry])
     try:
         return ta.validate_python(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.error(msg)
-        raise CBCError(msg)
+        logger.exception(msg)
+        raise CBCError(msg) from None
 
 
 @endpoint("/builds/abort")
@@ -324,8 +325,8 @@ def _build_abort(
         params = {"force": force} if force else None
         _ = client.delete(f"{ep}/{build_id}", params=params)
     except CBCError as e:
-        logger.error(f"unable to abort build '{build_id}': {e}")
-        raise e
+        logger.exception(f"unable to abort build '{build_id}'")
+        raise e  # noqa: TRY201
 
 
 _cbc_help_message = """CES Build Service Client

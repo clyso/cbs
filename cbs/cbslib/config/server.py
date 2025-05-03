@@ -43,16 +43,16 @@ class _GoogleOAuthSecrets(pydantic.BaseModel):
     @classmethod
     def load(cls, path: Path) -> GoogleOAuthSecrets:
         if not path.exists():
-            raise CESError(f"oauth2 config not found at '{path}'")
+            raise CESError(msg=f"oauth2 config not found at '{path}'")
 
         try:
             with path.open("r") as f:
                 contents = _GoogleOAuthSecrets.model_validate_json(f.read())
-            return contents.web
         except pydantic.ValidationError:
-            raise CESError(f"malformed oauth2 config at '{path}'")
+            raise CESError(msg=f"malformed oauth2 config at '{path}'") from None
         except Exception as e:
-            raise CESError(f"error loading oauth2 config from '{path}': {e}")
+            raise CESError(msg=f"error loading oauth2 config from '{path}': {e}") from e
+        return contents.web
 
 
 class ServerSecretsConfig(pydantic.BaseModel):
@@ -117,20 +117,20 @@ class Config(pydantic.BaseModel):
         env_conf_path = Path(env_conf) if env_conf else None
         config_path = path if path else env_conf_path
         if not config_path:
-            raise CESError("missing config")
+            raise CESError(msg="missing config")
 
         if not config_path.exists():
-            raise CESError(f"config at '{config_path}' does not exist")
+            raise CESError(msg=f"config at '{config_path}' does not exist")
 
         with config_path.open("r") as f:
             try:
                 return Config.model_validate_json(f.read())
             except pydantic.ValidationError:
-                raise CESError(f"malformed config at '{config_path}'")
+                raise CESError(msg=f"malformed config at '{config_path}'") from None
             except Exception as e:
                 raise CESError(
-                    f"unexpected error loading config at '{config_path}': {e}"
-                )
+                    msg=f"unexpected error loading config at '{config_path}': {e}"
+                ) from e
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
         return _GoogleOAuthSecrets.load(Path(self.secrets.server.oauth2_secrets_file))
@@ -150,13 +150,13 @@ def config_init() -> Config:
 
 def cbs_config() -> Config:
     if not _config:
-        raise CESError("config not set!")
+        raise CESError(msg="config not set!")
     return _config
 
 
 def get_config() -> Config:
     if not _config:
-        raise CESError("config not set!")
+        raise CESError(msg="config not set!")
     return _config.model_copy(deep=True)
 
 

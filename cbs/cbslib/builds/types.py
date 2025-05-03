@@ -11,8 +11,8 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from datetime import datetime as dt
 import enum
+from datetime import datetime as dt
 
 import pydantic
 from ceslib.versions.desc import VersionDescriptor

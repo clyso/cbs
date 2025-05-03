@@ -179,7 +179,7 @@ def create(
         log.error(msg)
         raise VersionError(msg)
 
-    for c in components_map.keys():
+    for c in components_map:
         if c not in component_repos:
             msg = f"unknown component '{c}' specified"
             log.error(msg)

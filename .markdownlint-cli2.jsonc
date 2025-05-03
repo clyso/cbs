@@ -3,10 +3,18 @@
   "config": {
     "default": true,
     "MD013": {
-      "stern": true,
+      "stern": true
     },
-    "MD033": false,
+    "MD033": false
   },
-  "ignores": ["node_modules", ".go", ".venv", ".ruff_cache"],
-  "globs": ["**/*.md"],
+  "ignores": [
+    "node_modules",
+    ".go",
+    ".venv",
+    ".ruff_cache",
+    "local"
+  ],
+  "globs": [
+    "**/*.md"
+  ]
 }

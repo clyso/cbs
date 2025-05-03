@@ -24,7 +24,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-import uvicorn.config
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.builds.tracker import get_builds_tracker
@@ -48,14 +47,14 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
 
     try:
         await auth_users_init()
-    except (CESError, Exception) as e:
-        log.error(f"error initializing users db: {e}")
+    except (CESError, Exception):
+        log.exception("error initializing users db")
         sys.exit(1)
 
     try:
         oauth_init()
-    except (CESError, Exception) as e:
-        log.error(f"error initiating server: {e}")
+    except (CESError, Exception):
+        log.exception("error initiating server")
         sys.exit(1)
 
     thread = threading.Thread(target=monitor, args=(get_builds_tracker(),))
@@ -88,8 +87,8 @@ def factory() -> FastAPI:
     try:
         log.debug("init config")
         config = config_init()
-    except Exception as e:
-        log.error(f"error setting up config state: {e}")
+    except Exception:
+        log.exception("error setting up config state")
         sys.exit(1)
 
     api.add_middleware(
@@ -110,7 +109,7 @@ def main() -> None:
 
     uvicorn.run(
         app="ces-build-server:factory",
-        host="0.0.0.0",
+        host="0.0.0.0",  # noqa: S104
         port=8080,
         factory=True,
         log_config=uvicorn_logging_config(),

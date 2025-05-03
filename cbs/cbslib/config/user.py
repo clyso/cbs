@@ -27,12 +27,14 @@ class CBSUserConfig(pydantic.BaseModel):
     @classmethod
     def load(cls, path: Path) -> CBSUserConfig:
         if not path.exists():
-            raise CESError(f"missing config file  at '{path}'")
+            raise CESError(msg=f"missing config file  at '{path}'")
 
         try:
             with path.open("r") as f:
                 return CBSUserConfig.model_validate_json(f.read())
         except pydantic.ValidationError:
-            raise CESError(f"invalid config at '{path}'")
+            raise CESError(msg=f"invalid config at '{path}'") from None
         except Exception as e:
-            raise CESError(f"unexpected error loading config at '{path}': {e}")
+            raise CESError(
+                msg=f"unexpected error loading config at '{path}': {e}"
+            ) from e

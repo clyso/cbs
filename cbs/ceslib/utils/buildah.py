@@ -12,12 +12,13 @@
 # GNU General Public License for more details.
 
 
+import datetime
 import os
 import tempfile
+from collections.abc import Callable
 from datetime import datetime as dt
-from datetime import timezone as tz
 from pathlib import Path
-from typing import Callable, override
+from typing import override
 
 from ceslib.errors import CESError
 from ceslib.images.signing import SigningError, async_sign
@@ -48,7 +49,7 @@ async def _buildah_run(
         log.error(msg)
         raise BuildahError(msg)
 
-    cmd = ["buildah"] + cmd
+    cmd = ["buildah", *cmd]
 
     if cid:
         cmd.append(cid)
@@ -63,12 +64,12 @@ async def _buildah_run(
         rc, stdout, stderr = await async_run_cmd(cmd, outcb=outcb)
     except CommandError as e:
         msg = f"error running buildah: {e}"
-        log.error(msg)
-        raise BuildahError(msg)
+        log.exception(msg)
+        raise BuildahError(msg) from e
     except Exception as e:
         msg = f"unknown error running buildah: {e}"
-        log.error(msg)
-        raise BuildahError(msg)
+        log.exception(msg)
+        raise BuildahError(msg) from e
 
     if rc != 0:
         log.error(f"error running buildah ({rc}): {stderr}")
@@ -115,13 +116,13 @@ class BuildahContainer:
             log.warning("set config called without arguments")
             return
 
-        cmd = ["config"] + cmd
+        cmd = ["config", *cmd]
         try:
             rc, _, stderr = await _buildah_run(cmd, cid=self.cid)
         except BuildahError as e:
             msg = f"error setting config for '{self.cid}': {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         if rc != 0:
             msg = f"error setting config for '{self.cid}': {stderr}"
@@ -138,8 +139,8 @@ class BuildahContainer:
             )
         except (BuildahError, Exception) as e:
             msg = f"error copying '{source}' to '{dest}': {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         if rc != 0:
             msg = f"error copying '{source}' to '{dest}': {stderr}"
@@ -159,8 +160,8 @@ class BuildahContainer:
             pass
         except (BuildahError, Exception) as e:
             msg = f"error running command: {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         if rc != 0:
             msg = f"error running command: {stderr}"
@@ -174,7 +175,7 @@ class BuildahContainer:
         def _out(s: str) -> None:
             log.debug(s)
 
-        creation_time = dt.now(tz.utc).isoformat(timespec="seconds")
+        creation_time = dt.now(tz=datetime.UTC).isoformat(timespec="seconds")
         registry = self.version_desc.image.registry
         name = self.version_desc.image.name
         tag = self.version_desc.image.tag
@@ -194,8 +195,8 @@ class BuildahContainer:
                 f"error setting final config on '{self.cid}' "
                 + f"for '{self.version_desc.version}': {e}"
             )
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         # commit container as image
         try:
@@ -209,8 +210,8 @@ class BuildahContainer:
                 f"error committing container '{self.cid}' for "
                 + f"'{self.version_desc.version}': {e}"
             )
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         if rc != 0:
             msg = (
@@ -226,8 +227,8 @@ class BuildahContainer:
             pass
         except SecretsVaultError as e:
             msg = f"error obtaining harbor credentials to push '{url}': {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         # push to registry
         #
@@ -254,29 +255,21 @@ class BuildahContainer:
 
         except BuildahError as e:
             msg = f"error pushing image '{url}': {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
         finally:
             os.close(digest_file_fd)
             os.unlink(digest_file)
 
         # sign image
         #
-
-        # try:
-        #     digest = await _get_digest(url)
-        # except (BuildahError, Exception) as e:
-        #     msg = f"error obtaining digest for '{url}': {e}"
-        #     log.error(msg)
-        #     raise BuildahError(msg)
-        #
         img_to_sign = f"{registry}/{name}@{image_digest}"
         try:
             await async_sign(img_to_sign, secrets)
         except (SigningError, Exception) as e:
             msg = f"error signing image '{url}': {e}"
-            log.error(msg)
-            raise BuildahError(msg)
+            log.exception(msg)
+            raise BuildahError(msg) from e
 
         if rc != 0:
             msg = f"error signing image '{url}': {stderr}"
@@ -290,8 +283,8 @@ async def buildah_new_container(desc: VersionDescriptor) -> BuildahContainer:
         rc, stdout, stderr = await _buildah_run(create_args)
     except BuildahError as e:
         msg = f"error creating new container: {e}"
-        log.error(msg)
-        raise BuildahError(msg)
+        log.exception(msg)
+        raise BuildahError(msg) from e
 
     if rc != 0:
         msg = f"error creating new container ({rc}): {stderr}"
@@ -317,7 +310,7 @@ async def buildah_new_container(desc: VersionDescriptor) -> BuildahContainer:
         )
     except BuildahError as e:
         msg = f"error setting config for new container '{cid}': {e}"
-        log.error(msg)
-        raise BuildahError(msg)
+        log.exception(msg)
+        raise BuildahError(msg) from e
 
     return ctr

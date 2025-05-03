@@ -32,8 +32,8 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
     try:
         _, username, password = secrets.harbor_creds()
     except SecretsVaultError as e:
-        log.error(f"error obtaining harbor credentials: {e}")
-        raise e
+        log.exception("error obtaining harbor credentials")
+        raise e  # noqa: TRY201
 
     cmd: CmdArgs = [
         "cosign",
@@ -71,8 +71,8 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
         _, username, password = secrets.harbor_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining harbor credentials: {e}"
-        log.error(msg)
-        raise SigningError(msg)
+        log.exception(msg)
+        raise SigningError(msg) from e
 
     cmd: CmdArgs = [
         "cosign",
@@ -104,8 +104,8 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
         rc, _, stderr = await async_run_cmd(cmd, outcb=_out, extra_env=env)
     except (CommandError, Exception) as e:
         msg = f"error signing image '{img}': {e}"
-        log.error(msg)
-        raise SigningError(msg)
+        log.exception(msg)
+        raise SigningError(msg) from e
 
     if rc != 0:
         msg = f"error signing image '{img}': {stderr}"

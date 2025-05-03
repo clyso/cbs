@@ -63,7 +63,7 @@ class WorkerBuilder:
 
     async def build(self, version_desc: VersionDescriptor) -> None:
         if self._build:
-            raise WorkerBuilderError("build already exists?")
+            raise WorkerBuilderError(msg="build already exists?")
 
         _, desc_file = tempfile.mkstemp(prefix="cbs_worker_")
         desc_file_path = Path(desc_file)
@@ -93,8 +93,8 @@ class WorkerBuilder:
             pass
         except Exception as e:
             msg = f"error building '{version_desc.version}': {e}"
-            log.error(msg)
-            raise WorkerBuilderError(msg)
+            log.exception(msg)
+            raise WorkerBuilderError(msg) from e
         finally:
             log.info("no longer building")
             desc_file_path.unlink()
@@ -105,25 +105,5 @@ class WorkerBuilder:
             log.info(f"killed container '{self._name}'")
         except Exception as e:
             msg = f"error stopping '{self._name}': {e}"
-            log.error(msg)
-            raise WorkerBuilderError(msg)
-
-
-#
-#
-# _builder: WorkerBuilder | None = None
-#
-#
-# def builder_init() -> None:
-#     global _builder
-#     if not _builder:
-#         _builder = Builder()
-#
-#
-# def cbs_builder() -> Builder:
-#     if not _builder:
-#         raise BuilderError("missing builder!")
-#     return _builder
-#
-#
-# CBSBuilder = Annotated[Builder, Depends(cbs_builder)]
+            log.exception(msg)
+            raise WorkerBuilderError(msg) from e

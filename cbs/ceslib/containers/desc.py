@@ -21,13 +21,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import pydantic
 import yaml
 from ceslib.containers import ContainerError, repos
 from ceslib.containers import log as parent_logger
-from typing_extensions import Annotated
 
 log = parent_logger.getChild("descriptor")
 
@@ -38,9 +37,9 @@ class ContainerPre(pydantic.BaseModel):
     repos: Annotated[
         list[
             Annotated[
-                Annotated["repos.ContainerFileRepository", pydantic.Tag("file")]
-                | Annotated["repos.ContainerURLRepository", pydantic.Tag("url")]
-                | Annotated["repos.ContainerCOPRRepository", pydantic.Tag("copr")],
+                Annotated[repos.ContainerFileRepository, pydantic.Tag("file")]
+                | Annotated[repos.ContainerURLRepository, pydantic.Tag("url")]
+                | Annotated[repos.ContainerCOPRRepository, pydantic.Tag("copr")],
                 pydantic.Discriminator(repos.repo_discriminator),
             ]
         ]
@@ -95,9 +94,9 @@ class ContainerDescriptor(pydantic.BaseModel):
 
         except (yaml.YAMLError, pydantic.ValidationError) as e:
             msg = f"error loading container descriptor at '{path}': {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from None
         except Exception as e:
             msg = f"unknown error loading descriptor at '{path}': {e}"
-            log.error(msg)
-            raise ContainerError(msg)
+            log.exception(msg)
+            raise ContainerError(msg) from e

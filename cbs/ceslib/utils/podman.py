@@ -94,7 +94,6 @@ async def podman_run(
 
 async def podman_stop(*, name: str | None = None, timeout: int = 1) -> None:
     """Stop either the specified container (with `name`) or all running containers."""
-
     cmd: CmdArgs = ["podman", "stop", "--time", str(timeout)]
     cmd.append(name if name else "--all")
 

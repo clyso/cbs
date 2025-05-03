@@ -44,13 +44,12 @@ def _get_container_desc(
 
         for c in reversed(candidates):
             p = c.parent
-            if ver == p.name:
-                return c
-            elif get_minor_version(ver) == p.name:
-                return c
-            elif get_major_version(ver) == p.name:
-                return c
-            elif c.parent == component_path:
+            if (
+                ver == p.name
+                or get_minor_version(ver) == p.name
+                or get_major_version(ver) == p.name
+                or c.parent == component_path
+            ):
                 return c
         return None
 
@@ -72,8 +71,8 @@ def _get_container_desc(
         return (container_yaml, ContainerDescriptor.load(container_yaml, vars=vars))
     except ContainerError as e:
         msg = f"error loading container.yaml from '{container_yaml}': {e}"
-        log.error(msg)
-        raise ContainerError(msg)
+        log.exception(msg)
+        raise ContainerError(msg) from e
 
 
 class ComponentContainer:
@@ -107,8 +106,8 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error importing key '{key}': {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
         # install required packages
         #
@@ -129,12 +128,13 @@ class ComponentContainer:
                     "install",
                     "-y",
                     "--setopt=install_weak_deps=False",
-                ] + dnf_packages
+                    *dnf_packages,
+                ]
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing PRE packages: {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
         # then install packages from URLs
         #
@@ -144,8 +144,8 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing RPM package '{package}': {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
         # install repositories, if any
         #
@@ -157,8 +157,8 @@ class ComponentContainer:
                     )
                 except (ContainerError, Exception) as e:
                     msg = f"error installing repository '{repo.name}': {e}"
-                    log.error(msg)
-                    raise ContainerError(msg)
+                    log.exception(msg)
+                    raise ContainerError(msg) from e
         pass
 
     def get_packages(self, *, optional: bool = False) -> list[str]:
@@ -195,8 +195,8 @@ class ComponentContainer:
                 await container.run(["rm", "-f", dest])
             except (BuildahError, Exception) as e:
                 msg = f"error running script '{entry.name}': {e}"
-                log.error(msg)
-                raise ContainerError(msg)
+                log.exception(msg)
+                raise ContainerError(msg) from e
 
         pass
 

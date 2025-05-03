@@ -15,7 +15,7 @@
 
 echo "generate ssl certs..."
 openssl req -x509 -newkey rsa:4096 -nodes \
-	-out ./cbs-cert.pem -keyout ./cbs-key.pem -days 365 || exit 1
+  -out ./cbs-cert.pem -keyout ./cbs-key.pem -days 365 || exit 1
 echo "certs in 'cbs-cert.pem' and 'cbs-key.pem'"
 
 echo "generate keys..."

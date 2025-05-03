@@ -13,6 +13,7 @@
 
 
 import asyncio
+import datetime
 from datetime import datetime as dt
 from pathlib import Path
 
@@ -71,12 +72,14 @@ async def _build_component(
     skip_build: bool = False,
 ) -> tuple[int, Path]:
     """
-    Build a given component, by running the script provided by `script_path` in the
+    Build a given component.
+
+    Build is performed by running the script provided by `script_path` in the
     repository's `repo_path`.
+
     Returns the number of seconds the script took to execute, and a `Path` to
     `rpmbuild`'s topdir, where the RPMs will be located.
     """
-
     mlog = log.getChild(f"comp[{comp_name}]")
     mlog.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
@@ -102,7 +105,7 @@ async def _build_component(
     if ccache_path is not None:
         extra_env = {"CES_CCACHE_PATH": ccache_path.resolve().as_posix()}
 
-    start = dt.now()
+    start = dt.now(tz=datetime.UTC)
     try:
         rc, _, _ = await async_run_cmd(
             cmd, outcb=_outcb, cwd=repo_path, reset_python_env=True, extra_env=extra_env
@@ -112,20 +115,20 @@ async def _build_component(
             f"error running build script for '{comp_name}' "
             + f"with '{script_path}': {e}"
         )
-        mlog.error(msg)
-        raise BuilderError(msg)
+        mlog.exception(msg)
+        raise BuilderError(msg) from e
     except Exception as e:
         msg = (
             f"unknown error running build script for '{comp_name}' "
             + f"with '{script_path}': {e}"
         )
-        mlog.error(msg)
-        raise BuilderError(msg)
-    delta = (dt.now() - start).seconds
+        mlog.exception(msg)
+        raise BuilderError(msg) from e
+    delta = (dt.now(datetime.UTC) - start).seconds
 
     if rc != 0:
         mlog.error(f"error running build script for '{comp_name}'")
-        raise BuilderError(f"error running build script for '{comp_name}'")
+        raise BuilderError(msg=f"error running build script for '{comp_name}'")
 
     return delta, comp_rpms_path
 
@@ -135,7 +138,6 @@ async def _install_deps(
     components: dict[str, BuildComponentInfo],
 ) -> None:
     """Install dependencies for all components, sequentially."""
-
     for name, comp in components.items():
         comp_scripts_path = get_component_scripts_path(components_path, comp.name)
         if not comp_scripts_path:
@@ -150,7 +152,7 @@ async def _install_deps(
         clog = log.getChild(f"comp[{name}]")
 
         def _comp_out(s: str) -> None:
-            clog.debug(s)
+            clog.debug(s)  # noqa: B023
 
         repo_path = comp.repo_path.resolve()
         cmd: CmdArgs = [
@@ -167,12 +169,12 @@ async def _install_deps(
             )
         except CommandError as e:
             msg = f"error installing dependencies for '{comp.name}': {e}"
-            clog.error(msg)
-            raise BuilderError(msg)
+            clog.exception(msg)
+            raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error installing dependencies for '{comp.name}': {e}"
-            clog.error(msg)
-            raise BuilderError(msg)
+            clog.exception(msg)
+            raise BuilderError(msg) from e
 
         if rc != 0:
             msg = f"error installing dependencies for '{comp.name}': {stderr}"
@@ -191,21 +193,21 @@ async def build_rpms(
 ) -> dict[str, ComponentBuild]:
     """
     Build RPMs for the various components provided in `components`.
+
     Relies on a `build_rpms.sh` script that must be found in the `components_path`
     directory, for each specific component.
     Returns a `ComponentBuild`, containing the component's built version and a
     `Path` to where its RPMs can be found.
     """
-
     if not components_path.exists():
-        raise BuilderError(f"components path at '{components_path}' not found")
+        raise BuilderError(msg=f"components path at '{components_path}' not found")
 
     try:
         await _install_deps(components_path, components)
     except BuilderError as e:
         msg = f"error installing components' dependencies: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     class _ToBuildComponent:
         build_script: Path
@@ -257,20 +259,20 @@ async def build_rpms(
                         skip_build=skip_build,
                     )
                 )
-                for name in to_build.keys()
+                for name in to_build
             }
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error building component RPMs:")
+            log.error("error building component RPMs:")  # noqa: TRY400
             for exc in excs.exceptions:
-                log.error(f"- {exc}")
+                log.error(f"- {exc}")  # noqa: TRY400
         else:
-            log.error(f"unexpected error building component RPMs: {e}")
+            log.error(f"unexpected error building component RPMs: {e}")  # noqa: TRY400
             for exc in e.exceptions:
-                log.error(f"- {exc}")
+                log.error(f"- {exc}")  # noqa: TRY400
 
-        raise BuilderError("error building component RPMs")
+        raise BuilderError(msg="error building component RPMs") from e
 
     comps_rpms_paths: dict[str, ComponentBuild] = {}
     for name, task in tasks.items():

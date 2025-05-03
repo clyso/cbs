@@ -29,15 +29,16 @@ async def get_component_version(
     component_name: str, components_path: Path, repo_path: Path
 ) -> str:
     """
-    Obtain a component's version by running the component's provided 'get_version.*'
-    script, and returning the obtained value.
+    Obtain a component's version.
+
+    Version is obtained by running the component's provided 'get_version.*' script,
+    and returning the obtained value.
 
     The `components_path` argument refers to the directory under which we can find the
     components supported (under which a `scripts/` directory is expected).
 
     Raises `MissingScriptError` if the version script is not found.
     """
-
     scripts_path = get_component_scripts_path(components_path, component_name)
     if not scripts_path:
         msg = (
@@ -61,12 +62,12 @@ async def get_component_version(
         rc, stdout, stderr = await async_run_cmd(cmd, cwd=repo_path)
     except CommandError as e:
         msg = f"error running version script for '{component_name}': {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
     except Exception as e:
         msg = f"unknown exception running version script for '{component_name}: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     if rc != 0:
         msg = f"error running version script for '{component_name}': {stderr}"

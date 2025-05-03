@@ -66,8 +66,8 @@ async def auth_callback(
     try:
         token = await google.authorize_access_token(req)
     except Exception as e:
-        log.error(f"error authorizing access token: {e}")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized token")
+        log.exception("error authorizing access token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized token") from e
 
     log.debug(f"token: {token}")
 
@@ -76,10 +76,10 @@ async def auth_callback(
             token,  # pyright: ignore[reportUnknownArgumentType]
         )
     except AuthError as e:
-        log.error(f"error obtaining google token: {e}")
+        log.exception("error obtaining google token")
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "error obtaining user information"
-        )
+        ) from e
 
     user = await users.create(user_info.email, user_info.name)
     user_config = CBSUserConfig(host=str(req.base_url), login_info=user)

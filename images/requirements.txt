@@ -1,4 +1,0 @@
-click==8.1.8
-pydantic==2.10.6
-pydantic_core==2.27.2
-hvac==2.3.0

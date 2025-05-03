@@ -70,7 +70,7 @@ async def get_image_desc(version: str) -> ImageDescriptor:
             desc = ImageDescriptor.model_validate_json(desc_raw)
         except Exception as e:
             log.debug(f"error loading desc file: {e}")
-            raise e
+            raise e  # noqa: TRY201
 
         if version in desc.releases:
             if found_at is not None:

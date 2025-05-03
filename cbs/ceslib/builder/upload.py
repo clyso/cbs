@@ -83,8 +83,8 @@ async def _upload_rpm(
             f"error uploading '{tgt_loc.name}' from '{tgt_loc.src}' "
             + f"to '{tgt_loc.dst}': {e}"
         )
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
 
 async def _get_repo(
@@ -101,12 +101,12 @@ async def _get_repo(
             _ = await async_run_cmd(["createrepo", p.resolve().as_posix()])
         except CommandError as e:
             msg = f"error creating repodata at '{repodata_path}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error creating repodata at '{repodata_path}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         if not repodata_path.exists() or not repodata_path.is_dir():
             msg = f"unexpected missing repodata dir at '{repodata_path}'"
@@ -168,8 +168,8 @@ async def _upload_component_rpms(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
@@ -187,12 +187,12 @@ async def _upload_component_rpms(
                 await _upload_rpm(s3, f)
             except BuilderError as e:
                 msg = f"error uploading rpm: {e}"
-                log.error(msg)
-                raise BuilderError(msg)
+                log.exception(msg)
+                raise BuilderError(msg) from e
             except Exception as e:
                 msg = f"unknown error uploading rpm: {e}"
-                log.error(msg)
-                raise BuilderError(msg)
+                log.exception(msg)
+                raise BuilderError(msg) from e
 
     return s3_base_dst
 
@@ -215,18 +215,18 @@ async def s3_upload_rpms(
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error uploading components RPMs:")
+            log.error("error uploading components RPMs:")  # noqa: TRY400
             for exc in excs.exceptions:
-                log.error(f"- {exc}")
+                log.error(f"- {exc}")  # noqa: TRY400
         else:
-            log.error(f"unexpected error uploading RPMs: {e}")
+            log.error(f"unexpected error uploading RPMs: {e}")  # noqa: TRY400
 
-        raise BuilderError(f"error uploading component RPMs: {e}")
+        raise BuilderError(msg=f"error uploading component RPMs: {e}") from e
 
     except Exception as e:
         msg = f"unexpected error uploading RPMs: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     s3_comp_loc: dict[str, S3ComponentLocation] = {}
     for comp_name, task in tasks.items():
@@ -245,8 +245,8 @@ async def s3_upload_json(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
@@ -267,8 +267,8 @@ async def s3_upload_json(
             )
         except Exception as e:
             msg = f"error uploading json to '{location}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
 
 async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | None:
@@ -281,8 +281,8 @@ async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | Non
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.error(msg)
-        raise BuilderError(msg)
+        log.exception(msg)
+        raise BuilderError(msg) from e
 
     log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
@@ -306,7 +306,7 @@ async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | Non
             return None
         except Exception as e:
             msg = f"error uploading json to '{location}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         return data.decode("utf-8")

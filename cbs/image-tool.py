@@ -63,22 +63,22 @@ async def _sync(
             vault_secret_id,
             vault_transit=vault_transit,
         )
-    except VaultError as e:
-        log.error(f"error initializing secrets: {e}")
+    except VaultError:
+        log.exception("error initializing secrets")
         sys.exit(1)
-    except Exception as e:
-        log.error(f"unknown error: {e}")
+    except Exception:
+        log.exception("unknown error")
         sys.exit(1)
 
     for image in desc.images:
         log.info(f"copying '{image.src}' to '{image.dst}")
         try:
             sync_image(image.src, image.dst, secrets, force=force, dry_run=dry_run)
-        except CESError as e:
-            log.error(f"error copying images: {e}")
+        except CESError:
+            log.exception("error copying images")
             sys.exit(1)
-        except Exception as e:
-            log.error(f"unknown error: {e}")
+        except Exception:
+            log.exception("unknown error")
             sys.exit(1)
 
         log.info(f"copied image from '{image.src}' to '{image.dst}'")

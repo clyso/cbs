@@ -42,11 +42,11 @@ def sync_image(
     try:
         res_src = skopeo.skopeo_get_tags(src)
     except UnknownRepositoryError as e:
-        log.error(f"unable to obtain information for source repository: {e}")
-        raise e
+        log.exception("unable to obtain information for source repository")
+        raise e  # noqa: TRY201
     except Exception as e:
-        log.error(f"unknown error: {e}")
-        raise e
+        log.exception("unknown error")
+        raise e  # noqa: TRY201
 
     missing_dst_repo = False
     res_dst: skopeo.SkopeoTagListResult | None = None
@@ -55,8 +55,8 @@ def sync_image(
     except UnknownRepositoryError:
         missing_dst_repo = True
     except Exception as e:
-        log.error(f"unknown error: {e}")
-        raise e
+        log.exception("unknown error")
+        raise e  # noqa: TRY201
 
     if src_tag not in res_src.tags:
         log.error(f"error: missing source tag '{src_tag}' for '{src}'")
@@ -76,10 +76,10 @@ def sync_image(
         else:
             log.debug("not copying, dry run specified")
     except CESError as e:
-        log.error(f"error copying image '{src}' to '{dst}': {e}")
-        raise e
+        log.exception(f"error copying image '{src}' to '{dst}'")
+        raise e  # noqa: TRY201
     except Exception as e:
-        log.error(f"unknown error: {e}")
-        raise e
+        log.exception("unknown error")
+        raise e  # noqa: TRY201
 
     log.debug(f"copied image from '{src}' to '{dst}'")

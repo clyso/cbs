@@ -87,8 +87,8 @@ class Builder:
                 vault_transit=vault_transit,
             )
         except VaultError as e:
-            log.error(f"error logging in to vault: {e}")
-            raise BuilderError(f"error logging in to vault: {e}")
+            log.exception("error logging in to vault")
+            raise BuilderError(msg=f"error logging in to vault: {e}") from e
 
     async def run(self) -> None:
         log.info("preparing builder")
@@ -96,8 +96,8 @@ class Builder:
             await prepare_builder()
         except BuilderError as e:
             msg = f"error preparing builder: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg=msg) from e
 
         release_desc = await check_release_exists(self.secrets, self.desc.version)
         if not release_desc or self.force:
@@ -105,8 +105,8 @@ class Builder:
                 release_desc = await self._build_release()
             except (BuilderError, Exception) as e:
                 msg = f"error building components: {e}"
-                log.error(msg)
-                raise BuilderError(msg)
+                log.exception(msg)
+                raise BuilderError(msg) from e
 
             if not release_desc:
                 if self.upload:
@@ -120,7 +120,8 @@ class Builder:
 
         else:
             log.info(
-                f"found existing release for version '{self.desc.version}', not building"
+                f"found existing release for version '{self.desc.version}', "
+                + "not building"
             )
 
         try:
@@ -131,16 +132,18 @@ class Builder:
             await ctr_builder.finish(self.secrets)
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
     pass
 
     async def _build_release(self) -> ReleaseDesc | None:
         """
-        Builds a release, returning a `ReleaseDesc`. This function will first prepare
-        the builder, assess which components need to be built and which already exist
-        in S3, and then build (and sign) those that can't be found otherwise.
+        Build a release, returning a `ReleaseDesc`.
+
+        This function will first prepare the builder, assess which components need to
+        be built and which already exist in S3, and then build (and sign) those that
+        can't be found otherwise.
 
         Returns a `ReleaseDesc`, composed of all the components that belong to the
         wanted version, composing it from the already existing components (if any) and
@@ -160,8 +163,8 @@ class Builder:
             )
         except BuilderError as e:
             msg = f"error preparing components: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         # Check if any of the components have been previously built, and, if so,
         # reuse them instead of building them.
@@ -176,8 +179,8 @@ class Builder:
                 existing = await check_released_components(self.secrets, components)
             except (BuilderError, Exception) as e:
                 msg = f"error checking released components: {e}"
-                log.error(msg)
-                raise BuilderError(msg)
+                log.exception(msg)
+                raise BuilderError(msg) from e
 
         to_build = {
             name: info for name, info in components.items() if name not in existing
@@ -190,8 +193,8 @@ class Builder:
                 built = await self._build(to_build)
             except (BuilderError, Exception) as e:
                 msg = f"error building components '{to_build.keys()}': {e}"
-                log.error(msg)
-                raise BuilderError(msg)
+                log.exception(msg)
+                raise BuilderError(msg) from e
 
         if not self.upload:
             log.warning("not uploading per config, stop release build")
@@ -218,8 +221,8 @@ class Builder:
             await release_desc_upload(self.secrets, release)
         except (BuilderError, Exception) as e:
             msg = f"error uploading release desc to S3: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         return release
 
@@ -227,13 +230,12 @@ class Builder:
         self, components: dict[str, BuildComponentInfo]
     ) -> dict[str, ReleaseComponent]:
         """
-        Builds all the specified components, signs them, and uploads them to S3
-        (unless the `upload` flag is `False`).
+        Build all the specified components, sign them, and upload them to S3 (unless the
+        `upload` flag is `False`).
 
         Returns a dict of component names to `ReleaseComponent`, representing
         each finished build that has been uploaded to S3.
-        """
-
+        """  # noqa: D205
         log.debug(f"build components '{components.keys()}")
 
         if not components:
@@ -244,8 +246,8 @@ class Builder:
             comp_builds = await self._build_rpms(components)
         except (BuilderError, Exception) as e:
             msg = f"error building RPMs for '{components.keys()}: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         if not self.upload:
             return {}
@@ -254,8 +256,8 @@ class Builder:
             comp_descs = await self._upload(components, comp_builds)
         except (BuilderError, Exception) as e:
             msg = f"error uploading component builds '{comp_builds.keys()}': {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         return comp_descs
 
@@ -267,7 +269,6 @@ class Builder:
 
         Returns a `dict` of component names to their S3 location.
         """
-
         log.info(f"build RPMs for components '{components.keys()}'")
 
         if not components:
@@ -288,20 +289,20 @@ class Builder:
             )
         except (BuilderError, Exception) as e:
             msg = f"error building components ({components.keys()}): {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         log.info("sign RPMs")
         try:
             await sign_rpms(self.secrets, comp_builds)
         except BuilderError as e:
             msg = f"error signing component RPMs: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error signing component RPMs: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         return comp_builds
 
@@ -316,8 +317,7 @@ class Builder:
 
         Returns a dict of component names to their corresponding component release
         descriptor.
-        """
-
+        """  # noqa: D205
         log.info(f"upload RPMs: {self.upload}, components: {comp_builds.keys()}")
         if not self.upload:
             return {}
@@ -338,8 +338,8 @@ class Builder:
             )
         except (BuilderError, Exception) as e:
             msg = f"error uploading RPMs to S3: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         # create individual component's release descriptors, which will then
         # be returned.
@@ -379,7 +379,7 @@ class Builder:
             await release_upload_components(self.secrets, comp_releases)
         except (BuilderError, Exception) as e:
             msg = f"error uploading release descriptors for components: {e}"
-            log.error(msg)
-            raise BuilderError(msg)
+            log.exception(msg)
+            raise BuilderError(msg) from e
 
         return comp_releases

@@ -33,7 +33,7 @@ class RunnerError(CESError):
 
 
 def gen_run_name(prefix: str = "ces_") -> str:
-    return prefix + "".join(random.choices(string.ascii_lowercase, k=10))
+    return prefix + "".join(random.choices(string.ascii_lowercase, k=10))  # noqa: S311
 
 
 async def runner(
@@ -79,8 +79,8 @@ async def runner(
         desc = VersionDescriptor.read(desc_file_path)
     except CESError as e:
         msg = f"error loading version descriptor: {e}"
-        log.error(e)
-        raise RunnerError(msg)
+        log.exception(msg)
+        raise RunnerError(msg) from e
 
     desc_mount_loc = f"/runner/{desc_file_path.name}"
 
@@ -134,12 +134,12 @@ async def runner(
         )
     except PodmanError as e:
         msg = f"error running build: {e}"
-        log.error(msg)
-        raise RunnerError(msg)
+        log.exception(msg)
+        raise RunnerError(msg) from e
     except Exception as e:
         msg = f"unknown error running build: {e}"
-        log.error(msg)
-        raise RunnerError(msg)
+        log.exception(msg)
+        raise RunnerError(msg) from e
 
     if rc != 0:
         msg = f"error running build (rc={rc}): {stderr}"

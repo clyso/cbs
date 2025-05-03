@@ -17,14 +17,10 @@ import sys
 from typing import Any
 
 from cbslib.config.server import config_init
-from celery import Celery
-from celery import signals
-from ceslib.errors import CESError
-
-from kombu.serialization import register
-
 from cbslib.worker.serializer import pydantic_dumps
-
+from celery import Celery, signals
+from ceslib.errors import CESError
+from kombu.serialization import register
 
 celery_app = Celery(
     __name__,
@@ -38,8 +34,8 @@ log = celery_app.log.get_default_logger(__name__)
 def _init() -> None:
     try:
         config = config_init()
-    except (CESError, Exception) as e:
-        log.error(f"unable to init config: {e}")
+    except (CESError, Exception):
+        log.exception("unable to init config")
         sys.exit(1)
 
     celery_app.conf.broker_url = config.worker.broker_url

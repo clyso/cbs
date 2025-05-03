@@ -12,8 +12,8 @@
 # GNU Affero General Public License for more details.
 
 import asyncio
+import datetime
 from datetime import datetime as dt
-from datetime import timezone as tz
 from typing import Annotated, override
 
 from cbslib.builds import log as parent_logger
@@ -76,7 +76,9 @@ class BuildsTracker:
         _ = await self._lock.acquire()
         try:
             if desc.version in self._builds_by_version and any(
-                map(lambda x: not x.finished, self._builds_by_version[desc.version])
+                map(  # noqa: C417
+                    lambda x: not x.finished, self._builds_by_version[desc.version]
+                )
             ):
                 raise BuildExistsError(desc.version)
 
@@ -86,7 +88,7 @@ class BuildsTracker:
                 task_id=task.task_id,
                 desc=desc,
                 user=desc.signed_off_by.email,
-                submitted=dt.now(),
+                submitted=dt.now(tz=datetime.UTC),
                 state=EntryState(task.state.upper()),
                 started=None,
                 finished=None,
@@ -187,12 +189,12 @@ class BuildsTracker:
 
     async def mark_rejected(self, task_id: str) -> None:
         log.info(f"task {task_id} rejected")
-        now = dt.now(tz.utc)
+        now = dt.now(tz=datetime.UTC)
         await self._mark_task_state(task_id, EntryState.rejected, finished=now)
 
     async def mark_revoked(self, task_id: str) -> None:
         log.info(f"task {task_id} revoked")
-        now = dt.now(tz.utc)
+        now = dt.now(tz=datetime.UTC)
         await self._mark_task_state(task_id, EntryState.revoked, finished=now)
 
 

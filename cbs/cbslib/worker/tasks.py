@@ -64,5 +64,5 @@ def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
         # loop.run_until_complete(asyncio.sleep(120))
         loop.run_until_complete(self.builder.build(version_desc))
     except (WorkerBuilderError, Exception) as e:
-        log.error(f"error running build: {e}")
-        raise e
+        log.exception("error running build")
+        raise e  # noqa: TRY201

@@ -36,7 +36,7 @@ class SkopeoTagListResult(pydantic.BaseModel):
 
 
 def skopeo(args: CmdArgs) -> tuple[int, str, str]:
-    cmd: CmdArgs = ["skopeo"] + args
+    cmd: CmdArgs = ["skopeo", *args]
     return run_cmd(cmd)
 
 
@@ -45,8 +45,8 @@ def skopeo_get_tags(img: str) -> SkopeoTagListResult:
     try:
         retcode, raw_out, err = skopeo(["list-tags", f"docker://{img_base}"])
     except CESError as e:
-        log.error(f"error obtaining image tags for {img_base}")
-        raise e
+        log.exception(f"error obtaining image tags for {img_base}")
+        raise e  # noqa: TRY201
 
     if retcode != 0:
         m = re.match(r".*repository.*not found.*", err)
@@ -56,9 +56,9 @@ def skopeo_get_tags(img: str) -> SkopeoTagListResult:
 
     try:
         return SkopeoTagListResult.model_validate_json(raw_out)
-    except pydantic.ValidationError as e:
-        log.error(f"unable to parse resulting images list: {e}")
-        raise SkopeoError()
+    except pydantic.ValidationError:
+        log.exception("unable to parse resulting images list")
+        raise SkopeoError() from None
 
 
 def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
@@ -67,8 +67,8 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
     try:
         _, user, passwd = secrets.harbor_creds()
     except SecretsVaultError as e:
-        log.error(f"error obtaining harbor credentials: {e}")
-        raise e
+        log.exception("error obtaining harbor credentials")
+        raise e  # noqa: TRY201
 
     try:
         retcode, _, err = skopeo(
@@ -81,8 +81,8 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
             ]
         )
     except SkopeoError as e:
-        log.error(f"error copying images: {e}")
-        raise e
+        log.exception("error copying images")
+        raise e  # noqa: TRY201
 
     if retcode != 0:
         log.error(f"error copying images: {err}")
@@ -93,8 +93,8 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
     try:
         retcode, out, err = sign(dst, secrets)
     except SkopeoError as e:
-        log.error(f"error signing image '{dst}': {e}")
-        raise e
+        log.exception(f"error signing image '{dst}'")
+        raise e  # noqa: TRY201
 
     if retcode != 0:
         log.error(f"error signing image '{dst}': {err}")

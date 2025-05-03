@@ -49,6 +49,27 @@ class _GoogleOAuthToken(pydantic.BaseModel):
     userinfo: GoogleOAuthUserInfo
 
 
+class AuthNoOAuthConfigError(AuthError):
+    """OAuth config is missing."""
+
+    def __init__(self) -> None:
+        super().__init__("missing oauth config!")
+
+
+class AuthNoOAuthClientError(AuthError):
+    """OAuth client is missing."""
+
+    def __init__(self) -> None:
+        super().__init__("missing oauth client!")
+
+
+class _GoogleInvalidTokenResponseError(AuthError):
+    """Invalid Google Authentication Token response."""
+
+    def __init__(self):
+        super().__init__("invalid google token response")
+
+
 def oauth_init_config() -> None:
     global _oauth_config
     config = get_config()
@@ -57,7 +78,7 @@ def oauth_init_config() -> None:
 
 def get_oauth_config() -> GoogleOAuthSecrets:
     if not _oauth_config:
-        raise AuthError("missing oauth config!")
+        raise AuthNoOAuthConfigError()
     return _oauth_config
 
 
@@ -88,7 +109,7 @@ def oauth_init() -> None:
 
 def cbs_oauth() -> OAuth:
     if not _oauth_client:
-        raise AuthError("missing oauth client!")
+        raise AuthNoOAuthClientError()
     return _oauth_client
 
 
@@ -98,7 +119,7 @@ def oauth_google_user_info(
     try:
         token_res = _GoogleOAuthToken.model_validate(data)
     except pydantic.ValidationError:
-        raise AuthError("invalid google token response")
+        raise _GoogleInvalidTokenResponseError() from None
 
     return token_res.userinfo
 
