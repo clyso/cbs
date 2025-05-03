@@ -1,0 +1,12 @@
+{
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "all",
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv/",
+    "local",
+    "**/venv/",
+    "**/node_modules"
+  ],
+  "baselineFile": ".basedpyright/baseline.json"
+}

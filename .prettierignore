@@ -1,0 +1,9 @@
+*.py
+*.toml
+*.json
+.editorconfig
+.basedpyright/baseline.json
+.venv
+tests/**/*.json
+.go/
+__pycache__
