@@ -18,13 +18,13 @@ services:
     entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
-      - ./cbs/cbs-config.worker.json:/cbs/config/cbs-config.json
+      - ./local/cbs-config.worker.json:/cbs/config/cbs-config.json
       - ./cbs:/cbs/tools
 
       - ./versions/secrets.json:/cbs/secrets/secrets.json
-      - /mnt/pci4-scratch/ces-scratch:/cbs/scratch
-      - /mnt/pci4-scratch/ces-scratch/containers:/var/lib/containers
-      - /mnt/pci4-scratch/ces-scratch/ccache:/cbs/ccache
+      - ./local/scratch:/cbs/scratch
+      - ./local/scratch/containers:/var/lib/containers
+      - ./local/scratch/ccache:/cbs/ccache
       - ./components:/cbs/components
       - ./containers:/cbs/containers
       - /dev/fuse:/dev/fuse:rw
@@ -49,13 +49,13 @@ services:
     restart: "no"
     privileged: true
     volumes:
-      - ./cbs/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./local/cbs-config.server.json:/cbs/config/cbs-config.json
 
-      - ./cbs/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
+      - ./local/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
       - ./versions/secrets.json:/cbs/secrets/secrets.json
-      - ./cbs/cbs.db:/cbs/data/cbs.db
-      - ./cbs/cbs-cert.pem:/cbs/config/cbs-cert.pem
-      - ./cbs/cbs-key.pem:/cbs/config/cbs-key.pem
+      - ./local/data:/cbs/data
+      - ./local/cbs-cert.pem:/cbs/config/cbs-cert.pem
+      - ./local/cbs-key.pem:/cbs/config/cbs-key.pem
       - ./cbs:/cbs/tools
     security_opt:
       - label=disable
@@ -73,7 +73,7 @@ services:
     ports:
       - "5555:5555"
     volumes:
-      - ./cbs/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./local/cbs-config.server.json:/cbs/config/cbs-config.json
     environment:
       CBS_CONFIG: /cbs/config/cbs-config.json
       CBS_DEBUG: 1
