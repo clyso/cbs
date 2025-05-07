@@ -11,31 +11,18 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-
 import asyncio
 import shutil
 from pathlib import Path
 
-import aioboto3
 from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
 from ceslib.builder.rpmbuild import ComponentBuild
 from ceslib.utils import CommandError, async_run_cmd
-from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
-from types_aiobotocore_s3.service_resource import S3ServiceResource
+from ceslib.utils.s3 import S3Error, S3FileLocator, s3_upload_files
+from ceslib.utils.secrets import SecretsVaultMgr
 
 log = parent_logger.getChild("upload")
-
-
-class _TargetLocation:
-    src: Path
-    dst: str
-    name: str
-
-    def __init__(self, src: Path, dst: str, name: str) -> None:
-        self.src = src
-        self.dst = dst
-        self.name = name
 
 
 class S3ComponentLocation:
@@ -51,8 +38,8 @@ class S3ComponentLocation:
 
 def _get_rpms(
     base_path: Path, base_dst_loc: str, relative_to: Path
-) -> list[_TargetLocation]:
-    rpms: list[_TargetLocation] = []
+) -> list[S3FileLocator]:
+    rpms: list[S3FileLocator] = []
     for parent, _, files in base_path.walk():
         for f in files:
             if not f.endswith(".rpm"):
@@ -62,34 +49,14 @@ def _get_rpms(
             relative_path = rpm_file_path.relative_to(relative_to)
 
             dst_loc = f"{base_dst_loc}/{relative_path.as_posix()}"
-            rpms.append(_TargetLocation(rpm_file_path, dst_loc, f))
+            rpms.append(S3FileLocator(rpm_file_path, dst_loc, f))
 
     return rpms
 
 
-async def _upload_rpm(
-    s3: S3ServiceResource,
-    tgt_loc: _TargetLocation,
-) -> None:
-    bucket = await s3.Bucket("ces-packages")
-
-    log.debug(f"uploading rpm '{tgt_loc.name}' to '{tgt_loc.dst}'")
-    try:
-        await bucket.upload_file(
-            tgt_loc.src.as_posix(), Key=tgt_loc.dst, ExtraArgs={"ACL": "public-read"}
-        )
-    except Exception as e:
-        msg = (
-            f"error uploading '{tgt_loc.name}' from '{tgt_loc.src}' "
-            + f"to '{tgt_loc.dst}': {e}"
-        )
-        log.exception(msg)
-        raise BuilderError(msg) from e
-
-
 async def _get_repo(
     target_path: Path, s3_base_dst: str, relative_to: Path
-) -> list[_TargetLocation]:
+) -> list[S3FileLocator]:
     # create a repository at 'p', and return the corresponding
     # 'repodata' directory path.
     async def _create_repo(p: Path) -> Path:
@@ -135,13 +102,13 @@ async def _get_repo(
 
     repo_paths = await _get_repo_r(target_path)
 
-    tgt_locs: list[_TargetLocation] = []
+    tgt_locs: list[S3FileLocator] = []
     for path in repo_paths:
         for src_path in path.iterdir():
             assert not src_path.is_dir(), "unexpected directory in repository"
             dst_path = src_path.relative_to(relative_to)
             dst_loc = f"{s3_base_dst}/{dst_path}"
-            tgt_locs.append(_TargetLocation(src_path, dst_loc, dst_path.name))
+            tgt_locs.append(S3FileLocator(src_path, dst_loc, dst_path.name))
 
     return tgt_locs
 
@@ -155,7 +122,7 @@ async def _upload_component_rpms(
     path_to_srpms = rpms_path.joinpath("SRPMS")
 
     # NOTE: this bit could be more efficient, but would be uglier after formatting.
-    to_upload: list[_TargetLocation] = []
+    to_upload: list[S3FileLocator] = []
     to_upload.extend(_get_rpms(path_to_rpms, s3_base_dst, path_to_rpms))
     to_upload.extend(_get_rpms(path_to_srpms, s3_base_dst, path_to_srpms.parent))
     to_upload.extend(await _get_repo(path_to_rpms, s3_base_dst, path_to_rpms))
@@ -165,34 +132,11 @@ async def _upload_component_rpms(
         log.debug(f"{rpm.name}\n-> SRC: {rpm.src}\n=> DST: {rpm.dst}")
 
     try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
-        msg = f"error obtaining S3 credentials: {e}"
+        await s3_upload_files(secrets, to_upload)
+    except S3Error as e:
+        msg = f"error uploading rpms: {e}"
         log.exception(msg)
         raise BuilderError(msg) from e
-
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
-
-    s3_session = aioboto3.Session(
-        aws_access_key_id=access_id,
-        aws_secret_access_key=secret_id,
-    )
-
-    if not hostname.startswith("http"):
-        hostname = f"https://{hostname}"
-
-    async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
-        for f in to_upload:
-            try:
-                await _upload_rpm(s3, f)
-            except BuilderError as e:
-                msg = f"error uploading rpm: {e}"
-                log.exception(msg)
-                raise BuilderError(msg) from e
-            except Exception as e:
-                msg = f"unknown error uploading rpm: {e}"
-                log.exception(msg)
-                raise BuilderError(msg) from e
 
     return s3_base_dst
 
@@ -236,77 +180,3 @@ async def s3_upload_rpms(
         )
         log.info(f"uploaded '{comp_name}' to '{s3_loc}'")
     return s3_comp_loc
-
-
-async def s3_upload_json(
-    secrets: SecretsVaultMgr, location: str, contents: str
-) -> None:
-    try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
-        msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
-        raise BuilderError(msg) from e
-
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
-
-    s3_session = aioboto3.Session(
-        aws_access_key_id=access_id,
-        aws_secret_access_key=secret_id,
-    )
-
-    if not hostname.startswith("http"):
-        hostname = f"https://{hostname}"
-
-    async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
-        bucket = await s3.Bucket("ces-packages")
-        try:
-            _ = await bucket.put_object(
-                Key=location,
-                Body=contents,
-            )
-        except Exception as e:
-            msg = f"error uploading json to '{location}': {e}"
-            log.exception(msg)
-            raise BuilderError(msg) from e
-
-
-async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | None:
-    if not location.endswith(".json"):
-        msg = f"attempting to download non-JSON object '{location}'"
-        log.error(msg)
-        raise BuilderError(msg)
-
-    try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
-        msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
-        raise BuilderError(msg) from e
-
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
-
-    s3_session = aioboto3.Session(
-        aws_access_key_id=access_id,
-        aws_secret_access_key=secret_id,
-    )
-
-    if not hostname.startswith("http"):
-        hostname = f"https://{hostname}"
-
-    async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
-        bucket = await s3.Bucket("ces-packages")
-        try:
-            obj = await bucket.Object(location)
-            contents = await obj.get()
-            body = contents["Body"]
-            data = await body.read()
-        except s3.meta.client.exceptions.NoSuchKey:
-            log.debug(f"object '{location}' not found")
-            return None
-        except Exception as e:
-            msg = f"error uploading json to '{location}': {e}"
-            log.exception(msg)
-            raise BuilderError(msg) from e
-
-        return data.decode("utf-8")

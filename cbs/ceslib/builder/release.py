@@ -26,8 +26,9 @@ from ceslib.builder import (
     log as parent_logger,
 )
 from ceslib.builder.prepare import BuildComponentInfo
-from ceslib.builder.upload import S3ComponentLocation, s3_download_json, s3_upload_json
+from ceslib.builder.upload import S3ComponentLocation
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
+from ceslib.utils.s3 import s3_download_json, s3_upload_json
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor
 
