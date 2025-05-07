@@ -1,4 +1,4 @@
-# CES library - CES builder
+# CES library - CES releases
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,26 +14,12 @@
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.logger import log as root_logger
+from ceslib.logger import log as parent_logger
 
-log = root_logger.getChild("builder")
+log = parent_logger.getChild("releases")
 
 
-class BuilderError(CESError):
+class ReleaseError(CESError):
     @override
     def __str__(self) -> str:
-        return f"Builder Error: {self.msg}"
-
-
-class MissingScriptError(BuilderError):
-    """Represents a missing script, required for execution."""
-
-    script: str
-
-    def __init__(self, script: str, *, msg: str | None = None) -> None:
-        super().__init__(msg)
-        self.script = script
-
-    @override
-    def __str__(self) -> str:
-        return f"Missing script '{self.script}'" + f": {self.msg}" if self.msg else ""
+        return "Release Error" + ("" if not self.msg else f": {self.msg}")

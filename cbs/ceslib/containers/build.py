@@ -16,9 +16,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from ceslib.builder import log as parent_logger
-from ceslib.builder.release import ReleaseDesc
 from ceslib.containers import ContainerError
 from ceslib.containers.component import ComponentContainer
+from ceslib.releases.desc import ReleaseDesc
 from ceslib.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionDescriptor

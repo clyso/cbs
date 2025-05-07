@@ -13,14 +13,13 @@
 
 from pathlib import Path
 
-from ceslib.builder import (
-    BuilderError,
-    MissingScriptError,
+from ceslib.builder import BuilderError, MissingScriptError
+from ceslib.builder import log as parent_logger
+from ceslib.utils import CmdArgs, CommandError, async_run_cmd
+from ceslib.utils.paths import (
     get_component_scripts_path,
     get_script_path,
 )
-from ceslib.builder import log as parent_logger
-from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 
 log = parent_logger.getChild("utils")
 

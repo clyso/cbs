@@ -20,20 +20,22 @@ from ceslib.builder.prepare import (
     prepare_builder,
     prepare_components,
 )
-from ceslib.builder.release import (
-    ReleaseComponent,
-    ReleaseDesc,
-    check_release_exists,
-    check_released_components,
-    release_component_desc,
-    release_desc_upload,
-    release_upload_components,
-)
 from ceslib.builder.rpmbuild import ComponentBuild, build_rpms
 from ceslib.builder.signing import sign_rpms
 from ceslib.builder.upload import s3_upload_rpms
 from ceslib.containers import ContainerError
 from ceslib.containers.build import ContainerBuilder
+from ceslib.releases.desc import (
+    ReleaseComponent,
+    ReleaseDesc,
+    release_component_desc,
+)
+from ceslib.releases.s3 import (
+    check_release_exists,
+    check_released_components,
+    release_desc_upload,
+    release_upload_components,
+)
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 from ceslib.versions.desc import VersionDescriptor
@@ -176,7 +178,10 @@ class Builder:
 
         if not self.force:
             try:
-                existing = await check_released_components(self.secrets, components)
+                to_check = {
+                    comp.name: comp.long_version for comp in components.values()
+                }
+                existing = await check_released_components(self.secrets, to_check)
             except (BuilderError, Exception) as e:
                 msg = f"error checking released components: {e}"
                 log.exception(msg)
@@ -357,11 +362,13 @@ class Builder:
                 raise BuilderError(msg)
 
             comp_release = await release_component_desc(
-                self.components_path,
-                name,
-                infos,
-                s3_comp_loc[name],
-                self.desc.el_version,
+                components_path=self.components_path,
+                component_name=name,
+                repo_url=infos.repo_url,
+                long_version=infos.long_version,
+                sha1=infos.sha1,
+                s3_location=s3_comp_loc[name].location,
+                build_el_version=self.desc.el_version,
             )
             if not comp_release:
                 log.error(

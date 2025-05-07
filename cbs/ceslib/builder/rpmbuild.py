@@ -17,10 +17,11 @@ import datetime
 from datetime import datetime as dt
 from pathlib import Path
 
-from ceslib.builder import BuilderError, get_component_scripts_path, get_script_path
+from ceslib.builder import BuilderError
 from ceslib.builder import log as parent_logger
 from ceslib.builder.prepare import BuildComponentInfo
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
+from ceslib.utils.paths import get_component_scripts_path, get_script_path
 
 log = parent_logger.getChild("rpmbuild")
 
