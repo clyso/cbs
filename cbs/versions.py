@@ -17,12 +17,18 @@ import asyncio
 import errno
 import logging
 import sys
+from pathlib import Path
 
 import click
+import pydantic
 from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_image_desc
 from ceslib.logger import log as root_logger
+from ceslib.releases.desc import ReleaseDesc
 from ceslib.utils.git import GitError, get_git_repo_root, get_git_user
+from ceslib.utils.s3 import S3Error, s3_download_str_obj, s3_list
+from ceslib.utils.secrets import SecretsVaultMgr
+from ceslib.utils.vault import VaultError
 from ceslib.versions.create import VersionType, component_repos, create
 from ceslib.versions.errors import VersionError
 
@@ -111,6 +117,59 @@ async def _create(
         click.echo(
             f"error obtaining image descriptor for '{desc.version}': {e}", err=True
         )
+
+
+async def _list(
+    secrets: SecretsVaultMgr,
+    verbose: bool,
+) -> None:
+    """List releases from S3."""
+    log.info("listing s3 objects")
+    try:
+        res = await s3_list(secrets, prefix="releases/", prefix_as_directory=True)
+    except S3Error:
+        log.exception("error obtaining release objects")
+        sys.exit(1)
+
+    click.echo(f"common prefixes: {res.common_prefixes}")
+    for entry in res.objects:
+        if not entry.name.endswith(".json"):
+            log.debug(f"skipping '{entry.key}', not JSON")
+            continue
+
+        click.echo(f"> release: {entry.name}")
+
+        if verbose:
+            try:
+                raw_json = await s3_download_str_obj(
+                    secrets, entry.key, content_type=None
+                )
+                log.debug(f"raw json:\n{raw_json}")
+            except S3Error:
+                log.exception(f"error obtaining JSON for '{entry.key}'")
+                sys.exit(1)
+
+            if not raw_json:
+                click.echo(f"  missing release JSON for '{entry.name}'", err=True)
+                continue
+
+            try:
+                release_desc = ReleaseDesc.model_validate_json(raw_json)
+            except pydantic.ValidationError:
+                click.echo(
+                    f"  malformed or old JSON format for release '{entry.name}'",
+                    err=True,
+                )
+                continue
+
+            click.echo(f"  el version: {release_desc.el_version}")
+            for comp_name, component in release_desc.components.items():
+                click.echo(f"- {comp_name}:")
+                click.echo(f"  version:  {component.version}")
+                click.echo(f"  location: {component.loc}")
+                click.echo(f"  repo:     {component.repo_url}")
+
+    pass
 
 
 _create_help_msg = f"""Creates a new version descriptor file.
@@ -223,6 +282,78 @@ def build_create(
             image_tag,
         )
     )
+
+    pass
+
+
+@main.command("list", help="List known release versions from S3")
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Show additional release information",
+)
+@click.option(
+    "--secrets",
+    "secrets_path",
+    help="Path to 'secrets.json'",
+    envvar="SECRETS_PATH",
+    type=click.Path(
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+)
+@click.option(
+    "--vault-addr",
+    envvar="VAULT_ADDR",
+    type=str,
+    required=True,
+    metavar="ADDRESS/URL",
+    help="Vault address",
+)
+@click.option(
+    "--vault-role-id",
+    envvar="VAULT_ROLE_ID",
+    type=str,
+    required=True,
+    metavar="ROLE_ID",
+    help="Vault Role ID",
+)
+@click.option(
+    "--vault-secret-id",
+    envvar="VAULT_SECRET_ID",
+    type=str,
+    required=True,
+    metavar="SECRET_ID",
+    help="Vault Secret ID",
+)
+def list_versions(
+    verbose: bool,
+    secrets_path: Path,
+    vault_addr: str,
+    vault_role_id: str,
+    vault_secret_id: str,
+) -> None:
+    try:
+        secrets = SecretsVaultMgr(
+            secrets_path,
+            vault_addr,
+            vault_role_id,
+            vault_secret_id,
+            vault_transit=None,
+        )
+    except VaultError:
+        log.exception("error logging in to vault")
+        sys.exit(1)
+
+    asyncio.run(_list(secrets, verbose))
 
     pass
 

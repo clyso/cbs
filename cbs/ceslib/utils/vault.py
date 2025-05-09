@@ -62,7 +62,7 @@ class Vault:
                 secret_id=self.secret_id,
                 use_token=True,
             )
-            log.info("logged in to vault")
+            log.debug("logged in to vault")
         except hvac.exceptions.Forbidden:
             raise VaultError(msg="permission denied logging in to vault") from None
         except Exception:

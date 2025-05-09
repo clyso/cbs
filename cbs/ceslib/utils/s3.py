@@ -11,10 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from datetime import datetime as dt
 from pathlib import Path
 from typing import override
 
 import aioboto3
+import pydantic
 from ceslib.errors import CESError
 from ceslib.utils import log as parent_logger
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
@@ -36,6 +38,28 @@ class S3FileLocator:
         self.src = src
         self.dst = dst
         self.name = name
+
+
+class S3ObjectEntry(pydantic.BaseModel):
+    """Represent an object in S3."""
+
+    key: str
+    size: int
+    last_modified: dt
+
+    @property
+    def name(self) -> str:
+        idx = self.key.rfind("/")
+        if idx < 0:
+            return self.key
+        return self.key[idx + 1 :]
+
+
+class S3ListResult(pydantic.BaseModel):
+    """Result from listing objects in an S3 bucket."""
+
+    objects: list[S3ObjectEntry]
+    common_prefixes: list[str]
 
 
 _UPLOAD_BUCKET = "ces-packages"
@@ -87,7 +111,9 @@ async def s3_upload_str_obj(
 
 
 async def s3_download_str_obj(
-    secrets: SecretsVaultMgr, location: str, content_type: str = "application/json"
+    secrets: SecretsVaultMgr,
+    location: str,
+    content_type: str | None = None,
 ) -> str | None:
     """
     Download a string object from S3.
@@ -124,7 +150,7 @@ async def s3_download_str_obj(
             raise S3Error(msg) from e
 
         obj_content_type = await obj.content_type
-        if obj_content_type != content_type:
+        if content_type and obj_content_type != content_type:
             msg = f"unexpected content type '{obj_content_type}' for string object"
             log.error(msg)
             raise S3Error(msg)
@@ -215,3 +241,92 @@ async def s3_upload_files(
                 msg = f"unknown error uploading file: {e}"
                 log.exception(msg)
                 raise S3Error(msg) from e
+
+
+async def s3_list(
+    secrets: SecretsVaultMgr,
+    *,
+    prefix: str | None = None,
+    prefix_as_directory: bool = False,
+) -> S3ListResult:
+    """
+    List objects in S3.
+
+    If `prefix` is provided, list only objects with said prefix.
+    If `prefix_as_directory` is provided, ensure that the "/" delimiter is used to
+    differentiate between objects under `prefix` and those under a (logical)
+    sub-directory.
+
+    Returns `S3ListResult`, containing the list of objects and `common_prefixes`
+    representing those other (logical) sub-directories present in `prefix`.
+    """
+    try:
+        hostname, access_id, secret_id = secrets.s3_creds()
+    except SecretsVaultError as e:
+        msg = f"error obtaining S3 credentials: {e}"
+        log.exception(msg)
+        raise S3Error(msg) from e
+
+    s3_session = aioboto3.Session(
+        aws_access_key_id=access_id,
+        aws_secret_access_key=secret_id,
+    )
+    if not hostname.startswith("http"):
+        hostname = f"https://{hostname}"
+
+    obj_lst: list[S3ObjectEntry] = []
+    common_prefixes: set[str] = set()
+
+    if prefix_as_directory and not prefix:
+        prefix_as_directory = False
+
+    delimiter = "" if not prefix_as_directory else "/"
+
+    async with (
+        s3_session.client("s3", endpoint_url=hostname) as s3_client,
+    ):
+        log.debug(f"listing objects for bucket '{_UPLOAD_BUCKET}")
+
+        continuation_token = ""
+        while True:
+            log.debug(f"listing objects, continuation_token: '{continuation_token}'")
+            res = await s3_client.list_objects_v2(
+                Bucket=_UPLOAD_BUCKET,
+                Prefix=prefix if prefix else "",
+                Delimiter=delimiter,
+                ContinuationToken=continuation_token,
+            )
+
+            common_prefixes_dict = res.get("CommonPrefixes")
+            if common_prefixes_dict:
+                for entry in common_prefixes_dict:
+                    p = entry.get("Prefix")
+                    if p:
+                        common_prefixes.add(p)
+
+            log.debug(f"found common_prefixes: {common_prefixes}")
+
+            objs = res.get("Contents")
+            if not objs:
+                break
+
+            log.debug(f"found objects: {len(objs)}")
+
+            for obj_entry in objs:
+                key = obj_entry.get("Key")
+                size = obj_entry.get("Size")
+                last_modified = obj_entry.get("LastModified")
+                assert key is not None
+                assert size is not None
+                assert last_modified is not None
+
+                obj_lst.append(
+                    S3ObjectEntry(key=key, size=size, last_modified=last_modified)
+                )
+
+            if res["IsTruncated"]:
+                continuation_token = res["NextContinuationToken"]
+            else:
+                break
+
+    return S3ListResult(objects=obj_lst, common_prefixes=list(common_prefixes))

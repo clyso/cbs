@@ -22,8 +22,8 @@ from ceslib.utils.secrets import SecretsVaultMgr
 
 log = parent_logger.getChild("s3")
 
-_RELEASES_S3_PATH = "releases"
-_RELEASES_COMPONENT_S3_PATH = f"{_RELEASES_S3_PATH}/components"
+RELEASES_S3_PATH = "releases"
+_RELEASES_COMPONENT_S3_PATH = f"{RELEASES_S3_PATH}/components"
 
 
 async def release_desc_upload(
@@ -32,7 +32,7 @@ async def release_desc_upload(
     """Upload a release descriptor to S3."""
     log.debug(f"upload release desc for version '{release_desc.version}' to S3")
     desc_json = release_desc.model_dump_json(indent=2)
-    location = f"{_RELEASES_S3_PATH}/{release_desc.version}.json"
+    location = f"{RELEASES_S3_PATH}/{release_desc.version}.json"
     try:
         await s3_upload_json(secrets, location, desc_json)
     except ReleaseError as e:
@@ -100,7 +100,7 @@ async def check_release_exists(
     """Check whether a given release version exists in S3."""
     log.debug(f"check if release '{version}' already exists in S3")
 
-    location = f"{_RELEASES_S3_PATH}/{version}.json"
+    location = f"{RELEASES_S3_PATH}/{version}.json"
     try:
         data = await s3_download_json(secrets, location)
     except ReleaseError as e:
