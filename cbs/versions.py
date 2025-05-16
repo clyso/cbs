@@ -20,13 +20,12 @@ import sys
 from pathlib import Path
 
 import click
-import pydantic
 from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_image_desc
 from ceslib.logger import log as root_logger
-from ceslib.releases.desc import ReleaseDesc
+from ceslib.releases import ReleaseError
+from ceslib.releases.s3 import list_releases
 from ceslib.utils.git import GitError, get_git_repo_root, get_git_user
-from ceslib.utils.s3 import S3Error, s3_download_str_obj, s3_list
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 from ceslib.versions.create import VersionType, component_repos, create
@@ -125,51 +124,25 @@ async def _list(
 ) -> None:
     """List releases from S3."""
     log.info("listing s3 objects")
+
     try:
-        res = await s3_list(secrets, prefix="releases/", prefix_as_directory=True)
-    except S3Error:
-        log.exception("error obtaining release objects")
+        releases = await list_releases(secrets)
+    except ReleaseError as e:
+        click.echo(f"error obtaining releases: {e}")
         sys.exit(1)
 
-    click.echo(f"common prefixes: {res.common_prefixes}")
-    for entry in res.objects:
-        if not entry.name.endswith(".json"):
-            log.debug(f"skipping '{entry.key}', not JSON")
+    for version, entry in releases.items():
+        click.echo(f"> release: {version}")
+        click.echo(f"  el version: {entry.el_version}")
+
+        if not verbose:
             continue
 
-        click.echo(f"> release: {entry.name}")
-
-        if verbose:
-            try:
-                raw_json = await s3_download_str_obj(
-                    secrets, entry.key, content_type=None
-                )
-                log.debug(f"raw json:\n{raw_json}")
-            except S3Error:
-                log.exception(f"error obtaining JSON for '{entry.key}'")
-                sys.exit(1)
-
-            if not raw_json:
-                click.echo(f"  missing release JSON for '{entry.name}'", err=True)
-                continue
-
-            try:
-                release_desc = ReleaseDesc.model_validate_json(raw_json)
-            except pydantic.ValidationError:
-                click.echo(
-                    f"  malformed or old JSON format for release '{entry.name}'",
-                    err=True,
-                )
-                continue
-
-            click.echo(f"  el version: {release_desc.el_version}")
-            for comp_name, component in release_desc.components.items():
-                click.echo(f"- {comp_name}:")
-                click.echo(f"  version:  {component.version}")
-                click.echo(f"  location: {component.loc}")
-                click.echo(f"  repo:     {component.repo_url}")
-
-    pass
+        for comp_name, component in entry.components.items():
+            click.echo(f"  - {comp_name}:")
+            click.echo(f"    version:  {component.version}")
+            click.echo(f"    location: {component.loc}")
+            click.echo(f"    repo:     {component.repo_url}")
 
 
 _create_help_msg = f"""Creates a new version descriptor file.

@@ -17,7 +17,13 @@ import pydantic
 from ceslib.releases import ReleaseError
 from ceslib.releases import log as parent_logger
 from ceslib.releases.desc import ReleaseComponent, ReleaseDesc
-from ceslib.utils.s3 import s3_download_json, s3_upload_json
+from ceslib.utils.s3 import (
+    S3Error,
+    s3_download_json,
+    s3_download_str_obj,
+    s3_list,
+    s3_upload_json,
+)
 from ceslib.utils.secrets import SecretsVaultMgr
 
 log = parent_logger.getChild("s3")
@@ -189,3 +195,44 @@ async def check_released_components(
         existing[name] = res
 
     return existing
+
+
+async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
+    """List releases from S3."""
+    try:
+        res = await s3_list(
+            secrets, prefix=f"{RELEASES_S3_PATH}/", prefix_as_directory=True
+        )
+    except S3Error as e:
+        msg = "error obtaining release objects"
+        log.exception(msg)
+        raise ReleaseError(msg=f"{msg}: {e}") from e
+
+    releases: dict[str, ReleaseDesc] = {}
+    for entry in res.objects:
+        if not entry.name.endswith(".json"):
+            log.debug(f"skipping '{entry.key}', not JSON")
+            continue
+
+        try:
+            # FIXME: this is highly inefficient because the 's3_download_str_obj'
+            # function will obtain S3 credentials from vault each time.
+            raw_json = await s3_download_str_obj(secrets, entry.key, content_type=None)
+        except S3Error as e:
+            msg = "error obtaining JSON object"
+            log.exception(msg)
+            raise ReleaseError(msg=f"{msg}: {e}") from e
+
+        if not raw_json:
+            continue
+
+        try:
+            release_desc = ReleaseDesc.model_validate_json(raw_json)
+        except pydantic.ValidationError:
+            msg = "malformed or old JSON format for release descriptor"
+            log.error(msg)  # noqa: TRY400
+            continue
+
+        releases[release_desc.version] = release_desc
+
+    return releases
