@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime as dt
 from pathlib import Path
 from random import choices
-from typing import cast, override
+from typing import Annotated, Any, cast, override
 
 import click
 import httpx
@@ -52,18 +52,45 @@ class MalformedPatchSetError(PatchSetError):
         return f"malformed patch set: {self.msg}"
 
 
-class PatchExistsError(Exception):
-    sha: str
-    patch_uuid: uuid.UUID
+class PatchSetMismatchError(PatchSetError):
+    @override
+    def __str__(self) -> str:
+        return f"mismatch patch set type: {self.msg}"
 
-    def __init__(self, sha: str, patch_uuid: uuid.UUID) -> None:
+
+class PatchError(Exception):
+    msg: str
+
+    def __init__(self, msg: str) -> None:
         super().__init__()
-        self.sha = sha
-        self.patch_uuid = patch_uuid
+        self.msg = msg
+
+
+class PatchExistsError(PatchError):
+    def __init__(self, sha: str, patch_uuid: uuid.UUID) -> None:
+        super().__init__(msg=f"sha'{sha}' uuid '{patch_uuid}'")
 
     @override
     def __str__(self) -> str:
-        return f"patch '{self.sha}' already exists (uuid '{self.patch_uuid}')"
+        return f"patch already exists: {self.msg}"
+
+
+class NoSuchPatchError(PatchError):
+    def __init__(self, patch_uuid: uuid.UUID) -> None:
+        super().__init__(msg=f"uuid '{patch_uuid}'")
+
+    @override
+    def __str__(self) -> str:
+        return f"patch not found: {self.msg}"
+
+
+class MalformedPatchError(PatchError):
+    def __init__(self, patch_uuid: uuid.UUID) -> None:
+        super().__init__(msg=f"uuid '{patch_uuid}'")
+
+    @override
+    def __str__(self) -> str:
+        return f"malformed patch: {self.msg}"
 
 
 class AuthorData(pydantic.BaseModel):
@@ -92,7 +119,7 @@ class Patch(pydantic.BaseModel):
     patchset_uuid: uuid.UUID | None
 
 
-class PatchSet(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
+class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """Represents a set of related patches."""
 
     author: AuthorData
@@ -104,7 +131,7 @@ class PatchSet(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMult
     patchset_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
 
 
-class GitHubPullRequest(PatchSet):
+class GitHubPullRequest(PatchSetBase):
     """Represents a GitHub Pull Request, containing one or more patches."""
 
     org_name: str
@@ -114,6 +141,26 @@ class GitHubPullRequest(PatchSet):
     merge_date: dt | None
     merged: bool
     target_branch: str
+
+
+def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny, reportAny]
+    if isinstance(v, GitHubPullRequest):
+        return "gh"
+    elif isinstance(v, dict):
+        if "pull_request_id" in v:
+            return "gh"
+        else:
+            return "vanilla"
+    else:
+        return "vanilla"
+
+
+class PatchSet(pydantic.BaseModel):
+    info: Annotated[
+        Annotated[GitHubPullRequest, pydantic.Tag("gh")]
+        | Annotated[PatchSetBase, pydantic.Tag("vanilla")],
+        pydantic.Discriminator(_patchset_discriminator),
+    ]
 
 
 class ReleaseManifest(pydantic.BaseModel):
@@ -132,11 +179,13 @@ class ReleaseManifest(pydantic.BaseModel):
         default_factory=lambda: "".join(choices(string.ascii_letters, k=6))  # noqa: S311
     )
 
-    def contains_patchset(self, patchset: PatchSet) -> bool:
+    def contains_patchset(self, patchset: PatchSetBase) -> bool:
         """Check if the release manifest contains a given patch set."""
         return patchset.patchset_uuid in self.patchsets
 
-    def add_patchset(self, patchset: PatchSet) -> tuple[bool, list[Patch], list[Patch]]:
+    def add_patchset(
+        self, patchset: PatchSetBase
+    ) -> tuple[bool, list[Patch], list[Patch]]:
         """
         Add a patch set to this release manifest.
 
@@ -286,6 +335,19 @@ class ReleasesDB:
     def patches_by_sha_path(self) -> Path:
         return self.patches_path.joinpath("by_sha")
 
+    def list_manifests_uuids(self) -> list[uuid.UUID]:
+        """Obtain the UUIDs for all known release manifests."""
+        uuids_lst: list[uuid.UUID] = []
+        for entry in self.manifests_path.glob("*.json"):
+            try:
+                entry_uuid = uuid.UUID(entry.stem)
+            except Exception:  # noqa: S112
+                # malformed UUID, ignore.
+                continue
+            uuids_lst.append(entry_uuid)
+
+        return uuids_lst
+
     def load_manifest(self, uuid: uuid.UUID) -> ReleaseManifest:
         """Load a release manifest from disk."""
         manifest_path = self.manifests_path.joinpath(f"{uuid}.json")
@@ -308,6 +370,19 @@ class ReleasesDB:
     def get_patchset_path(self, uuid: uuid.UUID) -> Path:
         return self.patchsets_path.joinpath(f"{uuid}.json")
 
+    def load_patchset(self, uuid: uuid.UUID) -> PatchSetBase:
+        """Obtain a patch set by its UUID."""
+        patchset_path = self.patchsets_path.joinpath(f"{uuid}.json")
+        if not patchset_path.exists():
+            raise NoSuchPatchSetError(msg=f"uuid '{uuid}'")
+
+        try:
+            patchset_ctr = PatchSet.model_validate_json(patchset_path.read_text())
+        except pydantic.ValidationError:
+            raise MalformedPatchSetError(msg=f"uuid '{uuid}'") from None
+
+        return patchset_ctr.info
+
     def load_gh_pr(self, org: str, repo: str, pr_id: int) -> GitHubPullRequest:
         """Load a patch set's information, as a GitHub pull request, from disk."""
         pr_path = self.gh_prs_path.joinpath(f"{org}/{repo}/{pr_id}")
@@ -327,11 +402,14 @@ class ReleasesDB:
             raise NoSuchPatchSetError(msg=f"uuid '{patchset_uuid}'")
 
         try:
-            pr = GitHubPullRequest.model_validate_json(patchset_path.read_text())
+            patchset = PatchSet.model_validate_json(patchset_path.read_text())
         except pydantic.ValidationError:
             raise MalformedPatchSetError(msg=f"uuid '{patchset_uuid}'") from None
         # propagate further exceptions
-        return pr
+
+        if not isinstance(patchset.info, GitHubPullRequest):
+            raise PatchSetMismatchError(msg=f"uuid '{patchset_uuid}' expected github")
+        return patchset.info
 
     def store_gh_patchset(self, patchset: GitHubPullRequest) -> None:
         """Store a GitHub pull request's information as a patch set to disk."""
@@ -342,16 +420,27 @@ class ReleasesDB:
         pr_path = pr_base_path.joinpath(f"{patchset.pull_request_id}")
         patchset_path = self.patchsets_path.joinpath(f"{patchset.patchset_uuid}.json")
 
+        patchset_ctr = PatchSet(info=patchset)
         # propagate exceptions
-        _ = patchset_path.write_text(patchset.model_dump_json(indent=2))
+        _ = patchset_path.write_text(patchset_ctr.model_dump_json(indent=2))
         _ = pr_path.write_text(str(patchset.patchset_uuid))
 
         for patch in patchset.patches:
             with contextlib.suppress(PatchExistsError):
                 self.store_patch(patch)
 
-    def load_gh_patch(self) -> None:
-        pass
+    def load_patch(self, patch_uuid: uuid.UUID) -> Patch:
+        """Load a patch's information from disk, by its UUID."""
+        patch_path = self.patches_by_uuid_path.joinpath(f"{patch_uuid}.json")
+        if not patch_path.exists():
+            raise NoSuchPatchError(patch_uuid)
+
+        try:
+            patch = Patch.model_validate_json(patch_path.read_text())
+        except pydantic.ValidationError:
+            raise MalformedPatchError(patch_uuid) from None
+
+        return patch
 
     def store_patch(self, patch: Patch) -> None:
         """Store a patch's information to disk."""
@@ -677,13 +766,31 @@ def cmd_manifest() -> None:
     pass
 
 
-def _gen_manifest_info(manifest: ReleaseManifest) -> str:
+def _gen_manifest_header(manifest: ReleaseManifest) -> str:
     return f"""           name: {manifest.name}
    base release: {manifest.base_release_name}
 base repository: {manifest.base_ref_org}/{manifest.base_ref_repo}
        base ref: {manifest.base_ref}
   creation date: {manifest.creation_date}
   manifest uuid: {manifest.release_uuid}"""
+
+
+def _get_manifests_from_uuids(
+    db: ReleasesDB, uuid_lst: list[uuid.UUID]
+) -> list[ReleaseManifest]:
+    lst: list[ReleaseManifest] = []
+    for entry in uuid_lst:
+        try:
+            manifest = db.load_manifest(entry)
+        except NoSuchManifestError:
+            click.echo(f"error: manifest uuid '{entry}' not found", err=True)
+            continue
+        except MalformedManifestError:
+            click.echo(f"error: malformed manifest uuid '{entry}'", err=True)
+            continue
+        lst.append(manifest)
+
+    return sorted(lst, key=lambda e: e.creation_date)
 
 
 @cmd_manifest.command("create", help="Create a new release manifest.")
@@ -736,7 +843,7 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
     click.echo(f"""
 Manifest created
 -----------------
-{_gen_manifest_info(manifest)}
+{_gen_manifest_header(manifest)}
 
 You can now modify this release using its UUID.
 """)
@@ -745,29 +852,79 @@ You can now modify this release using its UUID.
 @cmd_manifest.command("list", help="List existing release manifest.")
 @pass_ctx
 def cmd_manifest_list(ctx: Ctx) -> None:
-    lst: list[ReleaseManifest] = []
-
-    for entry in ctx.db.manifests_path.glob("*.json"):
-        try:
-            manifest = ReleaseManifest.model_validate_json(entry.read_text())
-        except pydantic.ValidationError:
-            click.echo(
-                f"error: malformed release manifest uuid '{entry.stem}', ignore."
-            )
-            continue
-        except Exception as e:
-            click.echo(f"error: unable to read release manifest: {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
-
-        lst.append(manifest)
-
-    lst = sorted(lst, key=lambda e: e.creation_date)
+    lst = _get_manifests_from_uuids(ctx.db, ctx.db.list_manifests_uuids())
     for manifest in lst:
         click.echo(f"""Manifest {manifest.release_uuid}
 ----------------------------------------------
-{_gen_manifest_info(manifest)}
+{_gen_manifest_header(manifest)}
 
 """)
+
+
+@cmd_manifest.command("info", help="Show information about release manifests.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=False,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID for which information will be shown.",
+)
+@pass_ctx
+def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
+    db = ctx.db
+
+    manifest_uuids_lst = [manifest_uuid] if manifest_uuid else db.list_manifests_uuids()
+    lst = _get_manifests_from_uuids(db, manifest_uuids_lst)
+
+    for manifest in lst:
+        click.echo(f"""Manifest {manifest.release_uuid}
+----------------------------------------------
+{_gen_manifest_header(manifest)}
+""")
+        click.echo("  Patch Sets:")
+        # FIXME: don't assume just GitHub patch sets
+        for patchset_uuid in manifest.patchsets:
+            try:
+                patchset = db.load_patchset(patchset_uuid)
+            except (PatchSetError, Exception) as e:
+                click.echo(
+                    f"error: unable to load patch set uuid '{patchset_uuid}': {e}",
+                    err=True,
+                )
+                sys.exit(errno.ENOTRECOVERABLE)
+
+            click.echo(f"""    \u29bf {patchset.title}
+      \u276f author: {patchset.author.user} <{patchset.author.email}>
+      \u276f created: {patchset.creation_date}
+      \u276f related: {patchset.related_to}""")
+
+            if isinstance(patchset, GitHubPullRequest):
+                click.echo(f"      \u276f repo: {patchset.repo_url}")
+                click.echo(f"      \u276f pr id: {patchset.pull_request_id}")
+                click.echo(f"      \u276f target: {patchset.target_branch}")
+                click.echo(f"      \u276f merged: {patchset.merge_date}")
+
+            click.echo("      \u276f patches:")
+            for patch in patchset.patches:
+                click.echo(f"        \u2022 {patch.title}")
+
+        click.echo("\n  Patches:")
+        for patch_uuid in manifest.patches:
+            try:
+                patch = db.load_patch(patch_uuid)
+            except (PatchError, Exception) as e:
+                click.echo(
+                    f"error: unable to load patch uuid '{patch_uuid}': {e}", err=True
+                )
+                sys.exit(errno.ENOTRECOVERABLE)
+
+            click.echo(f"""    \u29bf {patch.title}
+      \u276f author: {patch.author.user} <{patch.author.email}>
+      \u276f date: {patch.author_date}
+      \u276f related: {patch.related_to}
+      \u276f cherry-picked from: {patch.cherry_picked_from}""")
+
     pass
 
 
