@@ -13,6 +13,7 @@ dependencies = [
     "click==8.1.8",
     "fastapi==0.115.11",
     "flower==2.0.1",
+    "gitpython>=3.1.44",
     "httpx==0.28.1",
     "hvac==2.3.0",
     "itsdangerous==2.2.0",
