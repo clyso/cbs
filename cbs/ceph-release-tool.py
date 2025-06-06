@@ -4,9 +4,11 @@ import abc
 import contextlib
 import datetime
 import errno
+import logging
 import re
 import string
 import sys
+import tempfile
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
@@ -14,10 +16,18 @@ from random import choices
 from typing import Annotated, Any, cast, override
 
 import click
+import git
 import httpx
 import pydantic
 
 SHA = str
+
+
+logger = logging.getLogger("crt")
+logging.basicConfig(
+    format="%(asctime)s [%(filename)s:%(lineno)s @ %(funcName)15s()] %(message)s",
+    level=logging.DEBUG,
+)
 
 
 class NoSuchManifestError(Exception):
@@ -171,7 +181,6 @@ class ReleaseManifest(pydantic.BaseModel):
     base_ref: str
 
     patchsets: list[uuid.UUID] = pydantic.Field(default=[])
-    patches: list[uuid.UUID] = pydantic.Field(default=[])
 
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
     release_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
@@ -183,9 +192,7 @@ class ReleaseManifest(pydantic.BaseModel):
         """Check if the release manifest contains a given patch set."""
         return patchset.patchset_uuid in self.patchsets
 
-    def add_patchset(
-        self, patchset: PatchSetBase
-    ) -> tuple[bool, list[Patch], list[Patch]]:
+    def add_patchset(self, patchset: PatchSetBase) -> bool:
         """
         Add a patch set to this release manifest.
 
@@ -196,35 +203,9 @@ class ReleaseManifest(pydantic.BaseModel):
                          release manifest.
         """
         if self.contains_patchset(patchset):
-            return (False, [], [])
+            return False
 
         self.patchsets.append(patchset.patchset_uuid)
-
-        skipped: list[Patch] = []
-        added: list[Patch] = []
-        for patch in patchset.patches:
-            is_added = self.add_patch(patch)
-            if not is_added:
-                skipped.append(patch)
-            else:
-                added.append(patch)
-
-        return (True, added, skipped)
-
-    def contains_patch(self, patch: Patch) -> bool:
-        """Check if the release manifest contains a given patch."""
-        return patch.patch_uuid in self.patches
-
-    def add_patch(self, patch: Patch) -> bool:
-        """
-        Add a given patch to the release manifest.
-
-        Returns a boolean, referring to whether the patch was added to the release
-        manifest or not.
-        """
-        if self.contains_patch(patch):
-            return False
-        self.patches.append(patch.patch_uuid)
         return True
 
 
@@ -457,13 +438,13 @@ class ReleasesDB:
 
 class Ctx:
     db: ReleasesDB
-    release_uuid: uuid.UUID | None
     github_token: str | None
+    ceph_git_path: Path | None
 
     def __init__(self) -> None:
         self.db = ReleasesDB(Path.cwd().joinpath(".releases"))
-        self.release_uuid = None
         self.github_token = None
+        self.ceph_git_path = None
 
     @property
     def db_path(self) -> Path:
@@ -475,6 +456,278 @@ class Ctx:
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
+
+
+def _check_patchset_patches(
+    ceph_git_path: Path, patchset: PatchSetBase, patchset_branch: str, base_ref: str
+) -> tuple[list[str], list[str]] | None:
+    repo = git.Repo(ceph_git_path)
+
+    try:
+        res = repo.git.execute(
+            ["git", "cherry", base_ref, patchset_branch],
+            with_extended_output=False,
+            as_process=False,
+            stdout_as_string=True,
+        )
+    except Exception:
+        logger.error(
+            f"unable to check patch diff between '{base_ref}' and '{patchset_branch}'"
+        )
+        raise Exception()
+
+    if not res:
+        logger.warning(f"empty diff between '{base_ref}' and '{patchset_branch}")
+        return None
+
+    patches_res = res.splitlines()
+    if len(patches_res) > len(patchset.patches):
+        logger.warning(
+            f"potential wrong base ref '{base_ref}' for patch set '{patchset_branch}'"
+        )
+        return None
+
+    patches_add: list[str] = []
+    patches_drop: list[str] = []
+
+    entry_re = re.compile(r"^([-+])\s+(.*)$")
+    for entry in patches_res:
+        m = re.match(entry_re, entry)
+        if not m:
+            logger.error(f"unexpected entry format: {entry}")
+            continue
+
+        action = cast(str, m.group(1))
+        sha = cast(str, m.group(2))
+
+        match action:
+            case "+":
+                patches_add.append(sha)
+            case "-":
+                patches_drop.append(sha)
+            case _:
+                logger.error(f"unexpected patch action '{action}' for sha '{sha}'")
+
+    logger.debug(f"patchset '{patchset_branch}' add {patches_add}")
+    logger.debug(f"patchset '{patchset_branch}' drop {patches_drop}")
+
+    return (patches_add, patches_drop)
+
+
+def _apply_manifest(
+    db: ReleasesDB, manifest: ReleaseManifest, ceph_git_path: Path, token: str
+) -> None:
+    # start new branch to apply manifest to.
+    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    branch_name = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
+
+    repo = git.Repo(ceph_git_path)
+
+    logger.debug(f"branch: {branch_name}")
+
+    def _check_repo() -> None:
+        for what in ["name", "email"]:
+            try:
+                res = repo.git.execute(
+                    ["git", "config", f"user.{what}"],
+                    with_extended_output=False,
+                    as_process=False,
+                    stdout_as_string=True,
+                )
+            except Exception:
+                logger.exception(f"error obtaining repository's user's {what}")
+                raise Exception() from None
+
+            if not res:
+                logger.error(f"user's {what} not set for repository")
+                raise Exception()
+
+    def _prepare_remote(org: str, repo_name: str) -> git.Remote:
+        remote_name = f"{org}/{repo_name}"
+        try:
+            remote = repo.remote(remote_name)
+        except ValueError:
+            remote_url = (
+                f"https://ceph-release-tool:{token}@github.com/{org}/{repo_name}"
+            )
+            remote = repo.create_remote(remote_name, remote_url)
+            logger.debug(f"create remote name: {remote_name}, url: {remote_url}")
+
+        logger.debug("update remote")
+        _ = remote.update()
+        logger.debug("update submodules")
+        repo.git.execute(  # pyright: ignore[reportCallIssue]
+            ["git", "submodule", "update", "--init", "--recursive"],
+            output_stream=sys.stdout.buffer,
+            as_process=False,
+            with_stdout=True,
+        )
+        return remote
+
+    def _checkout_base_ref(remote: git.Remote) -> git.Head:
+        assert branch_name not in repo.heads
+
+        # if manifest.base_ref not in remote.refs:
+        #     logger.error(f"manifest base ref '{manifest.base_ref}' not in remote refs")
+        #     raise Exception()
+
+        try:
+            new_head = repo.create_head(branch_name, manifest.base_ref)
+        except Exception:
+            logger.exception(
+                f"unable to create new head '{branch_name}' "
+                + f"from '{manifest.base_ref}'"
+            )
+            raise Exception() from None
+
+        repo.head.reference = new_head
+        _ = repo.head.reset(index=True, working_tree=True)
+        return new_head
+
+    def _fetch_pr() -> None:
+        pass
+
+    def _prepare_patchsets() -> list[GitHubPullRequest]:
+        patchset_lst: list[GitHubPullRequest] = []
+        for patchset_uuid in manifest.patchsets:
+            try:
+                patchset = db.load_patchset(patchset_uuid)
+            except Exception as e:
+                raise e from None
+
+            if not isinstance(patchset, GitHubPullRequest):
+                continue
+
+            patchset_lst.append(patchset)
+            remote = _prepare_remote(patchset.org_name, patchset.repo_name)
+            pr_id = patchset.pull_request_id
+            src_ref = f"pull/{pr_id}/head"
+            dst_ref = f"patchset/gh/{patchset.org_name}/{patchset.repo_name}/{pr_id}"
+            _ = remote.fetch(f"{src_ref}:{dst_ref}")
+
+            _check_patchset_patches(ceph_git_path, patchset, dst_ref, manifest.base_ref)
+
+        return patchset_lst
+
+    def _patch_exists(sha: str) -> bool:
+        try:
+            sha_commit = repo.commit(sha)
+        except Exception:
+            logger.exception(f"error obtaining commit for sha '{sha}'")
+            raise Exception()
+
+        return repo.is_ancestor(sha_commit, repo.head.commit)
+
+    def _get_patch_id(sha: str) -> str:
+        with tempfile.TemporaryFile() as temp_file:
+            try:
+                repo.git.execute(["git", "show", sha], output_stream=temp_file)
+            except Exception:
+                logger.exception(f"unable to obtain commit sha '{sha}'")
+                raise Exception()
+
+            _ = temp_file.seek(0)
+            try:
+                patch_id_res = repo.git.execute(
+                    ["git", "patch-id"],
+                    istream=temp_file,
+                    with_extended_output=False,
+                    as_process=False,
+                    stdout_as_string=True,
+                )
+            except Exception:
+                logger.exception(f"unable to obtain patch-id for sha '{sha}'")
+                raise Exception()
+
+            if not patch_id_res:
+                logger.error(f"got empty patch-id for sha '{sha}'")
+                raise Exception()
+
+            try:
+                patch_id, patch_sha = patch_id_res.split()
+            except Exception:
+                logger.error(f"malformed patch-id result for sha '{sha}'")
+                raise Exception() from None
+
+            return patch_id
+
+    def _check_patch_needed(sha: str) -> int:
+        try:
+            res = repo.git.execute(
+                ["git", "cherry", "HEAD", sha, f"{sha}~1"],
+                with_extended_output=False,
+                as_process=False,
+                stdout_as_string=True,
+            )
+        except Exception:
+            logger.error(f"unable to check patch diff between HEAD and sha '{sha}'")
+            raise Exception()
+
+        if not res:
+            logger.warning(f"empty diff between HEAD and sha '{sha}")
+            return 0
+
+        patches_res = res.splitlines()
+        if len(patches_res) != 1:
+            logger.warning(
+                f"potential wrong base ref '{manifest.base_ref}' for patch sha '{sha}'"
+            )
+            return 0
+
+        m = re.match(r"^([-+])\s+(.*)$", patches_res[0])
+        if not m:
+            logger.error(f"unexpected entry format: {patches_res[0]}")
+            return 0
+
+        action = cast(str, m.group(1))
+        sha = cast(str, m.group(2))
+
+        match action:
+            case "+":
+                return 1
+            case "-":
+                return -1
+            case _:
+                logger.error(f"unexpected patch action '{action}' for sha '{sha}'")
+                return 0
+
+    def _apply_patchsets(patchsets: list[GitHubPullRequest]) -> None:
+        for patchset in patchsets:
+            logger.debug(
+                f"apply patch set uuid '{patchset.patchset_uuid}', "
+                + f"pr id '{patchset.pull_request_id}'"
+            )
+            for patch in patchset.patches:
+                logger.debug(f"apply patch uuid '{patch.patch_uuid}' sha '{patch.sha}'")
+
+                if _check_patch_needed(patch.sha) <= 0:
+                    logger.info(
+                        f"patch uuid '{patch.patch_uuid}' sha '{patch.sha}' skipped"
+                    )
+                    continue
+
+                try:
+                    repo.git.cherry_pick("-x", "-s", patch.sha)
+                except git.CommandError:
+                    logger.error(
+                        f"unable to cherry-pick uuid '{patch.patch_uuid}' "
+                        + f"sha '{patch.sha}'"
+                    )
+                    raise Exception()
+        pass
+
+    logger.debug("check repository requirements")
+    _check_repo()
+    logger.debug("prepare remote")
+    remote = _prepare_remote(manifest.base_ref_org, manifest.base_ref_repo)
+    logger.debug("checkout branch")
+    branch = _checkout_base_ref(remote)
+    logger.debug("prepare patch sets")
+    patchsets = _prepare_patchsets()
+    logger.debug("apply patches")
+    _apply_patchsets(patchsets)
+
+    pass
 
 
 def gh_get_user_info(url: str, *, token: str | None = None) -> AuthorData:
@@ -709,6 +962,13 @@ def gh_get_pr(
 
 @click.group()
 @click.option(
+    "-d",
+    "--debug",
+    is_flag=True,
+    default=False,
+    required=False,
+)
+@click.option(
     "--db",
     "db_path",
     type=click.Path(
@@ -743,22 +1003,25 @@ def gh_get_pr(
 )
 @pass_ctx
 def main(
-    ctx: Ctx, db_path: Path | None, release_uuid: str | None, github_token: str | None
+    ctx: Ctx,
+    debug: bool,
+    db_path: Path | None,
+    release_uuid: str | None,
+    github_token: str | None,
 ) -> None:
+    if debug:
+        logger.setLevel(logging.DEBUG)
+
     if db_path:
         ctx.db_path = db_path
     ctx.db_path.mkdir(exist_ok=True)
-
-    if release_uuid:
-        ctx.release_uuid = uuid.UUID(release_uuid)
-
     ctx.github_token = github_token
 
-    click.echo(f"releases db path: {ctx.db_path}")
-    click.echo(f"  manifests path: {ctx.db.manifests_path}")
-    click.echo(f" patch sets path: {ctx.db.patchsets_path}")
-    click.echo(f"    patches path: {ctx.db.patches_path}")
-    click.echo(f"has github token: {github_token is not None}")
+    logger.debug(f"releases db path: {ctx.db_path}")
+    logger.debug(f"  manifests path: {ctx.db.manifests_path}")
+    logger.debug(f" patch sets path: {ctx.db.patchsets_path}")
+    logger.debug(f"    patches path: {ctx.db.patches_path}")
+    logger.debug(f"has github token: {github_token is not None}")
 
 
 @main.group("manifest", help="Manifest operations.")
@@ -907,23 +1170,39 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
 
             click.echo("      \u276f patches:")
             for patch in patchset.patches:
-                click.echo(f"        \u2022 {patch.title}")
+                click.echo(f"""        \u2022 {patch.title}
+          \u276f author: {patch.author.user} <{patch.author.email}>
+          \u276f date: {patch.author_date}
+          \u276f related: {patch.related_to}
+          \u276f cherry-picked from: {patch.cherry_picked_from}""")
 
-        click.echo("\n  Patches:")
-        for patch_uuid in manifest.patches:
-            try:
-                patch = db.load_patch(patch_uuid)
-            except (PatchError, Exception) as e:
-                click.echo(
-                    f"error: unable to load patch uuid '{patch_uuid}': {e}", err=True
-                )
-                sys.exit(errno.ENOTRECOVERABLE)
+    pass
 
-            click.echo(f"""    \u29bf {patch.title}
-      \u276f author: {patch.author.user} <{patch.author.email}>
-      \u276f date: {patch.author_date}
-      \u276f related: {patch.related_to}
-      \u276f cherry-picked from: {patch.cherry_picked_from}""")
+
+@cmd_manifest.command("apply", help="Apply a release manifest.")
+@click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
+@click.option(
+    "-c",
+    "--ceph-git-path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to ceph git repository.",
+)
+@pass_ctx
+def cmd_manifest_apply(ctx: Ctx, manifest_uuid: uuid.UUID, ceph_git_path: Path) -> None:
+    try:
+        manifest = ctx.db.load_manifest(manifest_uuid)
+    except NoSuchManifestError:
+        click.echo(f"error: unable to find manifest '{manifest_uuid}'", err=True)
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        click.echo(f"error: malformed manifest '{manifest_uuid}'", err=True)
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        click.echo(f"error: unable to load manifest '{manifest_uuid}': {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
 
     pass
 
@@ -934,8 +1213,30 @@ def cmd_patchset() -> None:
 
 
 @cmd_patchset.group("add", help="Add a patch set to a release.")
-def cmd_patchset_add() -> None:
-    pass
+@click.option(
+    "-c",
+    "--ceph-git-path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to ceph git repository",
+)
+@pass_ctx
+def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
+    if not ceph_git_path.joinpath(".git").exists():
+        click.echo(
+            f"error: path at '{ceph_git_path}' is not a git repository", err=True
+        )
+        sys.exit(errno.EINVAL)
+
+    if not ceph_git_path.joinpath("ceph.spec.in").exists():
+        click.echo(
+            f"error: path at '{ceph_git_path}' is not a ceph repository", err=True
+        )
+        sys.exit(errno.EINVAL)
+
+    ctx.ceph_git_path = ceph_git_path
 
 
 @cmd_patchset_add.command("gh", help="Add patch set from GitHub")
@@ -966,6 +1267,10 @@ def cmd_patchset_add() -> None:
 def cmd_patchset_add_gh(
     ctx: Ctx, pr_id: int, manifest_uuid: uuid.UUID, repo: str
 ) -> None:
+    if not ctx.ceph_git_path or not ctx.github_token:
+        click.echo("error: missing token or ceph git path", err=True)
+        sys.exit(errno.EINVAL)
+
     m = re.match(r"([\w\d_.-]+)/([\w\d_.-]+)", repo)
     if not m:
         click.echo("error: malformed ORG/REPO", err=True)
@@ -1014,29 +1319,12 @@ def cmd_patchset_add_gh(
             )
             sys.exit(errno.ENOTRECOVERABLE)
 
-    added, patches_added, patches_skipped = manifest.add_patchset(patchset)
-    if not added:
-        click.echo(
-            f"patch set '{patchset.patchset_uuid}' already exists in release manifest"
-        )
-        return
-
-    for patch in patchset.patches:
-        if patch in patches_added:
-            click.echo(
-                f"added patch sha '{patch.sha}' uuid '{patch.patch_uuid}' "
-                + f"title '{patch.title}' to release manifest"
-            )
-        elif patch in patches_skipped:
-            click.echo(
-                f"skipped existing patch sha '{patch.sha}' "
-                + f"uuid '{patch.patch_uuid}' title '{patch.title}'"
-            )
-        else:
-            click.echo(
-                f"error: missing patch '{patch.patch_uuid}' from manifest!", err=True
-            )
-            sys.exit(errno.ENOTRECOVERABLE)
+    click.echo("apply patches to manifest's repository")
+    try:
+        _apply_manifest(db, manifest, ctx.ceph_git_path, ctx.github_token)
+    except Exception as e:
+        click.echo(f"error: unable to apply manifest: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         db.store_manifest(manifest)
