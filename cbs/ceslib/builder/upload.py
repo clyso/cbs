@@ -132,7 +132,7 @@ async def _upload_component_rpms(
         log.debug(f"{rpm.name}\n-> SRC: {rpm.src}\n=> DST: {rpm.dst}")
 
     try:
-        await s3_upload_files(secrets, to_upload)
+        await s3_upload_files(secrets, to_upload, public=True)
     except S3Error as e:
         msg = f"error uploading rpms: {e}"
         log.exception(msg)

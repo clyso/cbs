@@ -35,12 +35,13 @@ curl -LsSf https://astral.sh/uv/install.sh |
 
 cd "${RUNNER_DIR}" || exit 1
 
+export VIRTUAL_ENV="${RUNNER_DIR}/venv"
 uv venv --python 3.13 "${RUNNER_DIR}"/venv
 
 # shellcheck source=/dev/null
 source "${RUNNER_DIR}"/venv/bin/activate
 
-uv pip install -r "${ourpath}/requirements.txt" || exit 1
+uv --directory "${ourpath}" sync --all-packages --no-dev --active || exit 1
 
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"

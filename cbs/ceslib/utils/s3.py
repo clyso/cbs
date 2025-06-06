@@ -149,7 +149,18 @@ async def s3_download_str_obj(
             log.exception(msg)
             raise S3Error(msg) from e
 
-        obj_content_type = await obj.content_type
+        try:
+            obj_content_type = await obj.content_type
+        except s3.meta.client.exceptions.ClientError as e:
+            log.error(f"client error: {e.response}")
+            if (
+                "ResponseMetadata" in e.response
+                and e.response["ResponseMetadata"]["HTTPStatusCode"] == 404
+            ):
+                log.debug(f"object '{location}' not found")
+                return None
+            raise S3Error("foo") from None
+
         if content_type and obj_content_type != content_type:
             msg = f"unexpected content type '{obj_content_type}' for string object"
             log.error(msg)
@@ -209,7 +220,7 @@ async def _upload_file(
 
 
 async def s3_upload_files(
-    secrets: SecretsVaultMgr, file_locs: list[S3FileLocator]
+    secrets: SecretsVaultMgr, file_locs: list[S3FileLocator], *, public: bool = False
 ) -> None:
     """Upload a list of files to S3."""
     try:
@@ -232,7 +243,7 @@ async def s3_upload_files(
     async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
         for loc in file_locs:
             try:
-                await _upload_file(s3, loc)
+                await _upload_file(s3, loc, public=public)
             except S3Error as e:
                 msg = f"error uploading file: {e}"
                 log.exception(msg)
