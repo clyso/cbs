@@ -77,10 +77,12 @@ class ReleaseManifest(pydantic.BaseModel):
         self.patchsets.append(patchset.patchset_uuid)
         return True
 
-    def gen_header(self) -> str:
-        return f"""           name: {self.name}
-   base release: {self.base_release_name}
-base repository: {self.base_ref_org}/{self.base_ref_repo}
-       base ref: {self.base_ref}
-  creation date: {self.creation_date}
-  manifest uuid: {self.release_uuid}"""
+    def gen_header(self) -> list[tuple[str, str]]:
+        return [
+            ("name", self.name),
+            ("base release", self.base_release_name),
+            ("base repository", f"{self.base_ref_org}/{self.base_ref_repo}"),
+            ("base ref", self.base_ref),
+            ("creation date", str(self.creation_date)),
+            ("manifest uuid", str(self.release_uuid)),
+        ]

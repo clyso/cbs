@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import cast
 
 import click
+import rich.box
 from crtlib.apply import apply_manifest
 from crtlib.db import ReleasesDB
 from crtlib.github import gh_get_pr
@@ -33,6 +34,11 @@ from crtlib.manifest import (
     ReleaseManifest,
 )
 from crtlib.patchset import GitHubPullRequest, NoSuchPatchSetError, PatchSetError
+from rich.console import Console, Group, RenderableType
+from rich.padding import Padding
+from rich.panel import Panel
+from rich.table import Table
+from rich.tree import Tree
 
 
 class Ctx:
@@ -55,6 +61,23 @@ class Ctx:
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
+
+console = Console()
+
+
+def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
+    table = Table(
+        show_header=False,
+        show_lines=False,
+        box=None,
+    )
+    table.add_column(justify="right", style="cyan", no_wrap=True)
+    table.add_column(justify="left", style="magenta", no_wrap=True)
+
+    for row in manifest.gen_header():
+        table.add_row(*row)
+
+    return table
 
 
 @click.group()
@@ -178,13 +201,18 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
         click.echo(f"error: unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    click.echo(f"""
-Manifest created
------------------
-{manifest.gen_header()}
-
-You can now modify this release using its UUID.
-""")
+    table = _gen_rich_manifest_table(manifest)
+    panel = Panel(
+        Group(
+            table,
+            Padding(
+                "[bold]You can now modify this release using its UUID", (1, 0, 1, 2)
+            ),
+        ),
+        box=rich.box.SQUARE,
+        title="Manifest Created",
+    )
+    console.print(panel)
 
 
 @cmd_manifest.command("list", help="List existing release manifest.")
@@ -192,11 +220,9 @@ You can now modify this release using its UUID.
 def cmd_manifest_list(ctx: Ctx) -> None:
     lst = _get_manifests_from_uuids(ctx.db, ctx.db.list_manifests_uuids())
     for manifest in lst:
-        click.echo(f"""Manifest {manifest.release_uuid}
-----------------------------------------------
-{manifest.gen_header()}
-
-""")
+        table = _gen_rich_manifest_table(manifest)
+        table.title = f"Manifest {manifest.release_uuid}"
+        console.print(Padding(table, (0, 0, 1, 0)))
 
 
 @cmd_manifest.command("info", help="Show information about release manifests.")
@@ -216,12 +242,10 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
     lst = _get_manifests_from_uuids(db, manifest_uuids_lst)
 
     for manifest in lst:
-        click.echo(f"""Manifest {manifest.release_uuid}
-----------------------------------------------
-{manifest.gen_header()}
-""")
-        click.echo("  Patch Sets:")
-        # FIXME: don't assume just GitHub patch sets
+        table = _gen_rich_manifest_table(manifest)
+
+        patchsets_lst: list[RenderableType] = []
+
         for patchset_uuid in manifest.patchsets:
             try:
                 patchset = db.load_patchset(patchset_uuid)
@@ -232,26 +256,64 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
                 )
                 sys.exit(errno.ENOTRECOVERABLE)
 
-            click.echo(f"""    \u29bf {patchset.title}
-      \u276f author: {patchset.author.user} <{patchset.author.email}>
-      \u276f created: {patchset.creation_date}
-      \u276f related: {patchset.related_to}""")
+            patchset_tree = Tree(f"\u276f [blue]{patchset.title}")
+            patchset_table = Table(show_header=False, show_lines=False, box=None)
+            patchset_table.add_column(justify="right", style="cyan", no_wrap=True)
+            patchset_table.add_column(justify="left", style="magenta", no_wrap=True)
+
+            patchset_table.add_row(
+                "author", f"{patchset.author.user} <{patchset.author.email}>"
+            )
+            patchset_table.add_row("created", str(patchset.creation_date))
+            patchset_table.add_row("related", "\n".join(patchset.related_to))
 
             if isinstance(patchset, GitHubPullRequest):
-                click.echo(f"      \u276f repo: {patchset.repo_url}")
-                click.echo(f"      \u276f pr id: {patchset.pull_request_id}")
-                click.echo(f"      \u276f target: {patchset.target_branch}")
-                click.echo(f"      \u276f merged: {patchset.merge_date}")
+                patchset_table.add_row("repo", patchset.repo_url)
+                patchset_table.add_row("pr id", str(patchset.pull_request_id))
+                patchset_table.add_row("target", patchset.target_branch)
+                patchset_table.add_row("merged", str(patchset.merge_date))
 
-            click.echo("      \u276f patches:")
+            patches_table = Table(show_header=False, show_lines=False, box=None)
+            patches_table.add_column(justify="left", no_wrap=True)
+
             for patch in patchset.patches:
-                click.echo(f"""        \u2022 {patch.title}
-          \u276f author: {patch.author.user} <{patch.author.email}>
-          \u276f date: {patch.author_date}
-          \u276f related: {patch.related_to}
-          \u276f cherry-picked from: {patch.cherry_picked_from}""")
+                patch_tree = Tree(f"\u2022 [green]{patch.title}")
 
-    pass
+                patch_table = Table(show_header=False, show_lines=False, box=None)
+                patch_table.add_column(justify="right", style="cyan", no_wrap=True)
+                patch_table.add_column(justify="left", style="magenta", no_wrap=True)
+
+                patch_table.add_row(
+                    "author", f"{patch.author.user} <{patch.author.email}>"
+                )
+                patch_table.add_row("date", str(patch.author_date))
+                if patch.related_to:
+                    patch_table.add_row("related", "\n".join(patch.related_to))
+                if patch.cherry_picked_from:
+                    patch_table.add_row(
+                        "cherry-picked from", "\n".join(patch.cherry_picked_from)
+                    )
+
+                _ = patch_tree.add(patch_table)
+                patches_table.add_row(Padding(patch_tree, (0, 0, 1, 0)))
+
+            patchset_table.add_row("patches", Group("", patches_table))
+
+            _ = patchset_tree.add(patchset_table)
+            patchsets_lst.append(patchset_tree)
+
+        patchsets_group = (
+            Group(*patchsets_lst) if patchsets_lst else Group("[bold red]None")
+        )
+
+        panel = Panel(
+            Group(
+                table, "", "[red]patch sets:", Padding(patchsets_group, (0, 0, 0, 2))
+            ),
+            box=rich.box.SQUARE,
+            title=f"Manifest {manifest.release_uuid}",
+        )
+        console.print(panel)
 
 
 @cmd_manifest.command("apply", help="Apply a release manifest.")
