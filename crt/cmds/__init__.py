@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Ceph Release Tool - helps with managing and releasing Ceph versions
 # Copyright (C) 2025  Clyso GmbH
 #
@@ -13,8 +11,29 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from pathlib import Path
 
-from cmds.crt import cmd_crt
+import click
+from crtlib.db import ReleasesDB
 
-if __name__ == "__main__":
-    cmd_crt()
+
+class Ctx:
+    db: ReleasesDB
+    github_token: str | None
+    ceph_git_path: Path | None
+
+    def __init__(self) -> None:
+        self.db = ReleasesDB(Path.cwd().joinpath(".releases"))
+        self.github_token = None
+        self.ceph_git_path = None
+
+    @property
+    def db_path(self) -> Path:
+        return self.db.db_path
+
+    @db_path.setter
+    def db_path(self, path: Path) -> None:
+        self.db.db_path = path
+
+
+pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
