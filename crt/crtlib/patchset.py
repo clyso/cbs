@@ -19,7 +19,12 @@ from pathlib import Path
 from typing import Annotated, Any, override
 
 import pydantic
-from crtlib.git import GitEmptyPatchDiffError, GitPatchDiffError, git_check_patches_diff
+from crtlib.git import (
+    SHA,
+    GitEmptyPatchDiffError,
+    GitPatchDiffError,
+    git_check_patches_diff,
+)
 from crtlib.logger import logger as parent_logger
 from crtlib.patch import AuthorData, Patch
 
@@ -62,6 +67,12 @@ class PatchSetCheckError(PatchSetError):
         return f"patch set check error: {self.msg}"
 
 
+class EmptyPatchSetError(PatchSetError):
+    @override
+    def __str__(self) -> str:
+        return "patch set is empty"
+
+
 class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
     """Represents a set of related patches."""
 
@@ -72,6 +83,14 @@ class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafe
     patches: list[Patch]
 
     patchset_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
+
+    @property
+    def get_base_sha(self) -> SHA:
+        if not self.patches:
+            raise EmptyPatchSetError(str(self.patchset_uuid))
+
+        first_patch = next(iter(self.patches))
+        return first_patch.parent
 
 
 class GitHubPullRequest(PatchSetBase):
@@ -113,7 +132,7 @@ def patchset_check_patches_diff(
 
     try:
         added, skipped = git_check_patches_diff(
-            ceph_git_path, base_ref, patchset_branch
+            ceph_git_path, base_ref, patchset_branch, limit=patchset.get_base_sha
         )
     except GitEmptyPatchDiffError:
         logger.warning(
