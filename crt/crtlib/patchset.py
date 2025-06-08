@@ -13,14 +13,13 @@
 
 
 import abc
-import re
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
-from typing import Annotated, Any, cast, override
+from typing import Annotated, Any, override
 
-import git
 import pydantic
+from crtlib.git import GitEmptyPatchDiffError, GitPatchDiffError, git_check_patches_diff
 from crtlib.logger import logger as parent_logger
 from crtlib.patch import AuthorData, Patch
 
@@ -55,6 +54,12 @@ class PatchSetMismatchError(PatchSetError):
     @override
     def __str__(self) -> str:
         return f"mismatch patch set type: {self.msg}"
+
+
+class PatchSetCheckError(PatchSetError):
+    @override
+    def __str__(self) -> str:
+        return f"patch set check error: {self.msg}"
 
 
 class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
@@ -101,57 +106,31 @@ class PatchSet(pydantic.BaseModel):
     ]
 
 
-def patchset_check_patches(
+def patchset_check_patches_diff(
     ceph_git_path: Path, patchset: PatchSetBase, patchset_branch: str, base_ref: str
 ) -> tuple[list[str], list[str]] | None:
-    repo = git.Repo(ceph_git_path)
+    logger.debug(f"check patchset branch '{patchset_branch}' against '{base_ref}'")
 
     try:
-        res = repo.git.execute(
-            ["git", "cherry", base_ref, patchset_branch],
-            with_extended_output=False,
-            as_process=False,
-            stdout_as_string=True,
+        added, skipped = git_check_patches_diff(
+            ceph_git_path, base_ref, patchset_branch
         )
-    except Exception:
-        logger.error(
-            f"unable to check patch diff between '{base_ref}' and '{patchset_branch}'"
-        )
-        raise Exception()
-
-    if not res:
-        logger.warning(f"empty diff between '{base_ref}' and '{patchset_branch}")
-        return None
-
-    patches_res = res.splitlines()
-    if len(patches_res) > len(patchset.patches):
+    except GitEmptyPatchDiffError:
         logger.warning(
-            f"potential wrong base ref '{base_ref}' for patch set '{patchset_branch}'"
+            f"empty patch diff between patchset '{patchset_branch}' and '{base_ref}'"
         )
         return None
+    except GitPatchDiffError as e:
+        msg = f"unable to check patchset '{patchset_branch}' against '{base_ref}': {e}"
+        logger.error(msg)
+        raise PatchSetCheckError(msg=msg) from None
 
-    patches_add: list[str] = []
-    patches_drop: list[str] = []
+    logger.debug(f"patchset '{patchset_branch}' add {added}")
+    logger.debug(f"patchset '{patchset_branch}' drop {skipped}")
 
-    entry_re = re.compile(r"^([-+])\s+(.*)$")
-    for entry in patches_res:
-        m = re.match(entry_re, entry)
-        if not m:
-            logger.error(f"unexpected entry format: {entry}")
-            continue
+    if len(added) + len(skipped) != len(patchset.patches):
+        msg = "missing patches from patchset diff"
+        logger.error(msg)
+        raise PatchSetCheckError(msg=msg)
 
-        action = cast(str, m.group(1))
-        sha = cast(str, m.group(2))
-
-        match action:
-            case "+":
-                patches_add.append(sha)
-            case "-":
-                patches_drop.append(sha)
-            case _:
-                logger.error(f"unexpected patch action '{action}' for sha '{sha}'")
-
-    logger.debug(f"patchset '{patchset_branch}' add {patches_add}")
-    logger.debug(f"patchset '{patchset_branch}' drop {patches_drop}")
-
-    return (patches_add, patches_drop)
+    return (added, skipped)

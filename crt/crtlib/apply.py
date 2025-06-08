@@ -13,17 +13,23 @@
 
 
 import datetime
-import re
 import sys
+import uuid
 from datetime import datetime as dt
 from pathlib import Path
-from typing import cast, override
+from typing import override
 
 import git
 from crtlib.db import ReleasesDB
+from crtlib.git import GitEmptyPatchDiffError, GitPatchDiffError, git_check_patches_diff
 from crtlib.logger import logger as parent_logger
 from crtlib.manifest import ReleaseManifest
-from crtlib.patchset import GitHubPullRequest, patchset_check_patches
+from crtlib.patch import Patch
+from crtlib.patchset import (
+    GitHubPullRequest,
+    PatchSetCheckError,
+    patchset_check_patches_diff,
+)
 
 logger = parent_logger.getChild("apply")
 
@@ -40,18 +46,63 @@ class ApplyError(Exception):
         return "error applying manifest" + (f": {self.msg}" if self.msg else "")
 
 
-def apply_manifest(
-    db: ReleasesDB, manifest: ReleaseManifest, ceph_git_path: Path, token: str
-) -> None:
-    # start new branch to apply manifest to.
-    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
-    branch_name = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
+def _check_patch_needed(repo_path: Path, sha: str) -> int:
+    try:
+        added, skipped = git_check_patches_diff(
+            repo_path, "HEAD", sha, limit=f"{sha}~1"
+        )
+    except GitEmptyPatchDiffError:
+        logger.warning(f"patch sha '{sha}' diff with HEAD is empty")
+        return 0
+    except GitPatchDiffError as e:
+        msg = f"unable to check if patch sha '{sha}' is needed in HEAD: {e}"
+        logger.error(msg)
+        raise ApplyError(msg=msg) from None
 
-    repo = git.Repo(ceph_git_path)
+    if len(added) + len(skipped) > 1:
+        msg = (
+            f"unexpected number of patches needed for sha '{sha}': added '{added}' "
+            + "skipped '{skipped}'"
+        )
+        logger.error(msg)
+        raise ApplyError(msg=msg)
 
-    logger.debug(f"branch: {branch_name}")
+    return 1 if added else -1 if skipped else 0
 
+
+def _prepare_remote(repo: git.Repo, token: str, org: str, repo_name: str) -> git.Remote:
+    remote_name = f"{org}/{repo_name}"
+    logger.debug(f"prepare remote name '{remote_name}'")
+    try:
+        remote = repo.remote(remote_name)
+    except ValueError:
+        remote_url = f"https://ceph-release-tool:{token}@github.com/{org}/{repo_name}"
+        remote = repo.create_remote(remote_name, remote_url)
+        logger.debug(f"create remote name: {remote_name}, url: {remote_url}")
+
+    logger.debug(f"update remote name '{remote_name}'")
+    _ = remote.update()
+    return remote
+
+
+def _checkout_ref(repo: git.Repo, ref: str, branch_name: str) -> git.Head:
+    logger.debug(f"checkout ref '{ref}' to '{branch_name}'")
+    assert branch_name not in repo.heads
+    try:
+        new_head = repo.create_head(branch_name, ref)
+    except Exception:
+        msg = f"unable to create new head '{branch_name}' " + f"from '{ref}'"
+        logger.exception(msg)
+        raise ApplyError(msg=msg) from None
+
+    repo.head.reference = new_head
+    _ = repo.head.reset(index=True, working_tree=True)
+    return new_head
+
+
+def _prepare_repo(repo: git.Repo):
     def _check_repo() -> None:
+        logger.debug("check repo's config user and email")
         for what in ["name", "email"]:
             try:
                 res = repo.git.execute(
@@ -70,110 +121,85 @@ def apply_manifest(
                 logger.error(msg)
                 raise ApplyError(msg=msg)
 
-    def _prepare_remote(org: str, repo_name: str) -> git.Remote:
-        remote_name = f"{org}/{repo_name}"
-        try:
-            remote = repo.remote(remote_name)
-        except ValueError:
-            remote_url = (
-                f"https://ceph-release-tool:{token}@github.com/{org}/{repo_name}"
-            )
-            remote = repo.create_remote(remote_name, remote_url)
-            logger.debug(f"create remote name: {remote_name}, url: {remote_url}")
-
-        logger.debug("update remote")
-        _ = remote.update()
+    def _prepare_repo() -> None:
         logger.debug("update submodules")
-        repo.git.execute(  # pyright: ignore[reportCallIssue]
-            ["git", "submodule", "update", "--init", "--recursive"],
-            output_stream=sys.stdout.buffer,
-            as_process=False,
-            with_stdout=True,
-        )
-        return remote
-
-    def _checkout_base_ref() -> git.Head:
-        assert branch_name not in repo.heads
         try:
-            new_head = repo.create_head(branch_name, manifest.base_ref)
-        except Exception:
-            msg = (
-                f"unable to create new head '{branch_name}' "
-                + f"from '{manifest.base_ref}'"
-            )
-            logger.exception(msg)
-            raise ApplyError(msg=msg) from None
-
-        repo.head.reference = new_head
-        _ = repo.head.reset(index=True, working_tree=True)
-        return new_head
-
-    def _prepare_patchsets() -> list[GitHubPullRequest]:
-        patchset_lst: list[GitHubPullRequest] = []
-        for patchset_uuid in manifest.patchsets:
-            try:
-                patchset = db.load_patchset(patchset_uuid)
-            except Exception as e:
-                raise e from None
-
-            if not isinstance(patchset, GitHubPullRequest):
-                continue
-
-            patchset_lst.append(patchset)
-            remote = _prepare_remote(patchset.org_name, patchset.repo_name)
-            pr_id = patchset.pull_request_id
-            src_ref = f"pull/{pr_id}/head"
-            dst_ref = f"patchset/gh/{patchset.org_name}/{patchset.repo_name}/{pr_id}"
-            _ = remote.fetch(f"{src_ref}:{dst_ref}")
-
-            _ = patchset_check_patches(
-                ceph_git_path, patchset, dst_ref, manifest.base_ref
-            )
-
-        return patchset_lst
-
-    def _check_patch_needed(sha: str) -> int:
-        try:
-            res = repo.git.execute(
-                ["git", "cherry", "HEAD", sha, f"{sha}~1"],
-                with_extended_output=False,
+            repo.git.execute(  # pyright: ignore[reportCallIssue]
+                ["git", "submodule", "update", "--init", "--recursive"],
+                output_stream=sys.stdout.buffer,
                 as_process=False,
-                stdout_as_string=True,
+                with_stdout=True,
             )
-        except Exception:
-            msg = f"unable to check patch diff between HEAD and sha '{sha}'"
+        except Exception as e:
+            msg = f"unable to update repository's submodules: {e}"
             logger.error(msg)
             raise ApplyError(msg=msg) from None
 
-        if not res:
-            logger.warning(f"empty diff between HEAD and sha '{sha}")
-            return 0
+    # propagate exceptions
+    _check_repo()
+    _prepare_repo()
 
-        patches_res = res.splitlines()
-        if len(patches_res) != 1:
-            logger.warning(
-                f"potential wrong base ref '{manifest.base_ref}' for patch sha '{sha}'"
+
+def _prepare_patchsets(
+    db: ReleasesDB,
+    repo_path: Path,
+    token: str,
+    patchset_uuid_lst: list[uuid.UUID],
+    base_ref: str,
+) -> list[GitHubPullRequest]:
+    logger.debug("prepare patchset list from manifest")
+
+    repo = git.Repo(repo_path)
+
+    patchset_lst: list[GitHubPullRequest] = []
+    for patchset_uuid in patchset_uuid_lst:
+        try:
+            patchset = db.load_patchset(patchset_uuid)
+        except Exception as e:
+            raise e from None
+
+        if not isinstance(patchset, GitHubPullRequest):
+            logger.debug(
+                f"patchset uuid '{patchset.patchset_uuid}' not a github patchset"
             )
-            return 0
+            continue
 
-        m = re.match(r"^([-+])\s+(.*)$", patches_res[0])
-        if not m:
-            logger.error(f"unexpected entry format: {patches_res[0]}")
-            return 0
+        patchset_lst.append(patchset)
+        remote = _prepare_remote(repo, token, patchset.org_name, patchset.repo_name)
+        pr_id = patchset.pull_request_id
+        src_ref = f"pull/{pr_id}/head"
+        dst_ref = f"patchset/gh/{patchset.org_name}/{patchset.repo_name}/{pr_id}"
+        _ = remote.fetch(f"{src_ref}:{dst_ref}")
 
-        action = cast(str, m.group(1))
-        sha = cast(str, m.group(2))
+        try:
+            _ = patchset_check_patches_diff(repo_path, patchset, dst_ref, base_ref)
+        except PatchSetCheckError as e:
+            msg = f"unable to check patchset patch diff: {e}"
+            logger.error(msg)
+            raise ApplyError(msg=msg) from None
 
-        match action:
-            case "+":
-                return 1
-            case "-":
-                return -1
-            case _:
-                logger.error(f"unexpected patch action '{action}' for sha '{sha}'")
-                return 0
+    return patchset_lst
 
-    def _apply_patchsets(patchsets: list[GitHubPullRequest]) -> None:
+
+def apply_manifest(
+    db: ReleasesDB, manifest: ReleaseManifest, ceph_git_path: Path, token: str
+) -> tuple[bool, list[Patch], list[Patch]]:
+    # start new branch to apply manifest to.
+    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    branch_name = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
+
+    repo = git.Repo(ceph_git_path)
+
+    logger.debug(f"branch: {branch_name}")
+
+    def _apply_patchsets(
+        patchsets: list[GitHubPullRequest],
+    ) -> tuple[list[Patch], list[Patch]]:
+        logger.debug(f"apply {len(patchsets)} patchsets")
+
+        skipped: list[Patch] = []
+        added: list[Patch] = []
+
         for patchset in patchsets:
             logger.debug(
                 f"apply patch set uuid '{patchset.patchset_uuid}', "
@@ -182,10 +208,11 @@ def apply_manifest(
             for patch in patchset.patches:
                 logger.debug(f"apply patch uuid '{patch.patch_uuid}' sha '{patch.sha}'")
 
-                if _check_patch_needed(patch.sha) <= 0:
+                if _check_patch_needed(ceph_git_path, patch.sha) <= 0:
                     logger.info(
                         f"patch uuid '{patch.patch_uuid}' sha '{patch.sha}' skipped"
                     )
+                    skipped.append(patch)
                     continue
 
                 try:
@@ -197,15 +224,29 @@ def apply_manifest(
                     )
                     logger.error(msg)
                     raise ApplyError(msg=msg) from None
-        pass
 
-    logger.debug("check repository requirements")
-    _check_repo()
-    logger.debug("prepare remote")
-    _remote = _prepare_remote(manifest.base_ref_org, manifest.base_ref_repo)
-    logger.debug("checkout branch")
-    _branch = _checkout_base_ref()
-    logger.debug("prepare patch sets")
-    patchsets = _prepare_patchsets()
-    logger.debug("apply patches")
-    _apply_patchsets(patchsets)
+                added.append(patch)
+
+        return (added, skipped)
+
+    try:
+        _prepare_repo(repo)
+        _remote = _prepare_remote(
+            repo, token, manifest.base_ref_org, manifest.base_ref_repo
+        )
+        _branch = _checkout_ref(repo, manifest.base_ref, branch_name)
+        patchsets = _prepare_patchsets(
+            db, ceph_git_path, token, manifest.patchsets, manifest.base_ref
+        )
+    except ApplyError as e:
+        msg = f"unable to apply manifest patchsets: {e}"
+        logger.error(msg)
+        raise ApplyError(msg=msg) from e
+
+    try:
+        added, skipped = _apply_patchsets(patchsets)
+    except ApplyError as e:
+        logger.error(f"unable to apply patchsets to '{branch_name}': {e}")
+        return (False, [], [])
+
+    return (len(added) > 0, added, skipped)

@@ -19,12 +19,16 @@ from pathlib import Path
 from typing import cast
 
 import click
-from crtlib.apply import apply_manifest
+from crtlib.apply import ApplyError, apply_manifest
 from crtlib.github import gh_get_pr
 from crtlib.manifest import MalformedManifestError, NoSuchManifestError
+from crtlib.patch import Patch
 from crtlib.patchset import GitHubPullRequest, NoSuchPatchSetError, PatchSetError
 
 from cmds import Ctx, pass_ctx
+from cmds import logger as parent_logger
+
+logger = parent_logger.getChild("patchset")
 
 
 @click.group("patchset", help="Handle patch sets.")
@@ -139,12 +143,36 @@ def cmd_patchset_add_gh(
             )
             sys.exit(errno.ENOTRECOVERABLE)
 
+    logger.debug(f"add patchset '{patchset.patchset_uuid}' to in-mem manifest")
+    if not manifest.add_patchset(patchset):
+        # FIXME: make this an output to console
+        logger.info(f"patchset '{patchset.patchset_uuid}' already in manifest")
+        return
+
     click.echo("apply patches to manifest's repository")
     try:
-        apply_manifest(db, manifest, ctx.ceph_git_path, ctx.github_token)
-    except Exception as e:
+        res, added, skipped = apply_manifest(
+            db, manifest, ctx.ceph_git_path, ctx.github_token
+        )
+    except ApplyError as e:
         click.echo(f"error: unable to apply manifest: {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
+
+    def _print_patches(lst: list[Patch]) -> None:
+        for patch in lst:
+            print(f"> {patch.title} ({patch.sha})")
+
+    if added:
+        print("patches added:")
+        _print_patches(added)
+
+    if skipped:
+        print("patches skipped:")
+        _print_patches(skipped)
+
+    if not res:
+        print("no patches added, skip patch set")
+        return
 
     try:
         db.store_manifest(manifest)

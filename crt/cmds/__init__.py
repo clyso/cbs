@@ -15,6 +15,9 @@ from pathlib import Path
 
 import click
 from crtlib.db import ReleasesDB
+from crtlib.logger import logger as parent_logger
+
+logger = parent_logger.getChild("cmds")
 
 
 class Ctx:
