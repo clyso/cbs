@@ -11,11 +11,13 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import sys
 from pathlib import Path
 
 import click
 from crtlib.db import ReleasesDB
 from crtlib.logger import logger as parent_logger
+from rich import print as rprint
 
 logger = parent_logger.getChild("cmds")
 
@@ -40,3 +42,15 @@ class Ctx:
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
+
+
+def perror(s: str) -> None:
+    rprint(f"[bold][red]error:[/red] {s}[/bold]", file=sys.stderr)
+
+
+def pinfo(s: str) -> None:
+    rprint(f"[cyan]{s}[/cyan]")
+
+
+def psuccess(s: str) -> None:
+    rprint(f"[bold green]{s}[/bold green]")

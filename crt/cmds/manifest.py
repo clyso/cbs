@@ -36,7 +36,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
-from cmds import Ctx, pass_ctx
+from cmds import Ctx, pass_ctx, perror
 
 console = Console()
 
@@ -84,7 +84,7 @@ def _get_manifests_from_uuids(
 def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -> None:
     m = re.match(r"(?:(.+)@)?([\w\d_.-]+)", base_ref)
     if not m:
-        click.echo("error: malformed BASE_REF")
+        perror("malformed BASE_REF")
         sys.exit(errno.EINVAL)
 
     base_repo_str = cast(str | None, m.group(1))
@@ -94,7 +94,7 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
 
     m = re.match(r"([\w\d_.-]+)/([\w\d_.-]+)", base_repo_str)
     if not m:
-        click.echo("error: malformed REPO")
+        perror("malformed REPO")
         sys.exit(errno.EINVAL)
 
     base_repo_org = cast(str, m.group(1))
@@ -110,17 +110,15 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
 
     manifest_path = ctx.db.manifests_path.joinpath(f"{manifest.release_uuid}.json")
     if manifest_path.exists():
-        click.echo(
-            "error: conflicting manifest UUID, "
-            + f"'{manifest.release_uuid}' already exists",
-            err=True,
+        perror(
+            "conflicting manifest UUID, " + f"'{manifest.release_uuid}' already exists",
         )
         sys.exit(errno.EEXIST)
 
     try:
         ctx.db.store_manifest(manifest)
     except Exception as e:
-        click.echo(f"error: unable to write manifest to disk: {e}")
+        perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     table = _gen_rich_manifest_table(manifest)
@@ -172,9 +170,8 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
             try:
                 patchset = db.load_patchset(patchset_uuid)
             except (PatchSetError, Exception) as e:
-                click.echo(
-                    f"error: unable to load patch set uuid '{patchset_uuid}': {e}",
-                    err=True,
+                perror(
+                    f"unable to load patch set uuid '{patchset_uuid}': {e}",
                 )
                 sys.exit(errno.ENOTRECOVERABLE)
 
@@ -250,17 +247,16 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
     help="Path to ceph git repository.",
 )
 @pass_ctx
-def cmd_manifest_apply(
-    ctx: Ctx, manifest_uuid: uuid.UUID, _ceph_git_path: Path
-) -> None:
+def cmd_manifest_apply(ctx: Ctx, manifest_uuid: uuid.UUID, ceph_git_path: Path) -> None:
+    logger.debug(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_git_path}'")
     try:
         _manifest = ctx.db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
-        click.echo(f"error: unable to find manifest '{manifest_uuid}'", err=True)
+        perror(f"unable to find manifest '{manifest_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        click.echo(f"error: malformed manifest '{manifest_uuid}'", err=True)
+        perror(f"malformed manifest '{manifest_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        click.echo(f"error: unable to load manifest '{manifest_uuid}': {e}", err=True)
+        perror(f"unable to load manifest '{manifest_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)

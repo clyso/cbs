@@ -19,13 +19,14 @@ from pathlib import Path
 from typing import cast
 
 import click
+from rich.tree import Tree
 from crtlib.apply import ApplyError, apply_manifest
 from crtlib.github import gh_get_pr
 from crtlib.manifest import MalformedManifestError, NoSuchManifestError
 from crtlib.patch import Patch
 from crtlib.patchset import GitHubPullRequest, NoSuchPatchSetError, PatchSetError
 
-from cmds import Ctx, pass_ctx
+from cmds import Ctx, pass_ctx, perror, pinfo, psuccess
 from cmds import logger as parent_logger
 
 logger = parent_logger.getChild("patchset")
@@ -49,15 +50,11 @@ def cmd_patchset() -> None:
 @pass_ctx
 def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
     if not ceph_git_path.joinpath(".git").exists():
-        click.echo(
-            f"error: path at '{ceph_git_path}' is not a git repository", err=True
-        )
+        perror(f"path at '{ceph_git_path}' is not a git repository")
         sys.exit(errno.EINVAL)
 
     if not ceph_git_path.joinpath("ceph.spec.in").exists():
-        click.echo(
-            f"error: path at '{ceph_git_path}' is not a ceph repository", err=True
-        )
+        perror(f"path at '{ceph_git_path}' is not a ceph repository")
         sys.exit(errno.EINVAL)
 
     ctx.ceph_git_path = ceph_git_path
@@ -92,12 +89,12 @@ def cmd_patchset_add_gh(
     ctx: Ctx, pr_id: int, manifest_uuid: uuid.UUID, repo: str
 ) -> None:
     if not ctx.ceph_git_path or not ctx.github_token:
-        click.echo("error: missing token or ceph git path", err=True)
+        perror("error: missing token or ceph git path")
         sys.exit(errno.EINVAL)
 
     m = re.match(r"([\w\d_.-]+)/([\w\d_.-]+)", repo)
     if not m:
-        click.echo("error: malformed ORG/REPO", err=True)
+        perror("error: malformed ORG/REPO")
         sys.exit(errno.EINVAL)
 
     org = cast(str, m.group(1))
@@ -108,74 +105,73 @@ def cmd_patchset_add_gh(
     try:
         manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
-        click.echo(f"error: unable to find manifest '{manifest_uuid}' in db", err=True)
+        perror(f"error: unable to find manifest '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        click.echo(f"error: malformed manifest '{manifest_uuid}'", err=True)
+        perror(f"error: malformed manifest '{manifest_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        click.echo(f"error: unable to obtain manifest '{manifest_uuid}': {e}", err=True)
+        perror(f"error: unable to obtain manifest '{manifest_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     patchset: GitHubPullRequest | None = None
     try:
         patchset = db.load_gh_pr(org, repo_name, pr_id)
     except NoSuchPatchSetError:
-        click.echo("patch set not found, obtain from github")
+        pinfo("patch set not found, obtain from github")
     except PatchSetError as e:
-        click.echo(f"error: unable to obtain patch set: {e}")
+        perror(f"unable to obtain patch set: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
     except Exception as e:
-        click.echo(f"error: {e}", err=True)
+        perror(f"error: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     if not patchset:
         patchset = gh_get_pr(org, repo_name, pr_id, token=ctx.github_token)
-        click.echo(f"patchset:\n{patchset}")
+        logger.debug(f"obtained patchset: {patchset}")
 
         try:
             db.store_gh_patchset(patchset)
         except Exception as e:
-            click.echo(
-                f"error: unable to write patch set '{patchset.patchset_uuid}' "
-                + f"to disk: {e}",
-                err=True,
+            perror(
+                f"unable to write patch set '{patchset.patchset_uuid}' "
+                + f"to disk: {e}"
             )
             sys.exit(errno.ENOTRECOVERABLE)
 
     logger.debug(f"add patchset '{patchset.patchset_uuid}' to in-mem manifest")
     if not manifest.add_patchset(patchset):
-        # FIXME: make this an output to console
-        logger.info(f"patchset '{patchset.patchset_uuid}' already in manifest")
+        pinfo(f"patchset '{patchset.patchset_uuid}' already in manifest")
         return
 
-    click.echo("apply patches to manifest's repository")
+    pinfo("apply patches to manifest's repository")
     try:
         res, added, skipped = apply_manifest(
             db, manifest, ctx.ceph_git_path, ctx.github_token
         )
     except ApplyError as e:
-        click.echo(f"error: unable to apply manifest: {e}", err=True)
+        perror(f"error: unable to apply manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    def _print_patches(lst: list[Patch]) -> None:
+    def _print_patch_tree(what: str, lst: list[Patch]) -> None:
+        tree = Tree(f"\u29bf {what}:")
         for patch in lst:
-            print(f"> {patch.title} ({patch.sha})")
+            _ = tree.add(f"{patch.title} ({patch.sha})")
 
     if added:
-        print("patches added:")
-        _print_patches(added)
+        _print_patch_tree("patches added", added)
 
     if skipped:
-        print("patches skipped:")
-        _print_patches(skipped)
+        _print_patch_tree("patches skipped", skipped)
 
     if not res:
-        print("no patches added, skip patch set")
+        pinfo("no patches added, skip patch set")
         return
 
     try:
         db.store_manifest(manifest)
     except Exception as e:
-        click.echo(f"error: unable to write manifest '{manifest_uuid}' to db: {e}")
+        perror(f"unable to write manifest '{manifest_uuid}' to db: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"pr id '{pr_id}' added to manifest '{manifest_uuid}'")
