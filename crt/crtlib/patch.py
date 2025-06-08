@@ -16,8 +16,7 @@ from datetime import datetime as dt
 from typing import override
 
 import pydantic
-
-SHA = str
+from crtlib.git import SHA
 
 
 class PatchError(Exception):
@@ -74,6 +73,7 @@ class Patch(pydantic.BaseModel):
     message: str
     cherry_picked_from: list[str]
     related_to: list[str]
+    parent: SHA
 
     repo_url: str
     patch_id: SHA

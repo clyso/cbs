@@ -22,6 +22,9 @@ from crtlib.logger import logger as parent_logger
 logger = parent_logger.getChild("git")
 
 
+SHA = str
+
+
 class GitPatchDiffError(CRTError):
     @override
     def __str__(self) -> str:
@@ -34,10 +37,10 @@ class GitEmptyPatchDiffError(GitPatchDiffError):
 
 def git_check_patches_diff(
     ceph_git_path: Path,
-    upstream_ref: str,
-    head_ref: str,
+    upstream_ref: str | SHA,
+    head_ref: str | SHA,
     *,
-    limit: str | None = None,
+    limit: str | SHA | None = None,
 ) -> tuple[list[str], list[str]]:
     logger.debug(
         f"check ref '{head_ref}' against upstream '{upstream_ref}', limit '{limit}'"

@@ -16,14 +16,22 @@ import re
 import sys
 import uuid
 from datetime import datetime as dt
+from typing import override
 
 import httpx
 import pydantic
+from crtlib.errors import CRTError
 from crtlib.logger import logger as parent_logger
 from crtlib.patch import AuthorData, Patch
 from crtlib.patchset import GitHubPullRequest
 
 logger = parent_logger.getChild("gh")
+
+
+class GitHubError(CRTError):
+    @override
+    def __str__(self) -> str:
+        return "github error" + (f": {self.msg}" if self.msg else "")
 
 
 class _GitHubUser(pydantic.BaseModel):
@@ -67,9 +75,14 @@ class _GitHubCommitInfo(pydantic.BaseModel):
     message: str
 
 
+class _GitHubCommitParent(pydantic.BaseModel):
+    sha: str
+
+
 class _GitHubCommit(pydantic.BaseModel):
     sha: str
     commit: _GitHubCommitInfo
+    parents: list[_GitHubCommitParent]
 
 
 class _GitHubMessageBody(pydantic.BaseModel):
@@ -124,6 +137,11 @@ def _gh_commit_to_patch(
     title = "<no title>" if not commit_message_body.title else commit_message_body.title
     # click.echo(f"commit message body: {commit_message_body}")
 
+    if len(commit.parents) > 1:
+        raise GitHubError(msg="multiple parents found, merge commit?")
+
+    parent = next(iter(commit.parents)).sha
+
     return Patch(
         sha=commit.sha,
         author=AuthorData(
@@ -142,6 +160,7 @@ def _gh_commit_to_patch(
         related_to=commit_message_body.fixes,
         # FIXME: calc patch id
         repo_url=repo_url,
+        parent=parent,
         patch_id="qwe",
         patchset_uuid=patchset_uuid,
     )

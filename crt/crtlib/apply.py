@@ -217,12 +217,13 @@ def apply_manifest(
 
                 try:
                     repo.git.cherry_pick("-x", "-s", patch.sha)  # pyright: ignore[reportAny]
-                except git.CommandError:
+                except git.CommandError as e:
                     msg = (
                         f"unable to cherry-pick uuid '{patch.patch_uuid}' "
                         + f"sha '{patch.sha}'"
                     )
                     logger.error(msg)
+                    logger.error(e.stderr)
                     raise ApplyError(msg=msg) from None
 
                 added.append(patch)
