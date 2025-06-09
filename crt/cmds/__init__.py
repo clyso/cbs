@@ -11,13 +11,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import sys
 from pathlib import Path
 
 import click
 from crtlib.db import ReleasesDB
 from crtlib.logger import logger as parent_logger
-from rich import print as rprint
+from rich.console import Console
+from rich.highlighter import RegexHighlighter
+from rich.theme import Theme
 
 logger = parent_logger.getChild("cmds")
 
@@ -44,13 +45,40 @@ class Ctx:
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
 
 
+class _CRTHighlighter(RegexHighlighter):
+    base_style: str = "crt."
+    highlights: list[str] = [  # noqa: RUF012
+        r"(?P<uuid>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})",
+        r"(?P<sha>[a-f0-9]{40})",
+    ]
+
+
+_theme = Theme(
+    {
+        "crt.uuid": "gold1",
+        "crt.sha": "purple",
+    }
+)
+console = Console(highlighter=_CRTHighlighter(), theme=_theme)
+
+
 def perror(s: str) -> None:
-    rprint(f"[bold][red]error:[/red] {s}[/bold]", file=sys.stderr)
+    console.print(
+        f"[bold][red]error:[/red] {s}[/bold]",
+    )
 
 
 def pinfo(s: str) -> None:
-    rprint(f"[cyan]{s}[/cyan]")
+    console.print(s, style="cyan")
 
 
 def psuccess(s: str) -> None:
-    rprint(f"[bold green]{s}[/bold green]")
+    console.print(s, style="bold green")
+
+
+def pwarn(s: str) -> None:
+    console.print(f"[bold yellow]warning:[/bold yellow] {s}")
+
+
+def rprint(s: str) -> None:
+    console.print(s)
