@@ -1,4 +1,4 @@
-# crt - patch
+# crt - models - patch
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,45 +13,9 @@
 
 import uuid
 from datetime import datetime as dt
-from typing import override
 
 import pydantic
 from crtlib.git import SHA
-
-
-class PatchError(Exception):
-    msg: str
-
-    def __init__(self, msg: str) -> None:
-        super().__init__()
-        self.msg = msg
-
-
-class PatchExistsError(PatchError):
-    def __init__(self, sha: str, patch_uuid: uuid.UUID) -> None:
-        super().__init__(msg=f"sha'{sha}' uuid '{patch_uuid}'")
-
-    @override
-    def __str__(self) -> str:
-        return f"patch already exists: {self.msg}"
-
-
-class NoSuchPatchError(PatchError):
-    def __init__(self, patch_uuid: uuid.UUID) -> None:
-        super().__init__(msg=f"uuid '{patch_uuid}'")
-
-    @override
-    def __str__(self) -> str:
-        return f"patch not found: {self.msg}"
-
-
-class MalformedPatchError(PatchError):
-    def __init__(self, patch_uuid: uuid.UUID) -> None:
-        super().__init__(msg=f"uuid '{patch_uuid}'")
-
-    @override
-    def __str__(self) -> str:
-        return f"malformed patch: {self.msg}"
 
 
 class AuthorData(pydantic.BaseModel):

@@ -1,4 +1,4 @@
-# crt - Ceph Release Tool library
+# crt - errors - release manifest
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,17 +11,27 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-
+import uuid
 from typing import override
 
+from crtlib.errors import CRTError
 
-class CRTError(Exception):
-    msg: str | None
 
-    def __init__(self, msg: str | None = None):
+class ManifestError(CRTError):
+    manifest_uuid: uuid.UUID
+
+    def __init__(self, _uuid: uuid.UUID) -> None:
         super().__init__()
-        self.msg = msg
+        self.manifest_uuid = _uuid
 
+
+class NoSuchManifestError(ManifestError):
     @override
     def __str__(self) -> str:
-        return "CRT error" + (f": {self.msg}" if self.msg else "")
+        return f"no such manifest '{self.manifest_uuid}'"
+
+
+class MalformedManifestError(ManifestError):
+    @override
+    def __str__(self) -> str:
+        return f"malformed manifest '{self.manifest_uuid}'"

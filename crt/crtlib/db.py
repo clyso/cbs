@@ -17,17 +17,25 @@ import uuid
 from pathlib import Path
 
 import pydantic
-from crtlib.logger import logger as parent_logger
-from crtlib.manifest import MalformedManifestError, NoSuchManifestError, ReleaseManifest
-from crtlib.patch import MalformedPatchError, NoSuchPatchError, Patch, PatchExistsError
-from crtlib.patchset import (
-    GitHubPullRequest,
+from crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
+from crtlib.errors.patch import (
+    MalformedPatchError,
+    NoSuchPatchError,
+    PatchExistsError,
+)
+from crtlib.errors.patchset import (
     MalformedPatchSetError,
     NoSuchPatchSetError,
-    PatchSet,
-    PatchSetBase,
     PatchSetError,
     PatchSetMismatchError,
+)
+from crtlib.logger import logger as parent_logger
+from crtlib.models.manifest import ReleaseManifest
+from crtlib.models.patch import Patch
+from crtlib.models.patchset import (
+    GitHubPullRequest,
+    PatchSet,
+    PatchSetBase,
 )
 
 logger = parent_logger.getChild("db")

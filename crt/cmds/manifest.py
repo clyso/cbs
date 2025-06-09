@@ -21,24 +21,26 @@ from typing import cast
 
 import click
 import rich.box
+from crtlib.apply import ApplyConflictError, ApplyError, apply_manifest
 from crtlib.db import ReleasesDB
-from crtlib.logger import logger
-from crtlib.manifest import (
+from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
     NoSuchManifestError,
-    ReleaseManifest,
 )
-from crtlib.patchset import GitHubPullRequest, PatchSetError
-from rich.console import Console, Group, RenderableType
+from crtlib.errors.patchset import PatchSetError
+from crtlib.models.manifest import ReleaseManifest
+from crtlib.models.patchset import GitHubPullRequest
+from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
-from cmds import Ctx, pass_ctx, perror
+from cmds import Ctx, console, pass_ctx, perror, pinfo
+from cmds import logger as parent_logger
 
-console = Console()
+logger = parent_logger.getChild("manifest")
 
 
 def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
@@ -80,8 +82,19 @@ def _get_manifests_from_uuids(
 @click.argument("name", type=str, required=True, metavar="NAME")
 @click.argument("base_release", type=str, required=True, metavar="BASE_RELEASE")
 @click.argument("base_ref", type=str, required=True, metavar="[REPO@]REF")
+@click.option(
+    "-r",
+    "--dst-repo",
+    type=str,
+    required=False,
+    metavar="ORG/REPO",
+    default="clyso/ceph",
+    help="Destination repository.",
+)
 @pass_ctx
-def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -> None:
+def cmd_manifest_create(
+    ctx: Ctx, name: str, base_release: str, base_ref: str, dst_repo: str
+) -> None:
     m = re.match(r"(?:(.+)@)?([\w\d_.-]+)", base_ref)
     if not m:
         perror("malformed BASE_REF")
@@ -92,13 +105,19 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
     if not base_repo_str:
         base_repo_str = "clyso/ceph"
 
-    m = re.match(r"([\w\d_.-]+)/([\w\d_.-]+)", base_repo_str)
+    repo_re = re.compile(r"([\w\d_.-]+)/([\w\d_.-]+)")
+
+    m = re.match(repo_re, base_repo_str)
     if not m:
-        perror("malformed REPO")
+        perror("malformed base reference REPO")
         sys.exit(errno.EINVAL)
 
     base_repo_org = cast(str, m.group(1))
     base_repo = cast(str, m.group(2))
+
+    if not re.match(repo_re, dst_repo):
+        perror("malformed destination repository, use 'ORG/REPO'")
+        sys.exit(errno.EINVAL)
 
     manifest = ReleaseManifest(
         name=name,
@@ -106,6 +125,7 @@ def cmd_manifest_create(ctx: Ctx, name: str, base_release: str, base_ref: str) -
         base_ref_org=base_repo_org,
         base_ref_repo=base_repo,
         base_ref=base_ref_str,
+        dst_repo=dst_repo,
     )
 
     manifest_path = ctx.db.manifests_path.joinpath(f"{manifest.release_uuid}.json")
@@ -246,11 +266,39 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
     required=True,
     help="Path to ceph git repository.",
 )
+@click.option(
+    "-r",
+    "--repo",
+    type=str,
+    required=False,
+    default="clyso/ceph",
+    metavar="ORG/REPO",
+    help="Repository to push to.",
+)
+@click.option(
+    "--push", is_flag=True, required=False, default=False, help="Push to repository."
+)
 @pass_ctx
-def cmd_manifest_apply(ctx: Ctx, manifest_uuid: uuid.UUID, ceph_git_path: Path) -> None:
+def cmd_manifest_apply(
+    ctx: Ctx,
+    manifest_uuid: uuid.UUID,
+    ceph_git_path: Path,
+    repo: str,
+    push: bool,
+) -> None:
     logger.debug(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_git_path}'")
+    logger.debug(f"push to repository: {push}, repository: {repo}")
+
+    if not ctx.github_token:
+        perror("missing github token")
+        sys.exit(errno.EINVAL)
+
+    if not re.match(r"^[\w_.-]+/[\w_.-]+", repo):
+        perror("malformed repository, use ORG/REPO")
+        sys.exit(errno.EINVAL)
+
     try:
-        _manifest = ctx.db.load_manifest(manifest_uuid)
+        manifest = ctx.db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}'")
         sys.exit(errno.ENOENT)
@@ -259,4 +307,26 @@ def cmd_manifest_apply(ctx: Ctx, manifest_uuid: uuid.UUID, ceph_git_path: Path) 
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    pinfo("apply manifest")
+    try:
+        res, added, skipped = apply_manifest(
+            ctx.db,
+            manifest,
+            ceph_git_path,
+            ctx.github_token,
+            "asd",
+            no_cleanup=True,
+        )
+    except ApplyConflictError as e:
+        perror(f"{len(e.conflict_files)} file conflicts found applying manifest")
+        pinfo(f"[bold]on sha '{e.sha}':[/bold]")
+        for file in e.conflict_files:
+            pinfo(f"\u203a {file}")
+
+        sys.exit(errno.EAGAIN)
+
+    except ApplyError as e:
+        perror(f"unable to apply manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

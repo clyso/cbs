@@ -11,78 +11,39 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import datetime
-import string
-import uuid
-from datetime import datetime as dt
-from random import choices
-from typing import override
 
-import pydantic
-from crtlib.patchset import PatchSetBase
+from pathlib import Path
 
+from crtlib.apply import apply_manifest
+from crtlib.db import ReleasesDB
+from crtlib.logger import logger as parent_logger
+from crtlib.models.manifest import ReleaseManifest
 
-class ManifestError(Exception):
-    manifest_uuid: uuid.UUID
-
-    def __init__(self, _uuid: uuid.UUID) -> None:
-        super().__init__()
-        self.manifest_uuid = _uuid
+logger = parent_logger.getChild("manifest")
 
 
-class NoSuchManifestError(ManifestError):
-    @override
-    def __str__(self) -> str:
-        return f"no such manifest '{self.manifest_uuid}'"
+def manifest_apply(
+    db: ReleasesDB,
+    manifest: ReleaseManifest,
+    repo_path: Path,
+    token: str,
+    repo: str,
+    push: bool,
+) -> None:
+    logger.debug(f"apply manifest '{manifest.release_uuid}' to repo '{repo}'")
 
+    target_branch = f"{manifest.name}-{manifest.release_git_uid}"
 
-class MalformedManifestError(ManifestError):
-    @override
-    def __str__(self) -> str:
-        return f"malformed manifest '{self.manifest_uuid}'"
-
-
-class ReleaseManifest(pydantic.BaseModel):
-    name: str
-    base_release_name: str
-    base_ref_org: str
-    base_ref_repo: str
-    base_ref: str
-
-    patchsets: list[uuid.UUID] = pydantic.Field(default=[])
-
-    creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
-    release_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
-    release_git_uid: str = pydantic.Field(
-        default_factory=lambda: "".join(choices(string.ascii_letters, k=6))  # noqa: S311
+    # propagate exceptions
+    res, added, skipped = apply_manifest(
+        db, manifest, repo_path, token, target_branch, no_cleanup=True
     )
 
-    def contains_patchset(self, patchset: PatchSetBase) -> bool:
-        """Check if the release manifest contains a given patch set."""
-        return patchset.patchset_uuid in self.patchsets
+    logger.debug(f"manifest '{manifest.release_uuid}' applied to '{target_branch}'")
+    logger.debug(f"patches added: {len(added)}, skipped: {len(skipped)}")
 
-    def add_patchset(self, patchset: PatchSetBase) -> bool:
-        """
-        Add a patch set to this release manifest.
+    if not res:
+        logger.debug(f"no patches added to '{target_branch}', skip pushing.")
+        return
 
-        Returns a tuple containing:
-        - `bool`, indicating whether the patch set was added or not.
-        - `list[Patch]`, with the patches that were added to the release manifest.
-        - `list[Patch]`, with the patches that were skipped and not added to the
-                         release manifest.
-        """
-        if self.contains_patchset(patchset):
-            return False
-
-        self.patchsets.append(patchset.patchset_uuid)
-        return True
-
-    def gen_header(self) -> list[tuple[str, str]]:
-        return [
-            ("name", self.name),
-            ("base release", self.base_release_name),
-            ("base repository", f"{self.base_ref_org}/{self.base_ref_repo}"),
-            ("base ref", self.base_ref),
-            ("creation date", str(self.creation_date)),
-            ("manifest uuid", str(self.release_uuid)),
-        ]
+    pass
