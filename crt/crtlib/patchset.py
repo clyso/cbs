@@ -12,117 +12,18 @@
 # GNU General Public License for more details.
 
 
-import abc
-import uuid
-from datetime import datetime as dt
 from pathlib import Path
-from typing import Annotated, Any, override
 
-import pydantic
+from crtlib.errors.patchset import PatchSetCheckError
 from crtlib.git import (
-    SHA,
     GitEmptyPatchDiffError,
     GitPatchDiffError,
     git_check_patches_diff,
 )
 from crtlib.logger import logger as parent_logger
-from crtlib.patch import AuthorData, Patch
+from crtlib.models.patchset import PatchSetBase
 
 logger = parent_logger.getChild("patchset")
-
-
-class PatchSetError(Exception):
-    msg: str
-
-    def __init__(self, msg: str) -> None:
-        super().__init__()
-        self.msg = msg
-
-    @override
-    def __str__(self) -> str:
-        return f"patch set error: {self.msg}"
-
-
-class NoSuchPatchSetError(PatchSetError):
-    @override
-    def __str__(self) -> str:
-        return f"patch set does not exists: {self.msg}"
-
-
-class MalformedPatchSetError(PatchSetError):
-    @override
-    def __str__(self) -> str:
-        return f"malformed patch set: {self.msg}"
-
-
-class PatchSetMismatchError(PatchSetError):
-    @override
-    def __str__(self) -> str:
-        return f"mismatch patch set type: {self.msg}"
-
-
-class PatchSetCheckError(PatchSetError):
-    @override
-    def __str__(self) -> str:
-        return f"patch set check error: {self.msg}"
-
-
-class EmptyPatchSetError(PatchSetError):
-    @override
-    def __str__(self) -> str:
-        return "patch set is empty"
-
-
-class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
-    """Represents a set of related patches."""
-
-    author: AuthorData
-    creation_date: dt
-    title: str
-    related_to: list[str]
-    patches: list[Patch]
-
-    patchset_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
-
-    @property
-    def get_base_sha(self) -> SHA:
-        if not self.patches:
-            raise EmptyPatchSetError(str(self.patchset_uuid))
-
-        first_patch = next(iter(self.patches))
-        return first_patch.parent
-
-
-class GitHubPullRequest(PatchSetBase):
-    """Represents a GitHub Pull Request, containing one or more patches."""
-
-    org_name: str
-    repo_name: str
-    repo_url: str
-    pull_request_id: int
-    merge_date: dt | None
-    merged: bool
-    target_branch: str
-
-
-def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny, reportAny]
-    if isinstance(v, GitHubPullRequest):
-        return "gh"
-    elif isinstance(v, dict):
-        if "pull_request_id" in v:
-            return "gh"
-        else:
-            return "vanilla"
-    else:
-        return "vanilla"
-
-
-class PatchSet(pydantic.BaseModel):
-    info: Annotated[
-        Annotated[GitHubPullRequest, pydantic.Tag("gh")]
-        | Annotated[PatchSetBase, pydantic.Tag("vanilla")],
-        pydantic.Discriminator(_patchset_discriminator),
-    ]
 
 
 def patchset_check_patches_diff(

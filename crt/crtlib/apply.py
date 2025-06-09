@@ -21,6 +21,10 @@ from typing import override
 
 import git
 from crtlib.db import ReleasesDB
+from crtlib.errors.patchset import (
+    PatchSetCheckError,
+    PatchSetExistsError,
+)
 from crtlib.git import (
     SHA,
     GitCherryPickConflictError,
@@ -32,11 +36,13 @@ from crtlib.git import (
     git_cherry_pick,
 )
 from crtlib.logger import logger as parent_logger
-from crtlib.manifest import ReleaseManifest
-from crtlib.patch import Patch
-from crtlib.patchset import (
+from crtlib.models.manifest import ReleaseManifest
+from crtlib.models.patch import Patch
+from crtlib.models.patchset import (
     GitHubPullRequest,
-    PatchSetCheckError,
+    PatchSetBase,
+)
+from crtlib.patchset import (
     patchset_check_patches_diff,
 )
 
@@ -205,24 +211,23 @@ def apply_manifest(
     manifest: ReleaseManifest,
     ceph_git_path: Path,
     token: str,
+    target_branch: str,
     *,
     no_cleanup: bool = False,
 ) -> tuple[bool, list[Patch], list[Patch]]:
-    # start new branch to apply manifest to.
-    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
-    branch_name = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
-
     repo = git.Repo(ceph_git_path)
 
-    logger.debug(f"branch: {branch_name}")
+    logger.debug(
+        f"apply manifest '{manifest.release_uuid}' to branch '{target_branch}'"
+    )
 
     def _cleanup(*, abort_cherrypick: bool = False) -> None:
-        logger.debug(f"cleanup state, branch '{branch_name}'")
+        logger.debug(f"cleanup state, branch '{target_branch}'")
         if abort_cherrypick:
             git_abort_cherry_pick(ceph_git_path)
 
         repo.head.reference = repo.heads.main
-        repo.git.branch("-D", branch_name)  # pyright: ignore[reportAny]
+        repo.git.branch("-D", target_branch)  # pyright: ignore[reportAny]
 
     def _apply_patchsets(
         patchsets: list[GitHubPullRequest],
@@ -268,7 +273,7 @@ def apply_manifest(
         _remote = _prepare_remote(
             repo, token, manifest.base_ref_org, manifest.base_ref_repo
         )
-        _branch = _checkout_ref(repo, manifest.base_ref, branch_name)
+        _branch = _checkout_ref(repo, manifest.base_ref, target_branch)
         patchsets = _prepare_patchsets(
             db, ceph_git_path, token, manifest.patchsets, manifest.base_ref
         )
@@ -286,7 +291,7 @@ def apply_manifest(
     except GitCherryPickConflictError as e:
         raise ApplyConflictError(e.sha, e.conflicts) from None
     except ApplyError as e:
-        logger.error(f"unable to apply patchsets to '{branch_name}': {e}")
+        logger.error(f"unable to apply patchsets to '{target_branch}': {e}")
         return (False, [], [])
     else:
         abort_cherrypick = False
@@ -295,3 +300,28 @@ def apply_manifest(
             _cleanup(abort_cherrypick=abort_cherrypick)
 
     return (len(added) > 0, added, skipped)
+
+
+def patchset_apply_to_manifest(
+    db: ReleasesDB,
+    orig_manifest: ReleaseManifest,
+    patchset: PatchSetBase,
+    repo_path: Path,
+    token: str,
+) -> tuple[bool, list[Patch], list[Patch]]:
+    manifest = orig_manifest.model_copy(deep=True)
+    if not manifest.add_patchset(patchset):
+        raise PatchSetExistsError(msg=f"uuid '{patchset.patchset_uuid}'")
+
+    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    target_branch = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
+
+    # propagate exceptions to caller
+    return apply_manifest(
+        db,
+        manifest,
+        repo_path,
+        token,
+        target_branch,
+        no_cleanup=False,
+    )
