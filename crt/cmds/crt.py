@@ -15,9 +15,11 @@ import logging
 from pathlib import Path
 
 import click
-from crtlib.logger import logger
 
 from cmds import Ctx, manifest, pass_ctx, patchset
+from cmds import logger as parent_logger
+
+logger = parent_logger.getChild("crt")
 
 
 @click.group()
