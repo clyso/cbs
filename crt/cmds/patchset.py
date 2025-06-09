@@ -19,12 +19,12 @@ from pathlib import Path
 from typing import cast
 
 import click
-from rich.tree import Tree
-from crtlib.apply import ApplyError, apply_manifest
+from crtlib.apply import ApplyConflictError, ApplyError, apply_manifest
 from crtlib.github import gh_get_pr
 from crtlib.manifest import MalformedManifestError, NoSuchManifestError
 from crtlib.patch import Patch
 from crtlib.patchset import GitHubPullRequest, NoSuchPatchSetError, PatchSetError
+from rich.tree import Tree
 
 from cmds import Ctx, pass_ctx, perror, pinfo, psuccess
 from cmds import logger as parent_logger
@@ -147,10 +147,25 @@ def cmd_patchset_add_gh(
     pinfo("apply patches to manifest's repository")
     try:
         res, added, skipped = apply_manifest(
-            db, manifest, ctx.ceph_git_path, ctx.github_token
+            db,
+            manifest,
+            ctx.ceph_git_path,
+            ctx.github_token,
+            no_cleanup=False,
         )
+    except ApplyConflictError as e:
+        perror(
+            f"{len(e.conflict_files)} file conflicts found "
+            + "applying patch set to manifest"
+        )
+        pinfo(f"[bold]on sha '{e.sha}':[/bold]")
+        for file in e.conflict_files:
+            pinfo(f"\u203a {file}")
+
+        sys.exit(errno.EAGAIN)
+
     except ApplyError as e:
-        perror(f"error: unable to apply manifest: {e}")
+        perror(f"unable to apply manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     def _print_patch_tree(what: str, lst: list[Patch]) -> None:

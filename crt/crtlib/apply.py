@@ -21,7 +21,16 @@ from typing import override
 
 import git
 from crtlib.db import ReleasesDB
-from crtlib.git import GitEmptyPatchDiffError, GitPatchDiffError, git_check_patches_diff
+from crtlib.git import (
+    SHA,
+    GitCherryPickConflictError,
+    GitCherryPickError,
+    GitEmptyPatchDiffError,
+    GitPatchDiffError,
+    git_abort_cherry_pick,
+    git_check_patches_diff,
+    git_cherry_pick,
+)
 from crtlib.logger import logger as parent_logger
 from crtlib.manifest import ReleaseManifest
 from crtlib.patch import Patch
@@ -44,6 +53,16 @@ class ApplyError(Exception):
     @override
     def __str__(self) -> str:
         return "error applying manifest" + (f": {self.msg}" if self.msg else "")
+
+
+class ApplyConflictError(ApplyError):
+    sha: SHA
+    conflict_files: list[str]
+
+    def __init__(self, sha: SHA, files: list[str]) -> None:
+        super().__init__(msg=f"{len(files)} file conflicts on sha '{sha}'")
+        self.sha = sha
+        self.conflict_files = files
 
 
 def _check_patch_needed(repo_path: Path, sha: str) -> int:
@@ -85,13 +104,13 @@ def _prepare_remote(repo: git.Repo, token: str, org: str, repo_name: str) -> git
     return remote
 
 
-def _checkout_ref(repo: git.Repo, ref: str, branch_name: str) -> git.Head:
-    logger.debug(f"checkout ref '{ref}' to '{branch_name}'")
+def _checkout_ref(repo: git.Repo, from_ref: str, branch_name: str) -> git.Head:
+    logger.debug(f"checkout ref '{from_ref}' to '{branch_name}'")
     assert branch_name not in repo.heads
     try:
-        new_head = repo.create_head(branch_name, ref)
+        new_head = repo.create_head(branch_name, from_ref)
     except Exception:
-        msg = f"unable to create new head '{branch_name}' " + f"from '{ref}'"
+        msg = f"unable to create new head '{branch_name}' " + f"from '{from_ref}'"
         logger.exception(msg)
         raise ApplyError(msg=msg) from None
 
@@ -182,7 +201,12 @@ def _prepare_patchsets(
 
 
 def apply_manifest(
-    db: ReleasesDB, manifest: ReleaseManifest, ceph_git_path: Path, token: str
+    db: ReleasesDB,
+    manifest: ReleaseManifest,
+    ceph_git_path: Path,
+    token: str,
+    *,
+    no_cleanup: bool = False,
 ) -> tuple[bool, list[Patch], list[Patch]]:
     # start new branch to apply manifest to.
     seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
@@ -191,6 +215,14 @@ def apply_manifest(
     repo = git.Repo(ceph_git_path)
 
     logger.debug(f"branch: {branch_name}")
+
+    def _cleanup(*, abort_cherrypick: bool = False) -> None:
+        logger.debug(f"cleanup state, branch '{branch_name}'")
+        if abort_cherrypick:
+            git_abort_cherry_pick(ceph_git_path)
+
+        repo.head.reference = repo.heads.main
+        repo.git.branch("-D", branch_name)  # pyright: ignore[reportAny]
 
     def _apply_patchsets(
         patchsets: list[GitHubPullRequest],
@@ -216,14 +248,15 @@ def apply_manifest(
                     continue
 
                 try:
-                    repo.git.cherry_pick("-x", "-s", patch.sha)  # pyright: ignore[reportAny]
-                except git.CommandError as e:
+                    git_cherry_pick(ceph_git_path, patch.sha)
+                except GitCherryPickConflictError as e:
+                    raise e from None
+                except GitCherryPickError as e:
                     msg = (
                         f"unable to cherry-pick uuid '{patch.patch_uuid}' "
-                        + f"sha '{patch.sha}'"
+                        + f"sha '{patch.sha}': {e}"
                     )
                     logger.error(msg)
-                    logger.error(e.stderr)
                     raise ApplyError(msg=msg) from None
 
                 added.append(patch)
@@ -242,12 +275,23 @@ def apply_manifest(
     except ApplyError as e:
         msg = f"unable to apply manifest patchsets: {e}"
         logger.error(msg)
+        if not no_cleanup:
+            _cleanup()
+
         raise ApplyError(msg=msg) from e
 
+    abort_cherrypick = True
     try:
         added, skipped = _apply_patchsets(patchsets)
+    except GitCherryPickConflictError as e:
+        raise ApplyConflictError(e.sha, e.conflicts) from None
     except ApplyError as e:
         logger.error(f"unable to apply patchsets to '{branch_name}': {e}")
         return (False, [], [])
+    else:
+        abort_cherrypick = False
+    finally:
+        if not no_cleanup:
+            _cleanup(abort_cherrypick=abort_cherrypick)
 
     return (len(added) > 0, added, skipped)

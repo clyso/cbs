@@ -25,14 +25,36 @@ logger = parent_logger.getChild("git")
 SHA = str
 
 
-class GitPatchDiffError(CRTError):
+class GitError(CRTError):
     @override
     def __str__(self) -> str:
-        return "patches error" + (f": {self.msg}" if self.msg else "")
+        return "git error" + (f": {self.msg}" if self.msg else "")
+
+
+class GitPatchDiffError(GitError):
+    @override
+    def __str__(self) -> str:
+        return "patches diff error" + (f": {self.msg}" if self.msg else "")
 
 
 class GitEmptyPatchDiffError(GitPatchDiffError):
     pass
+
+
+class GitCherryPickError(GitError):
+    @override
+    def __str__(self) -> str:
+        return "cherry-pick error" + (f": {self.msg}" if self.msg else "")
+
+
+class GitCherryPickConflictError(GitCherryPickError):
+    sha: SHA
+    conflicts: list[str]
+
+    def __init__(self, sha: SHA, files: list[str] | None = None) -> None:
+        super().__init__(msg=f"conflict occurred on sha '{sha}'")
+        self.sha = sha
+        self.conflicts = files if files else []
 
 
 def git_check_patches_diff(
@@ -95,3 +117,50 @@ def git_check_patches_diff(
     logger.debug(f"ref '{head_ref}' drop {patches_drop}")
 
     return (patches_add, patches_drop)
+
+
+def git_status(repo_path: Path) -> list[tuple[str, str]]:
+    repo = git.Repo(repo_path)
+
+    try:
+        res = cast(str, repo.git.status(["--porcelain"]))  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        msg = f"unable to run git status on '{repo_path}'"
+        logger.error(msg)
+        logger.error(e.stderr)
+        raise GitError(msg=msg) from None
+
+    status_lst: list[tuple[str, str]] = []
+    for entry in res.splitlines():
+        status, file = entry.split()
+        status_lst.append((status, file))
+
+    return status_lst
+
+
+def git_cherry_pick(repo_path: Path, sha: SHA) -> None:
+    repo = git.Repo(repo_path)
+
+    try:
+        repo.git.cherry_pick(["-x", "-s", sha])  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        msg = f"unable to cherry-pick patch sha '{sha}'"
+        logger.error(msg)
+
+        status_files = git_status(repo_path)
+        conflicts: list[str] = [f for s, f in status_files if s == "UU"]
+
+        if conflicts:
+            raise GitCherryPickConflictError(sha, conflicts) from None
+
+        logger.error(e.stderr)
+        raise GitCherryPickError(msg=msg) from None
+
+
+def git_abort_cherry_pick(repo_path: Path) -> None:
+    repo = git.Repo(repo_path)
+
+    try:
+        _ = repo.git.cherry_pick("--abort")  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        logger.error(f"found error aborting cherry-pick: {e.stderr}")
