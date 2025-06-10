@@ -20,9 +20,13 @@ from crtlib.errors import CRTError
 class ManifestError(CRTError):
     manifest_uuid: uuid.UUID
 
-    def __init__(self, _uuid: uuid.UUID) -> None:
-        super().__init__()
+    def __init__(self, _uuid: uuid.UUID, msg: str | None = None) -> None:
+        super().__init__(msg)
         self.manifest_uuid = _uuid
+
+    @override
+    def __str__(self) -> str:
+        return self.with_maybe_msg(f"manifest error on '{self.manifest_uuid}'")
 
 
 class NoSuchManifestError(ManifestError):

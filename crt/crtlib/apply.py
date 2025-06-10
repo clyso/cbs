@@ -25,7 +25,7 @@ from crtlib.errors.patchset import (
     PatchSetCheckError,
     PatchSetExistsError,
 )
-from crtlib.git import (
+from crtlib.git_utils import (
     SHA,
     GitCherryPickConflictError,
     GitCherryPickError,
@@ -34,6 +34,8 @@ from crtlib.git import (
     git_abort_cherry_pick,
     git_check_patches_diff,
     git_cherry_pick,
+    git_get_local_head,
+    git_prepare_remote,
 )
 from crtlib.logger import logger as parent_logger
 from crtlib.models.manifest import ReleaseManifest
@@ -95,23 +97,13 @@ def _check_patch_needed(repo_path: Path, sha: str) -> int:
     return 1 if added else -1 if skipped else 0
 
 
-def _prepare_remote(repo: git.Repo, token: str, org: str, repo_name: str) -> git.Remote:
-    remote_name = f"{org}/{repo_name}"
-    logger.debug(f"prepare remote name '{remote_name}'")
-    try:
-        remote = repo.remote(remote_name)
-    except ValueError:
-        remote_url = f"https://ceph-release-tool:{token}@github.com/{org}/{repo_name}"
-        remote = repo.create_remote(remote_name, remote_url)
-        logger.debug(f"create remote name: {remote_name}, url: {remote_url}")
-
-    logger.debug(f"update remote name '{remote_name}'")
-    _ = remote.update()
-    return remote
-
-
-def _checkout_ref(repo: git.Repo, from_ref: str, branch_name: str) -> git.Head:
+def _checkout_ref(repo_path: Path, from_ref: str, branch_name: str) -> git.Head:
     logger.debug(f"checkout ref '{from_ref}' to '{branch_name}'")
+    if head := git_get_local_head(repo_path, branch_name):
+        logger.debug(f"branch '{branch_name}' already exists, skip checkout")
+        return head
+
+    repo = git.Repo(repo_path)
     assert branch_name not in repo.heads
     try:
         new_head = repo.create_head(branch_name, from_ref)
@@ -138,7 +130,7 @@ def _prepare_repo(repo: git.Repo):
                 )
             except Exception:
                 msg = f"error obtaining repository's user's {what}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise ApplyError(msg=msg) from None
 
             if not res:
@@ -174,8 +166,6 @@ def _prepare_patchsets(
 ) -> list[GitHubPullRequest]:
     logger.debug("prepare patchset list from manifest")
 
-    repo = git.Repo(repo_path)
-
     patchset_lst: list[GitHubPullRequest] = []
     for patchset_uuid in patchset_uuid_lst:
         try:
@@ -190,7 +180,10 @@ def _prepare_patchsets(
             continue
 
         patchset_lst.append(patchset)
-        remote = _prepare_remote(repo, token, patchset.org_name, patchset.repo_name)
+        repo_name = f"{patchset.org_name}/{patchset.repo_name}"
+        remote = git_prepare_remote(
+            repo_path, f"github.com/{repo_name}", repo_name, token
+        )
         pr_id = patchset.pull_request_id
         src_ref = f"pull/{pr_id}/head"
         dst_ref = f"patchset/gh/{patchset.org_name}/{patchset.repo_name}/{pr_id}"
@@ -270,10 +263,16 @@ def apply_manifest(
 
     try:
         _prepare_repo(repo)
-        _remote = _prepare_remote(
-            repo, token, manifest.base_ref_org, manifest.base_ref_repo
+        repo_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
+        _ = git_prepare_remote(
+            ceph_git_path, f"github.com/{repo_name}", repo_name, token
         )
-        _branch = _checkout_ref(repo, manifest.base_ref, target_branch)
+    except ApplyError as e:
+        logger.error(e)
+        raise e from None
+
+    try:
+        _branch = _checkout_ref(ceph_git_path, manifest.base_ref, target_branch)
         patchsets = _prepare_patchsets(
             db, ceph_git_path, token, manifest.patchsets, manifest.base_ref
         )
