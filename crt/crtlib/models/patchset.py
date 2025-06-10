@@ -19,7 +19,7 @@ from typing import Annotated, Any
 
 import pydantic
 from crtlib.errors.patchset import EmptyPatchSetError
-from crtlib.git import SHA
+from crtlib.git_utils import SHA
 from crtlib.models.patch import AuthorData, Patch
 
 

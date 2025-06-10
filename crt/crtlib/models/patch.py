@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime as dt
 
 import pydantic
-from crtlib.git import SHA
+from crtlib.git_utils import SHA
 
 
 class AuthorData(pydantic.BaseModel):

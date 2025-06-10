@@ -21,7 +21,7 @@ from typing import cast
 
 import click
 import rich.box
-from crtlib.apply import ApplyConflictError, ApplyError, apply_manifest
+from crtlib.apply import ApplyConflictError, ApplyError
 from crtlib.db import ReleasesDB
 from crtlib.errors.manifest import (
     MalformedManifestError,
@@ -29,7 +29,9 @@ from crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crtlib.errors.patchset import PatchSetError
+from crtlib.manifest import manifest_execute
 from crtlib.models.manifest import ReleaseManifest
+from crtlib.models.patch import Patch
 from crtlib.models.patchset import GitHubPullRequest
 from rich.console import Group, RenderableType
 from rich.padding import Padding
@@ -37,8 +39,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
-from cmds import Ctx, console, pass_ctx, perror, pinfo
-from cmds import logger as parent_logger
+from . import Ctx, console, pass_ctx, perror, pinfo
+from . import logger as parent_logger
 
 logger = parent_logger.getChild("manifest")
 
@@ -255,7 +257,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
         console.print(panel)
 
 
-@cmd_manifest.command("apply", help="Apply a release manifest.")
+@cmd_manifest.command("exec", help="Apply a release manifest.")
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
@@ -279,7 +281,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None) -> None:
     "--push", is_flag=True, required=False, default=False, help="Push to repository."
 )
 @pass_ctx
-def cmd_manifest_apply(
+def cmd_manifest_exec(
     ctx: Ctx,
     manifest_uuid: uuid.UUID,
     ceph_git_path: Path,
@@ -311,14 +313,7 @@ def cmd_manifest_apply(
 
     pinfo("apply manifest")
     try:
-        res, added, skipped = apply_manifest(
-            ctx.db,
-            manifest,
-            ceph_git_path,
-            ctx.github_token,
-            "asd",
-            no_cleanup=True,
-        )
+        res = manifest_execute(ctx.db, manifest, ceph_git_path, ctx.github_token, push)
     except ApplyConflictError as e:
         perror(f"{len(e.conflict_files)} file conflicts found applying manifest")
         pinfo(f"[bold]on sha '{e.sha}':[/bold]")
@@ -330,3 +325,59 @@ def cmd_manifest_apply(
     except ApplyError as e:
         perror(f"unable to apply manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    def _gen_patches_table(patches: list[Patch]) -> Table:
+        table = Table(show_header=False, show_lines=False, box=None)
+        table.add_column(justify="left", style="blue")
+
+        for patch in patches:
+            table.add_row(patch.title)
+
+        if not patches:
+            table.add_row("[bold]None[/bold]")
+        else:
+            table.add_row(f"[bold]total:[/bold] {len(patches)}")
+        return table
+
+    apply_summary_table = Table(show_header=False, show_lines=False, box=None)
+    apply_summary_table.add_column(justify="right", style="cyan", no_wrap=True)
+    apply_summary_table.add_column(justify="left", style="magenta", no_wrap=True)
+    patches_added_renderable = _gen_patches_table(res.added)
+    patches_skipped_renderable = _gen_patches_table(res.skipped)
+    apply_summary_table.add_row("patches added", patches_added_renderable)
+    apply_summary_table.add_row("patches skipped", patches_skipped_renderable)
+
+    push_summary_table = Table(show_header=False, show_lines=False, box=None)
+    push_summary_table.add_column(justify="right", style="cyan", no_wrap=True)
+    push_summary_table.add_column(justify="left", style="magenta", no_wrap=True)
+    push_summary_table.add_row("remote", manifest.dst_repo)
+    push_summary_table.add_row("remote updated", str(res.remote_updated))
+    if res.heads_rejected:
+        push_summary_table.add_row("heads rejected", ", ".join(res.heads_rejected))
+    if res.heads_updated:
+        push_summary_table.add_row("heads updated", ", ".join(res.heads_updated))
+
+    applied_str = "applied" if res.applied else "[red]not[/red] applied"
+    apply_summary_str = (
+        f"[bold]Manifest {applied_str} to branch "
+        + f"'[gold1]{res.target_branch}[/gold1]'[/bold]"
+    )
+    apply_summary_group = Group(apply_summary_str, "", apply_summary_table)
+
+    push_str = "pushed" if res.pushed_to_remote else "[red]not[/red] pushed"
+    push_summary_str = (
+        f"[bold]Branch '[gold1]{res.target_branch}[/gold1]' {push_str} to "
+        + f"'[gold1]{manifest.dst_repo}[/gold1]'[/bold]"
+    )
+    push_summary_group_lst: list[RenderableType] = [push_summary_str]
+    if res.pushed_to_remote:
+        push_summary_group_lst.extend(["", push_summary_table])
+    push_summary_group = Group(*push_summary_group_lst)
+
+    panel = Panel(
+        Group(apply_summary_group, "", push_summary_group),
+        box=rich.box.SQUARE,
+        title=f"Manifest {manifest.release_uuid}",
+    )
+
+    console.print(panel)

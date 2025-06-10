@@ -15,7 +15,7 @@
 from pathlib import Path
 
 from crtlib.errors.patchset import PatchSetCheckError
-from crtlib.git import (
+from crtlib.git_utils import (
     GitEmptyPatchDiffError,
     GitPatchDiffError,
     git_check_patches_diff,
