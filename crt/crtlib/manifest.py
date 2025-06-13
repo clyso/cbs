@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 from crtlib.apply import ApplyError, apply_manifest
-from crtlib.db import ReleasesDB
+from crtlib.db.db import ReleasesDB
 from crtlib.errors.manifest import ManifestError
 from crtlib.git_utils import (
     GitError,

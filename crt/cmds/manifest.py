@@ -22,7 +22,7 @@ from typing import cast
 import click
 import rich.box
 from crtlib.apply import ApplyConflictError, ApplyError
-from crtlib.db import ReleasesDB
+from crtlib.db.db import ReleasesDB
 from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,

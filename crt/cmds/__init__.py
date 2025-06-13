@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 import click
-from crtlib.db import ReleasesDB
+from crtlib.db.db import ReleasesDB
 from crtlib.logger import logger as parent_logger
 from rich.console import Console
 from rich.highlighter import RegexHighlighter

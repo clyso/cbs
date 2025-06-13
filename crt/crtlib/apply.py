@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import override
 
 import git
-from crtlib.db import ReleasesDB
+from crtlib.db.db import ReleasesDB
 from crtlib.errors.patchset import (
     PatchSetCheckError,
     PatchSetExistsError,
