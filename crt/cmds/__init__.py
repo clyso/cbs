@@ -11,6 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import logging
 from pathlib import Path
 
 import click
@@ -82,3 +83,7 @@ def pwarn(s: str) -> None:
 
 def rprint(s: str) -> None:
     console.print(s)
+
+
+def set_debug_logging() -> None:
+    parent_logger.setLevel(logging.DEBUG)

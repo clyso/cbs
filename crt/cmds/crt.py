@@ -11,13 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import logging
 from pathlib import Path
 
 import click
 
-from cmds import Ctx, manifest, pass_ctx, patchset
-from cmds import logger as parent_logger
+from . import Ctx, manifest, pass_ctx, patchset, set_debug_logging
+from . import logger as parent_logger
 
 logger = parent_logger.getChild("crt")
 
@@ -62,7 +61,7 @@ def cmd_crt(
     github_token: str | None,
 ) -> None:
     if debug:
-        logger.setLevel(logging.DEBUG)
+        set_debug_logging()
 
     if db_path:
         ctx.db_path = db_path
