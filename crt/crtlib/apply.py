@@ -13,7 +13,6 @@
 
 
 import datetime
-import sys
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
@@ -143,7 +142,6 @@ def _prepare_repo(repo: git.Repo):
         try:
             repo.git.execute(  # pyright: ignore[reportCallIssue]
                 ["git", "submodule", "update", "--init", "--recursive"],
-                output_stream=sys.stdout.buffer,
                 as_process=False,
                 with_stdout=True,
             )
@@ -169,7 +167,7 @@ def _prepare_patchsets(
     patchset_lst: list[GitHubPullRequest] = []
     for patchset_uuid in patchset_uuid_lst:
         try:
-            patchset = db.load_patchset(patchset_uuid)
+            patchset, _ = db.load_patchset(patchset_uuid)
         except Exception as e:
             raise e from None
 

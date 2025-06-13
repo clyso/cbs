@@ -20,7 +20,10 @@ from typing import cast
 
 import click
 from crtlib.apply import ApplyConflictError, ApplyError, patchset_apply_to_manifest
-from crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
+from crtlib.errors.manifest import (
+    MalformedManifestError,
+    NoSuchManifestError,
+)
 from crtlib.errors.patchset import (
     NoSuchPatchSetError,
     PatchSetError,
@@ -109,14 +112,21 @@ def cmd_patchset_add_gh(
     try:
         manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
-        perror(f"error: unable to find manifest '{manifest_uuid}' in db")
+        perror(f"unable to find manifest '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        perror(f"error: malformed manifest '{manifest_uuid}'")
+        perror(f"malformed manifest '{manifest_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        perror(f"error: unable to obtain manifest '{manifest_uuid}': {e}")
+        perror(f"unable to obtain manifest '{manifest_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    if not manifest.active_stage:
+        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
+        pwarn(
+            "please run '[bold bright_magenta]manifest stage new[/bold bright_magenta]'"
+        )
+        sys.exit(errno.ENOENT)
 
     patchset: GitHubPullRequest | None = None
     try:
@@ -132,7 +142,6 @@ def cmd_patchset_add_gh(
 
     if not patchset:
         patchset = gh_get_pr(org, repo_name, pr_id, token=ctx.github_token)
-        logger.debug(f"obtained patchset: {patchset}")
 
         try:
             db.store_gh_patchset(patchset)

@@ -20,7 +20,8 @@ from typing import Annotated, Any
 import pydantic
 from crtlib.errors.patchset import EmptyPatchSetError
 from crtlib.git_utils import SHA
-from crtlib.models.patch import AuthorData, Patch
+from crtlib.models.common import AuthorData
+from crtlib.models.patch import Patch
 
 
 class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
