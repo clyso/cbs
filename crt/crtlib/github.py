@@ -56,8 +56,8 @@ class _GitHubPullRequestInfo(pydantic.BaseModel):
     title: str
     user: _GitHubUser
     created_at: dt
-    closed_at: dt
-    merged_at: dt
+    closed_at: dt | None
+    merged_at: dt | None
     base: _GitHubPullRequestBase
     body: str
     merged: bool
@@ -138,6 +138,7 @@ def _gh_commit_to_patch(
     # click.echo(f"commit message body: {commit_message_body}")
 
     if len(commit.parents) > 1:
+        logger.warning(f"commit '{commit.sha}' has multiple parents, merge commit?")
         raise GitHubError(msg="multiple parents found, merge commit?")
 
     parent = next(iter(commit.parents)).sha
@@ -200,7 +201,10 @@ def gh_pr_get_patches(
         sys.exit(errno.EINVAL)
 
     patches: list[Patch] = [
-        _gh_commit_to_patch(repo_url, commit, patchset_uuid) for commit in commits
+        _gh_commit_to_patch(repo_url, commit, patchset_uuid)
+        for commit in commits
+        # ignore merge commits!
+        if len(commit.parents) == 1
     ]
     return patches
 
