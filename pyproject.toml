@@ -4,10 +4,12 @@ version = "0.0.0"
 description = "Clyso Enterprise Storage main project"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "basedpyright>=1.29.5",
+]
 
 [tool.uv.workspace]
-members = ["cbs"]
+members = ["cbs", "cbs/packages/ceslib"]
 
 [dependency-groups]
 dev = ["basedpyright>=1.29.0", "lefthook>=1.11.11", "ruff>=0.11.8"]
@@ -42,7 +44,7 @@ select = [
   # flake8-datetimez
   "DTZ",
   # flake8-copyright notice
-  "CPY",
+  # "CPY",
   # flake8-comprehensions
   "C4",
   # flake8-commas
@@ -60,6 +62,7 @@ ignore = [
   "CPY001", # missing copyright notice
   "S101",   # use of assert
   "BLE001", # ignore bling exceptions
+  "TRY400", # ignore using 'exception' logging instead of 'error' 
 ]
 
 # [tool.basedpyright]

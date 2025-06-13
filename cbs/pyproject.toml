@@ -9,14 +9,14 @@ dependencies = [
     "aiohttp==3.11.15",
     "authlib==1.5.1",
     "celery==5.5.0rc5",
+    "ceslib",
     "click==8.1.8",
     "fastapi==0.115.11",
     "flower==2.0.1",
     "httpx==0.28.1",
     "hvac==2.3.0",
     "itsdangerous==2.2.0",
-    "pydantic==2.10.6",
-    "pydantic-core==2.27.2",
+    "pydantic>=2.11.6",
     "pyseto==1.8.3",
     "pyyaml==6.0.2",
     "redis==5.2.1",
@@ -30,6 +30,9 @@ dev = [
     "celery-types==0.23.0",
     "ruff>=0.11.8",
 ]
+
+[tool.uv.sources]
+ceslib = { workspace = true }
 
 # [build-system]
 # requires = ["hatchling"]

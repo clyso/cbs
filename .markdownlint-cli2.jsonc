@@ -10,7 +10,7 @@
   "ignores": [
     "node_modules",
     ".go",
-    ".venv",
+    "**/.venv",
     ".ruff_cache",
     "local"
   ],

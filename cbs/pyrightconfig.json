@@ -8,8 +8,8 @@
     "**/venv/",
     "**/node_modules"
   ],
-  "baselineFile": ".basedpyright/baseline.json",
+  "baselineFile": "../.basedpyright/baseline.json",
   "extraPaths": [
-    "cbs/packages/ceslib/src"
-  ]
+    "packages/ceslib/src"
+  ],
 }

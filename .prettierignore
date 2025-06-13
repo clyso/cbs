@@ -3,6 +3,7 @@
 *.json
 .editorconfig
 .basedpyright/baseline.json
+.markdownlint-cli2.jsonc
 .venv
 tests/**/*.json
 .go/
