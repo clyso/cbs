@@ -12,9 +12,12 @@
 # GNU General Public License for more details.
 
 
+import datetime
 import uuid
+from datetime import datetime as dt
 from pathlib import Path
 
+import pydantic
 from crtlib.apply import ApplyError, apply_manifest
 from crtlib.db.db import ReleasesDB
 from crtlib.errors.manifest import ManifestError
@@ -37,37 +40,26 @@ from crtlib.models.patch import Patch
 logger = parent_logger.getChild("manifest")
 
 
-class ManifestExecuteResult:
-    applied: bool
+class ManifestExecuteResult(pydantic.BaseModel):
     target_branch: str
+    applied: bool
     added: list[Patch]
     skipped: list[Patch]
 
-    pushed_to_remote: bool
+
+class ManifestPublishResult(pydantic.BaseModel):
     remote_updated: bool
     heads_updated: list[str]
     heads_rejected: list[str]
 
-    def __init__(
-        self,
-        *,
-        applied: bool,
-        target_branch: str,
-        added: list[Patch],
-        skipped: list[Patch],
-        pushed_to_remote: bool,
-        remote_updated: bool,
-        heads_updated: list[str],
-        heads_rejected: list[str],
-    ) -> None:
-        self.applied = applied
-        self.target_branch = target_branch
-        self.added = added
-        self.skipped = skipped
-        self.pushed_to_remote = pushed_to_remote
-        self.remote_updated = remote_updated
-        self.heads_updated = heads_updated
-        self.heads_rejected = heads_rejected
+
+def manifest_create(db: ReleasesDB, manifest: ReleaseManifest) -> None:
+    try:
+        db.store_manifest(manifest, exist_ok=False)
+    except Exception as e:
+        msg = f"unexpected error creating manifest uuid '{manifest.release_uuid}': {e}"
+        logger.error(msg)
+        raise ManifestError(manifest.release_uuid, msg=msg) from None
 
 
 def _prepare_repo(
@@ -146,7 +138,8 @@ def manifest_execute(
     manifest: ReleaseManifest,
     repo_path: Path,
     token: str,
-    push: bool,
+    *,
+    no_cleanup: bool = True,
 ) -> ManifestExecuteResult:
     """
     Execute a manifest against its base ref.
@@ -166,7 +159,9 @@ def manifest_execute(
         f"execute manifest '{manifest.release_uuid}' for repo '{base_remote_name}'"
     )
 
-    target_branch = f"{manifest.name}-{manifest.release_git_uid}"
+    ts = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    seq = f"exec-{ts}"
+    target_branch = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
     logger.debug(f"execute manifest on branch '{target_branch}'")
 
     try:
@@ -191,7 +186,7 @@ def manifest_execute(
             repo_path,
             token,
             target_branch,
-            no_cleanup=True,
+            no_cleanup=no_cleanup,
         )
         pass
     except ApplyError as e:
@@ -203,39 +198,62 @@ def manifest_execute(
         f"applied manifest: {res}, added '{len(added)}' "
         + f"skipped '{len(skipped)}' patches"
     )
-
-    push_res = False
-    heads_updated: list[str] = []
-    heads_rejected: list[str] = []
-    if push:
-        logger.info(f"push '{target_branch}' to '{manifest.dst_repo}'")
-        try:
-            push_res, heads_updated, heads_rejected = git_push(
-                repo_path, target_branch, manifest.dst_repo
-            )
-        except GitPushError as e:
-            msg = f"unable to push '{target_branch}': {e}"
-            logger.error(msg)
-            raise ManifestError(manifest.release_uuid, msg) from None
-        except GitError as e:
-            msg = f"unexpected error pushing '{target_branch}': {e}"
-            logger.error(msg)
-            raise ManifestError(manifest.release_uuid, msg) from None
-
-        if not res:
-            logger.info(
-                f"branch '{target_branch}' not updated on remote '{manifest.dst_repo}'"
-            )
-
-        logger.info(f"updated heads: {heads_updated}")
-        logger.info(f"rejected heads: {heads_rejected}")
-
     return ManifestExecuteResult(
         applied=res,
         target_branch=target_branch,
         added=added,
         skipped=skipped,
-        pushed_to_remote=push,
+    )
+
+
+def manifest_publish_branch(
+    manifest: ReleaseManifest,
+    repo_path: Path,
+    our_branch: str,
+) -> ManifestPublishResult:
+    """
+    Publish a manifest's local branch to its remote repository.
+
+    The local branch to be published / pushed to the remote repository is provided by
+    `our_branch`, while the destination branch is automatically crafted from the
+    manifest's name and its `release_git_uid`.
+
+    Will return `ManifestPublishResult`, containing information on whether the remote
+    repository was updated, and which heads were updated or rejected.
+    """
+    dst_repo = manifest.dst_repo
+    dst_branch = f"{manifest.name}-{manifest.release_git_uid}"
+    logger.info(
+        f"publish manifest branch '{our_branch}' to "
+        + f"repo '{dst_repo}' branch '{dst_branch}"
+    )
+
+    heads_updated: list[str] = []
+    heads_rejected: list[str] = []
+    logger.info(f"push '{our_branch}' to '{dst_repo}'")
+    try:
+        push_res, heads_updated, heads_rejected = git_push(
+            repo_path,
+            our_branch,
+            dst_repo,
+            branch_to=dst_branch,
+        )
+    except GitPushError as e:
+        msg = f"unable to push '{our_branch}': {e}"
+        logger.error(msg)
+        raise ManifestError(manifest.release_uuid, msg) from None
+    except GitError as e:
+        msg = f"unexpected error pushing '{our_branch}': {e}"
+        logger.error(msg)
+        raise ManifestError(manifest.release_uuid, msg) from None
+
+    if not push_res:
+        logger.info(f"branch '{dst_branch}' not updated on remote '{dst_repo}'")
+
+    logger.debug(f"updated heads: {heads_updated}")
+    logger.debug(f"rejected heads: {heads_rejected}")
+
+    return ManifestPublishResult(
         remote_updated=push_res,
         heads_updated=heads_updated,
         heads_rejected=heads_rejected,

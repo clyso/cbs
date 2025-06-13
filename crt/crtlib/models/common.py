@@ -1,4 +1,4 @@
-# crt - logger
+# crt - models - common models
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,17 +11,11 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import logging
-
-logger = logging.getLogger("crt")
-logger.setLevel(logging.ERROR)
+import pydantic
 
 
-def logger_set_handler(handler: logging.Handler) -> None:
-    logger.propagate = False
-    logger.addHandler(handler)
+class AuthorData(pydantic.BaseModel):
+    """Represents an author."""
 
-
-def logger_unset_handler(handler: logging.Handler) -> None:
-    logger.removeHandler(handler)
-    logger.propagate = True
+    user: str
+    email: str

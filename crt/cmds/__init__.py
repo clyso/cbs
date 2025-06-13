@@ -11,11 +11,20 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import errno
 import logging
+import sys
+from collections.abc import Callable
+from functools import update_wrapper
 from pathlib import Path
+from typing import Concatenate, ParamSpec, TypeVar
 
 import click
+from ceslib.utils.secrets import SecretsVaultMgr
 from crtlib.db.db import ReleasesDB
+from crtlib.db.errors import DBError
+from crtlib.db.s3 import S3DB
+from crtlib.errors import CRTError
 from crtlib.logger import logger as parent_logger
 from rich.console import Console
 from rich.highlighter import RegexHighlighter
@@ -25,22 +34,27 @@ logger = parent_logger.getChild("cmds")
 
 
 class Ctx:
-    db: ReleasesDB
+    _db: ReleasesDB | None
     github_token: str | None
     ceph_git_path: Path | None
 
     def __init__(self) -> None:
-        self.db = ReleasesDB(Path.cwd().joinpath(".releases"))
+        self._db = None  # ReleasesDB(Path.cwd().joinpath(".releases"))
         self.github_token = None
         self.ceph_git_path = None
 
+    def init(self, path: Path, secrets: SecretsVaultMgr) -> None:
+        self._db = ReleasesDB(path, secrets)
+
+    @property
+    def db(self) -> ReleasesDB:
+        if not self._db:
+            raise CRTError(msg="database not initialized")
+        return self._db
+
     @property
     def db_path(self) -> Path:
-        return self.db.db_path
-
-    @db_path.setter
-    def db_path(self, path: Path) -> None:
-        self.db.db_path = path
+        return self.db.base_path
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
@@ -51,6 +65,7 @@ class _CRTHighlighter(RegexHighlighter):
     highlights: list[str] = [  # noqa: RUF012
         r"(?P<uuid>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})",
         r"(?P<sha>[a-f0-9]{40})",
+        r"(?P<sha>[a-f0-9]{64})",
     ]
 
 
@@ -87,3 +102,40 @@ def rprint(s: str) -> None:
 
 def set_debug_logging() -> None:
     parent_logger.setLevel(logging.DEBUG)
+
+
+_R = TypeVar("_R")
+_T = TypeVar("_T")
+_P = ParamSpec("_P")
+
+
+def pass_db(f: Callable[Concatenate[ReleasesDB, _P], _R]) -> Callable[_P, _R]:
+    """Pass the release database instance to the function."""
+
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        curr_ctx = click.get_current_context()
+        ctx = curr_ctx.find_object(Ctx)
+        if not ctx:
+            perror(f"missing context for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        return f(ctx.db, *args, **kwargs)
+
+    return update_wrapper(inner, f)
+
+
+def pass_s3db(f: Callable[Concatenate[S3DB, _P], _R]) -> Callable[_P, _R]:
+    """Pass the releases S3 database instance to the function."""
+
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        curr_ctx = click.get_current_context()
+        ctx = curr_ctx.find_object(Ctx)
+        if not ctx:
+            perror(f"missing context for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        try:
+            return f(ctx.db.s3db, *args, **kwargs)
+        except DBError:
+            perror(f"s3 db not init for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+    return update_wrapper(inner, f)

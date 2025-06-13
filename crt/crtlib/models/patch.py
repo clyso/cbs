@@ -16,13 +16,7 @@ from datetime import datetime as dt
 
 import pydantic
 from crtlib.git_utils import SHA
-
-
-class AuthorData(pydantic.BaseModel):
-    """Represents an author."""
-
-    user: str
-    email: str
+from crtlib.models.common import AuthorData
 
 
 class Patch(pydantic.BaseModel):

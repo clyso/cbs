@@ -12,13 +12,57 @@
 # GNU General Public License for more details.
 
 import datetime
+import hashlib
 import string
 import uuid
 from datetime import datetime as dt
 from random import choices
 
 import pydantic
+from crtlib.errors.manifest import (
+    EmptyActiveStageError,
+    MismatchStageAuthorError,
+    NoActiveManifestStageError,
+)
+from crtlib.git_utils import SHA
+from crtlib.models.common import AuthorData
 from crtlib.models.patchset import PatchSetBase
+
+from . import logger as parent_logger
+
+logger = parent_logger.getChild("manifest")
+
+
+class ManifestStage(pydantic.BaseModel):
+    author: AuthorData
+    creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
+    patchsets: list[uuid.UUID] = pydantic.Field(default=[])
+
+    committed: bool = pydantic.Field(default=False)
+    hash: str = pydantic.Field(default="")
+
+    def _compute_hash(self) -> str:
+        h = hashlib.sha256()
+        h.update(self.author.model_dump_json().encode())
+        h.update(self.creation_date.isoformat().encode())
+        h.update(bytes(self.committed))
+
+        for patchset_uuid in self.patchsets:
+            h.update(patchset_uuid.bytes)
+
+        return h.hexdigest()
+
+    @pydantic.field_serializer("hash")
+    def serialize_model_hash(self, _hash: str) -> str:
+        return self.computed_hash if self.committed else ""
+
+    @property
+    def valid_hash(self) -> bool:
+        return self.computed_hash == self.hash if self.committed else True
+
+    @property
+    def computed_hash(self) -> str:
+        return self._compute_hash()
 
 
 class ReleaseManifest(pydantic.BaseModel):
@@ -29,7 +73,7 @@ class ReleaseManifest(pydantic.BaseModel):
     base_ref: str
     dst_repo: str
 
-    patchsets: list[uuid.UUID] = pydantic.Field(default=[])
+    stages: list[ManifestStage] = pydantic.Field(default=[])
 
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
     release_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
@@ -37,9 +81,112 @@ class ReleaseManifest(pydantic.BaseModel):
         default_factory=lambda: "".join(choices(string.ascii_letters, k=6))  # noqa: S311
     )
 
+    hash: str = pydantic.Field(default="")
+
+    def _compute_hash(self) -> str:
+        h = hashlib.sha256()
+        h.update(self.name.encode())
+        h.update(self.creation_date.isoformat().encode())
+        h.update(self.release_uuid.bytes)
+        h.update(self.release_git_uid.encode())
+
+        for stage in self.stages:
+            h.update(stage.computed_hash.encode())
+
+        return h.hexdigest()
+
+    @pydantic.field_serializer("hash")
+    def serialize_model_hash(self, _hash: str) -> str:
+        return self.computed_hash
+
+    @property
+    def computed_hash(self) -> SHA:
+        return self._compute_hash()
+
+    @property
+    def valid_hash(self) -> bool:
+        return self.computed_hash == self.hash
+
+    @property
+    def patchsets(self) -> list[uuid.UUID]:
+        lst: list[uuid.UUID] = []
+        for stage in self.stages:
+            lst.extend(stage.patchsets)
+        return lst
+
+    @property
+    def active_stage(self) -> ManifestStage | None:
+        try:
+            return self.get_active_stage()
+        except NoActiveManifestStageError:
+            return None
+
+    @property
+    def committed(self) -> bool:
+        return all(s.committed for s in self.stages)
+
     def contains_patchset(self, patchset: PatchSetBase) -> bool:
         """Check if the release manifest contains a given patch set."""
         return patchset.patchset_uuid in self.patchsets
+
+    def get_active_stage(self) -> ManifestStage:
+        """
+        Get currently active release manifest stage.
+
+        If none is active, raise `NoActiveManifestStageError`.
+        """
+        stage: ManifestStage | None = None
+        try:
+            stage = next(reversed(self.stages))
+        except StopIteration:
+            logger.debug(f"no available stages on manifest '{self.release_uuid}'")
+
+        if not stage or stage.committed:
+            raise NoActiveManifestStageError(self.release_uuid)
+
+        return stage
+
+    def new_stage(self, author: AuthorData) -> ManifestStage:
+        """
+        Create a new stage in the release manifest.
+
+        An uncommitted stage is created, ready to have patch sets added to.
+
+        If there's a currently active stage, return said stage instead.
+        """
+        try:
+            stage = self.get_active_stage()
+        except NoActiveManifestStageError:
+            stage = ManifestStage(author=author)
+        else:
+            if stage.author.user != author.user or stage.author.email != author.email:
+                raise MismatchStageAuthorError(self.release_uuid, stage.author, author)
+            return stage
+
+        self.stages.append(stage)
+        return stage
+
+    def abort_active_stage(self) -> ManifestStage | None:
+        """Abort the currently active stage, if any."""
+        try:
+            _ = self.get_active_stage()
+        except NoActiveManifestStageError:
+            return None
+
+        return self.stages.pop()
+
+    def commit_active_stage(self) -> ManifestStage | None:
+        """Commit the currently active stage."""
+        try:
+            stage = self.get_active_stage()
+        except NoActiveManifestStageError:
+            return None
+
+        if not stage.patchsets:
+            raise EmptyActiveStageError(self.release_uuid)
+
+        stage.committed = True
+        return stage
 
     def add_patchset(self, patchset: PatchSetBase) -> bool:
         """
@@ -54,7 +201,9 @@ class ReleaseManifest(pydantic.BaseModel):
         if self.contains_patchset(patchset):
             return False
 
-        self.patchsets.append(patchset.patchset_uuid)
+        # propagate 'NoActiveManifestStageError'
+        stage = self.get_active_stage()
+        stage.patchsets.append(patchset.patchset_uuid)
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:

@@ -1,4 +1,4 @@
-# crt - logger
+# crt - models - database models
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,17 +11,18 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import logging
-
-logger = logging.getLogger("crt")
-logger.setLevel(logging.ERROR)
+import pydantic
+from crtlib.models.manifest import ReleaseManifest
 
 
-def logger_set_handler(handler: logging.Handler) -> None:
-    logger.propagate = False
-    logger.addHandler(handler)
+class DBLocalManifestWrapper(pydantic.BaseModel):
+    orig_etag: str | None
+    orig_hash: str | None
+
+    manifest: ReleaseManifest
 
 
-def logger_unset_handler(handler: logging.Handler) -> None:
-    logger.removeHandler(handler)
-    logger.propagate = True
+class DBManifestInfo(pydantic.BaseModel):
+    orig_hash: str | None
+    orig_etag: str | None
+    remote: bool
