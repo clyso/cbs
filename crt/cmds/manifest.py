@@ -24,11 +24,9 @@ import rich.box
 from crtlib.apply import ApplyConflictError, ApplyError
 from crtlib.db.db import ReleasesDB
 from crtlib.errors.manifest import (
-    EmptyActiveStageError,
     MalformedManifestError,
     ManifestError,
     ManifestExistsError,
-    MismatchStageAuthorError,
     NoSuchManifestError,
 )
 from crtlib.errors.patchset import PatchSetError
@@ -39,7 +37,6 @@ from crtlib.manifest import (
     manifest_execute,
     manifest_publish_branch,
 )
-from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ReleaseManifest
 from crtlib.models.patch import Patch
 from crtlib.models.patchset import GitHubPullRequest
@@ -52,15 +49,12 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
 
-from . import Ctx, console, pass_ctx, perror, pinfo, pwarn
+from cmds import stages
+
+from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, pwarn
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("manifest")
-
-SYMBOL_RIGHT_ARROW = "\u276f"  # '>'
-SYMBOL_BULLET = "\u2022"
-SYMBOL_SMALL_RIGHT_ARROW = "\u203a"
-SYMBOL_DOWN_ARROW = "\u2304"
 
 
 class _ExitError(Exception):
@@ -235,7 +229,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
             classifiers_str = ", ".join(classifiers_lst)
             classifiers_str = f" ({classifiers_str})" if classifiers_str else ""
             patchset_tree = Tree(
-                f"{SYMBOL_RIGHT_ARROW} [blue]{patchset.title}{classifiers_str}"
+                f"{Symbols.RIGHT_ARROW} [blue]{patchset.title}{classifiers_str}"
             )
             patchset_table = Table(show_header=False, show_lines=False, box=None)
             patchset_table.add_column(justify="right", style="cyan", no_wrap=True)
@@ -257,7 +251,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
             patches_table.add_column(justify="left", no_wrap=True)
 
             for patch in patchset.patches:
-                patch_tree = Tree(f"{SYMBOL_BULLET} [green]{patch.title}")
+                patch_tree = Tree(f"{Symbols.BULLET} [green]{patch.title}")
 
                 patch_table = Table(show_header=False, show_lines=False, box=None)
                 patch_table.add_column(justify="right", style="cyan", no_wrap=True)
@@ -314,7 +308,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
 
             committed_str = " (uncommitted)" if not stage.committed else ""
             title_str = (
-                f"[bold]{SYMBOL_DOWN_ARROW} Stage #{stage_n}{committed_str}[/bold]"
+                f"[bold]{Symbols.DOWN_ARROW} Stage #{stage_n}{committed_str}[/bold]"
             )
             stages_renderables.append(
                 Group(
@@ -392,7 +386,7 @@ def _manifest_execute(
         perror(f"{len(e.conflict_files)} file conflicts found applying manifest")
         pinfo(f"[bold]on sha '{e.sha}':[/bold]")
         for file in e.conflict_files:
-            pinfo(f"{SYMBOL_SMALL_RIGHT_ARROW} {file}")
+            pinfo(f"{Symbols.SMALL_RIGHT_ARROW} {file}")
         sys.exit(errno.EAGAIN)
 
     except ApplyError as e:
@@ -649,166 +643,4 @@ def cmd_manifest_publish(
     pass
 
 
-@cmd_manifest.group("stage", help="Operate on manifest stages.")
-def cmd_manifest_stage() -> None:
-    pass
-
-
-@cmd_manifest_stage.command("new", help="Add a new stage to a manifest.")
-@click.option(
-    "-m",
-    "--manifest-uuid",
-    required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
-)
-@click.option(
-    "--author",
-    "author_name",
-    required=True,
-    type=str,
-    metavar="NAME",
-    help="Author's name.",
-)
-@click.option(
-    "--email",
-    "author_email",
-    required=True,
-    type=str,
-    metavar="EMAIL",
-    help="Author's email.",
-)
-@pass_ctx
-def cmd_manifest_stage_new(
-    ctx: Ctx, manifest_uuid: uuid.UUID, author_name: str, author_email: str
-) -> None:
-    logger.debug(
-        f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
-    )
-
-    db = ctx.db
-
-    try:
-        manifest = db.load_manifest(manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    try:
-        stage = manifest.new_stage(AuthorData(user=author_name, email=author_email))
-    except MismatchStageAuthorError as e:
-        perror("already active manifest stage, author mismatch")
-        perror(f"active author: {e.stage_author.user} <{e.stage_author.email}>")
-        sys.exit(errno.EEXIST)
-
-    pinfo(f"currently active stage for manifest uuid '{manifest.release_uuid}'")
-    pinfo(f"{SYMBOL_RIGHT_ARROW} active patchsets: {len(stage.patchsets)}")
-
-    try:
-        db.store_manifest(manifest)
-    except Exception as e:
-        perror(f"unable to write manifest to disk: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
-
-
-@cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")
-@click.option(
-    "-m",
-    "--manifest-uuid",
-    required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
-)
-@pass_ctx
-def cmd_manifest_stage_abort(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
-    logger.debug(f"abort manifest uuid '{manifest_uuid}' active stage")
-
-    db = ctx.db
-
-    try:
-        manifest = db.load_manifest(manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    stage = manifest.abort_active_stage()
-    if not stage:
-        pinfo(f"manifest uuid '{manifest_uuid}' has no active stage")
-        return
-    pinfo(f"aborted active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{SYMBOL_RIGHT_ARROW} aborted patch sets: {len(stage.patchsets)}")
-
-    try:
-        db.store_manifest(manifest)
-    except Exception as e:
-        perror(f"unable to write manifest to disk: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
-
-
-@cmd_manifest_stage.command("commit", help="Commit currently active manifest stage.")
-@click.option(
-    "-m",
-    "--manifest-uuid",
-    required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
-)
-@pass_ctx
-def cmd_manifest_stage_commit(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
-    logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
-
-    db = ctx.db
-
-    try:
-        manifest = db.load_manifest(manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    try:
-        stage = manifest.commit_active_stage()
-    except EmptyActiveStageError:
-        perror(f"manifest uuid '{manifest_uuid}' active stage is empty")
-        pwarn("either add patch sets to active stage, or abort active stage")
-        sys.exit(errno.EAGAIN)
-
-    if not stage:
-        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
-        sys.exit(errno.ENOENT)
-
-    pinfo(f"committed active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{SYMBOL_RIGHT_ARROW} committed patch sets: {len(stage.patchsets)}")
-    pinfo(f"{SYMBOL_RIGHT_ARROW} sha: {stage.computed_hash}")
-
-    try:
-        db.store_manifest(manifest)
-    except Exception as e:
-        perror(f"unable to write manifest to disk: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
+cmd_manifest.add_command(stages.cmd_manifest_stage)

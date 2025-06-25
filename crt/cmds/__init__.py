@@ -11,6 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import enum
 import errno
 import logging
 import sys
@@ -139,3 +140,10 @@ def pass_s3db(f: Callable[Concatenate[S3DB, _P], _R]) -> Callable[_P, _R]:
             sys.exit(errno.ENOTRECOVERABLE)
 
     return update_wrapper(inner, f)
+
+
+class Symbols(enum.StrEnum):
+    RIGHT_ARROW = "\u276f"  # '>'
+    BULLET = "\u2022"
+    SMALL_RIGHT_ARROW = "\u203a"
+    DOWN_ARROW = "\u2304"
