@@ -140,7 +140,11 @@ def sync_remote(
             logger.warning(f"object key is not an acceptable file type: {obj_key}")
             continue
 
-        if db.exists(obj_key, etag=entry["ETag"]):
+        # NOTE: etags come from S3 surrounded by double quotes. We need to get rid of
+        # these if we want to then pass the etag back to S3 (e.g., for If-Match
+        # conditions).
+        etag = entry["ETag"].strip('"')
+        if db.exists(obj_key, etag=etag):
             logger.info(f"obj '{obj_key}' at latest version")
             continue
 
