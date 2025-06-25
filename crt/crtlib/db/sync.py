@@ -159,8 +159,10 @@ def sync_remote(
             raise S3DBError(msg=msg) from None
 
         try:
-            db.update(obj_key, obj["ETag"], obj_body, updated_on=obj["LastModified"])
+            db.update(obj_key, etag, obj_body, updated_on=obj["LastModified"])
         except Exception as e:
             msg = f"unable to write object '{obj_key}' to db: {e}"
             logger.error(msg)
             raise S3DBError(msg=msg) from None
+
+    db.sync_to_disk(updated_on=last_update)

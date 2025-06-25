@@ -77,6 +77,8 @@ class _DB(pydantic.BaseModel):
         if not updated_on:
             updated_on = dt.now(datetime.UTC)
 
+        self.last_updated = updated_on
+
         try:
             _ = self.path.write_text(self.model_dump_json(indent=2))
         except Exception as e:
@@ -84,9 +86,7 @@ class _DB(pydantic.BaseModel):
             logger.error(msg)
             raise RemoteDBError(msg=msg) from None
 
-    def put(
-        self, obj: str, etag: str, *, flush: bool = False, updated_on: dt | None = None
-    ) -> None:
+    def put(self, obj: str, etag: str, *, updated_on: dt | None = None) -> None:
         """Add an entry for an object, specifying its etag."""
         if not updated_on:
             updated_on = dt.now(datetime.UTC)
@@ -97,9 +97,6 @@ class _DB(pydantic.BaseModel):
         entry = self.entries[obj]
         entry.last_updated = updated_on
         entry.etag = etag
-
-        if flush:
-            self.store(updated_on=updated_on)
 
     def get(self, obj: str) -> tuple[str, dt]:
         """Obtain an object's etag and last modified time."""
@@ -148,7 +145,6 @@ class RemoteDB(BaseDB):
         etag: str,
         value: bytes,
         *,
-        flush: bool = True,
         updated_on: dt | None = None,
     ) -> None:
         """Update (or add) a given object's contents and its etag."""
@@ -157,7 +153,7 @@ class RemoteDB(BaseDB):
         n = obj_path.write_bytes(value)
         logger.debug(f"wrote object '{obj}' size {n}")
 
-        self._db.put(obj, etag, flush=flush, updated_on=updated_on)
+        self._db.put(obj, etag, updated_on=updated_on)
 
     def get(self, obj: str) -> tuple[str, bytes] | None:
         """Obtain a given object's etag and contents, if any."""
