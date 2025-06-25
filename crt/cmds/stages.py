@@ -1,0 +1,195 @@
+# Ceph Release Tool - manifest stages commands
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+import errno
+import sys
+import uuid
+
+import click
+from crtlib.errors.manifest import (
+    EmptyActiveStageError,
+    MalformedManifestError,
+    MismatchStageAuthorError,
+    NoSuchManifestError,
+)
+from crtlib.models.common import AuthorData
+
+from . import Ctx, Symbols, pass_ctx, perror, pinfo, pwarn
+from . import logger as parent_logger
+
+logger = parent_logger.getChild("manifest")
+
+
+@click.group("stage", help="Operate on manifest stages.")
+def cmd_manifest_stage() -> None:
+    pass
+
+
+@cmd_manifest_stage.command("new", help="Add a new stage to a manifest.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to operate on.",
+)
+@click.option(
+    "--author",
+    "author_name",
+    required=True,
+    type=str,
+    metavar="NAME",
+    help="Author's name.",
+)
+@click.option(
+    "--email",
+    "author_email",
+    required=True,
+    type=str,
+    metavar="EMAIL",
+    help="Author's email.",
+)
+@pass_ctx
+def cmd_manifest_stage_new(
+    ctx: Ctx, manifest_uuid: uuid.UUID, author_name: str, author_email: str
+) -> None:
+    logger.debug(
+        f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
+    )
+
+    db = ctx.db
+
+    try:
+        manifest = db.load_manifest(manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        stage = manifest.new_stage(AuthorData(user=author_name, email=author_email))
+    except MismatchStageAuthorError as e:
+        perror("already active manifest stage, author mismatch")
+        perror(f"active author: {e.stage_author.user} <{e.stage_author.email}>")
+        sys.exit(errno.EEXIST)
+
+    pinfo(f"currently active stage for manifest uuid '{manifest.release_uuid}'")
+    pinfo(f"{Symbols.RIGHT_ARROW} active patchsets: {len(stage.patchsets)}")
+
+    try:
+        db.store_manifest(manifest)
+    except Exception as e:
+        perror(f"unable to write manifest to disk: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
+
+
+@cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to operate on.",
+)
+@pass_ctx
+def cmd_manifest_stage_abort(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
+    logger.debug(f"abort manifest uuid '{manifest_uuid}' active stage")
+
+    db = ctx.db
+
+    try:
+        manifest = db.load_manifest(manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    stage = manifest.abort_active_stage()
+    if not stage:
+        pinfo(f"manifest uuid '{manifest_uuid}' has no active stage")
+        return
+    pinfo(f"aborted active stage on manifest uuid '{manifest_uuid}'")
+    pinfo(f"{Symbols.RIGHT_ARROW} aborted patch sets: {len(stage.patchsets)}")
+
+    try:
+        db.store_manifest(manifest)
+    except Exception as e:
+        perror(f"unable to write manifest to disk: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
+
+
+@cmd_manifest_stage.command("commit", help="Commit currently active manifest stage.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to operate on.",
+)
+@pass_ctx
+def cmd_manifest_stage_commit(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
+    logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
+
+    db = ctx.db
+
+    try:
+        manifest = db.load_manifest(manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        stage = manifest.commit_active_stage()
+    except EmptyActiveStageError:
+        perror(f"manifest uuid '{manifest_uuid}' active stage is empty")
+        pwarn("either add patch sets to active stage, or abort active stage")
+        sys.exit(errno.EAGAIN)
+
+    if not stage:
+        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
+        sys.exit(errno.ENOENT)
+
+    pinfo(f"committed active stage on manifest uuid '{manifest_uuid}'")
+    pinfo(f"{Symbols.RIGHT_ARROW} committed patch sets: {len(stage.patchsets)}")
+    pinfo(f"{Symbols.RIGHT_ARROW} sha: {stage.computed_hash}")
+
+    try:
+        db.store_manifest(manifest)
+    except Exception as e:
+        perror(f"unable to write manifest to disk: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
