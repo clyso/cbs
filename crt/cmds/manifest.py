@@ -332,7 +332,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
 
         classifiers: list[str] = []
         if entry.local:
-            classifiers.append("[bold green]staged[/bold green]")
+            classifiers.append("[bold green]staging[/bold green]")
         if entry.from_s3:
             classifiers.append("[bold gold1]remote[/bold gold1]")
         if entry.modified:
