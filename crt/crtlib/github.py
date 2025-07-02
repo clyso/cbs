@@ -22,7 +22,8 @@ import httpx
 import pydantic
 from crtlib.errors import CRTError
 from crtlib.logger import logger as parent_logger
-from crtlib.models.patch import AuthorData, Patch
+from crtlib.models.common import AuthorData
+from crtlib.models.patch import Patch
 from crtlib.models.patchset import GitHubPullRequest
 
 logger = parent_logger.getChild("gh")

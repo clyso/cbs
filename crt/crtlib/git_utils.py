@@ -14,6 +14,7 @@
 import logging
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import cast, override
 
@@ -578,6 +579,59 @@ def git_push(
             updated.append(remote_ref_name)
 
     return (failed, updated, rejected)
+
+
+def git_patch_id(repo_path: Path, sha: SHA) -> str:
+    repo = git.Repo(repo_path)
+
+    with tempfile.TemporaryFile() as tmp:
+        try:
+            repo.git.show(sha, output_stream=tmp)  # pyright: ignore[reportAny]
+        except git.CommandError:
+            msg = f"unable to find patch sha '{sha}'"
+            logger.error(msg)
+            raise GitError(msg=msg) from None
+
+        _ = tmp.seek(0)
+        res = cast(str, repo.git.patch_id(["--stable"], istream=tmp))  # pyright: ignore[reportAny]
+
+    if not res:
+        raise GitError(msg="unable to obtain git patch id")
+    return res.split()[0]
+
+
+def git_revparse(repo_path: Path, commitish: SHA | str) -> str:
+    repo = git.Repo(repo_path)
+
+    try:
+        res = repo.rev_parse(commitish)
+    except git.BadObject:
+        msg = f"rev '{commitish}' not found"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+    except ValueError:
+        msg = f"malformed rev '{commitish}'"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+    except Exception as e:
+        msg = f"unable to obtain revision for '{commitish}': {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+    return res.hexsha
+
+
+def git_format_patch(repo_path: Path, rev: SHA) -> str:
+    repo = git.Repo(repo_path)
+
+    try:
+        res = cast(str, repo.git.format_patch(["--stdout", f"{rev}~1..{rev}"]))  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        msg = f"unable to obtain format patch for '{rev}': {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+    return res
 
 
 if __name__ == "__main__":
