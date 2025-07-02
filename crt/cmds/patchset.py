@@ -197,3 +197,63 @@ def cmd_patchset_add_gh(
         sys.exit(errno.ENOTRECOVERABLE)
 
     psuccess(f"pr id '{pr_id}' added to manifest '{manifest_uuid}'")
+
+
+@cmd_patchset.command("create")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+@click.option(
+    "-c",
+    "--ceph-repo",
+    "ceph_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to the staging ceph git repository.",
+)
+@click.option("-v", "--version", type=str, required=True, help="Target Ceph version.")
+@click.option("--desc", type=str, required=False, help="Patch Set description.")
+@click.option(
+    "--fixes", type=str, required=False, multiple=True, help="Trackers fixed."
+)
+@click.option("--from-gh", type=int, required=False, help="From a GitHub pull request.")
+@click.option(
+    "--author", "author_name", type=str, required=True, help="Patch Set's author name."
+)
+@click.option(
+    "--email", "author_email", type=str, required=True, help="Patch Set's author email."
+)
+@pass_ctx
+def cmd_patchset_create(
+    ctx: Ctx,
+    patches_repo_path: Path,
+    ceph_repo_path: Path,
+    version: str,
+    desc: str | None,
+    fixes: list[str] | None,
+    from_gh: int | None,
+    author_name: str,
+    author_email: str,
+) -> None:
+    pass
