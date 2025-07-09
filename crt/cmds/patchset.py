@@ -31,6 +31,7 @@ from crtlib.errors.patchset import (
 )
 from crtlib.github import gh_get_pr
 from crtlib.models.patchset import GitHubPullRequest
+from crtlib.patchset import patchset_import_patches
 from crtlib.utils import print_patch_tree
 
 from cmds import Ctx, pass_ctx, perror, pinfo, psuccess, pwarn, rprint
@@ -91,9 +92,27 @@ def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
     default="ceph/ceph",
     help="Specify the repository to obtain patch set from (default: ceph/ceph).",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
 @pass_ctx
 def cmd_patchset_add_gh(
-    ctx: Ctx, pr_id: int, manifest_uuid: uuid.UUID, repo: str
+    ctx: Ctx,
+    pr_id: int,
+    manifest_uuid: uuid.UUID,
+    repo: str,
+    patches_repo_path: Path,
 ) -> None:
     if not ctx.ceph_git_path or not ctx.github_token:
         perror("error: missing token or ceph git path")
@@ -106,6 +125,10 @@ def cmd_patchset_add_gh(
 
     org = cast(str, m.group(1))
     repo_name = cast(str, m.group(2))
+
+    if not patches_repo_path.joinpath(".git").exists():
+        perror(f"path at '{patches_repo_path} is not a git repository")
+        sys.exit(errno.EINVAL)
 
     db = ctx.db
 
@@ -188,6 +211,14 @@ def cmd_patchset_add_gh(
 
     if not manifest.add_patchset(patchset):
         perror("unexpected error adding patch set to manifest!!")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        patchset_import_patches(
+            ctx.ceph_git_path, patches_repo_path.joinpath("ceph"), added, manifest.name
+        )
+    except Exception as e:
+        perror(f"unable to import patch set patches: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:

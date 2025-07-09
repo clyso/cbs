@@ -14,14 +14,16 @@
 
 from pathlib import Path
 
-from crtlib.errors.patchset import PatchSetCheckError
+from crtlib.errors.patchset import PatchSetCheckError, PatchSetError
 from crtlib.git_utils import (
     GitEmptyPatchDiffError,
     GitPatchDiffError,
     git_check_patches_diff,
 )
 from crtlib.logger import logger as parent_logger
+from crtlib.models.patch import Patch
 from crtlib.models.patchset import PatchSetBase
+from crtlib.patch import PatchError, patch_import
 
 logger = parent_logger.getChild("patchset")
 
@@ -54,3 +56,26 @@ def patchset_check_patches_diff(
         raise PatchSetCheckError(msg=msg)
 
     return (added, skipped)
+
+
+def patchset_import_patches(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patches: list[Patch],
+    target_version: str,
+) -> None:
+    for patch in patches:
+        try:
+            patch_import(
+                patches_repo_path,
+                ceph_repo_path,
+                patch.sha,
+                target_version=target_version,
+            )
+        except PatchError as e:
+            msg = f"unable to import patch sha '{patch.sha}': {e}"
+            logger.error(msg)
+            raise PatchSetError(msg=msg) from None
+
+        logger.info(f"imported patch set's patch sha '{patch.sha}'")
+    pass
