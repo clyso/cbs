@@ -29,19 +29,17 @@ from crtlib.errors.manifest import (
     ManifestExistsError,
     NoSuchManifestError,
 )
-from crtlib.errors.patchset import PatchSetError
-from crtlib.logger import logger_set_handler, logger_unset_handler
 from crtlib.manifest import (
     ManifestExecuteResult,
     manifest_create,
-    manifest_execute,
+    manifest_execute_new,
     manifest_publish_branch,
 )
+from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.manifest import ReleaseManifest
 from crtlib.models.patch import Patch
 from crtlib.models.patchset import GitHubPullRequest
 from rich.console import Group, RenderableType
-from rich.logging import RichHandler
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -191,6 +189,16 @@ def cmd_manifest_list(ctx: Ctx) -> None:
     help="Manifest UUID for which information will be shown.",
 )
 @click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+@click.option(
     "-s",
     "--stages",
     required=False,
@@ -199,84 +207,119 @@ def cmd_manifest_list(ctx: Ctx) -> None:
     help="Show stages information.",
 )
 @pass_ctx
-def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -> None:
+def cmd_manifest_info(
+    ctx: Ctx,
+    manifest_uuid: uuid.UUID | None,
+    patches_repo_path: Path,
+    stages: bool,
+) -> None:
     db = ctx.db
 
     lst = db.list_manifests(from_remote=True)
 
     def _patchset_entry(
-        patchsets: list[uuid.UUID], uncommitted: bool | None = None
+        patches: list[ManifestPatchEntryWrapper], uncommitted: bool | None = None
     ) -> list[RenderableType]:
-        patchsets_tree_lst: list[RenderableType] = []
-        for patchset_uuid in patchsets:
-            try:
-                patchset, is_remote = db.load_patchset(patchset_uuid)
-            except (PatchSetError, Exception) as e:
-                perror(
-                    f"unable to load patch set uuid '{patchset_uuid}': {e}",
-                )
-                pwarn("maybe a remote patch set that needs to be sync'ed?")
-                patchsets_tree_lst.append(
-                    f"[bold][red]missing patchset UUID[/red] '{patchset_uuid}'"
+        patches_tree_lst: list[RenderableType] = []
+        for patch in patches:
+            contents = patch.contents
+            patch_meta_path = (
+                patches_repo_path.joinpath("ceph")
+                .joinpath("patches")
+                .joinpath("meta")
+                .joinpath(f"{contents.entry_uuid}.json")
+            )
+
+            if not patch_meta_path.exists():
+                perror(f"missing patch set uuid '{contents.entry_uuid}")
+                patches_tree_lst.append(
+                    "[bold][red]missing patch UUID[/red] "
+                    + f"'{contents.entry_uuid}'[/bold]"
                 )
                 continue
+
+            patch_title = (
+                contents.title
+                if isinstance(contents, GitHubPullRequest)
+                else contents.info.title
+            )
+            patch_author = (
+                contents.author
+                if isinstance(contents, GitHubPullRequest)
+                else contents.info.author
+            )
+            patch_date = (
+                contents.creation_date
+                if isinstance(contents, GitHubPullRequest)
+                else contents.info.date
+            )
+            patch_fixes = "\n".join(
+                contents.related_to
+                if isinstance(contents, GitHubPullRequest)
+                else contents.info.fixes
+            )
 
             classifiers_lst: list[str] = []
             if uncommitted:
                 classifiers_lst.append("[bold magenta]uncommitted[/bold magenta]")
-            if is_remote:
-                classifiers_lst.append("[bold gold1]remote[/bold gold1]")
             classifiers_str = ", ".join(classifiers_lst)
             classifiers_str = f" ({classifiers_str})" if classifiers_str else ""
             patchset_tree = Tree(
-                f"{Symbols.RIGHT_ARROW} [blue]{patchset.title}{classifiers_str}"
+                f"{Symbols.RIGHT_ARROW} [blue]{patch_title}{classifiers_str}"
             )
             patchset_table = Table(show_header=False, show_lines=False, box=None)
             patchset_table.add_column(justify="right", style="cyan", no_wrap=True)
             patchset_table.add_column(justify="left", style="magenta", no_wrap=True)
 
             patchset_table.add_row(
-                "author", f"{patchset.author.user} <{patchset.author.email}>"
+                "author", f"{patch_author.user} <{patch_author.email}>"
             )
-            patchset_table.add_row("created", str(patchset.creation_date))
-            patchset_table.add_row("related", "\n".join(patchset.related_to))
+            patchset_table.add_row("created", str(patch_date))
+            if patch_fixes:
+                patchset_table.add_row("related", patch_fixes)
 
-            if isinstance(patchset, GitHubPullRequest):
-                patchset_table.add_row("repo", patchset.repo_url)
-                patchset_table.add_row("pr id", str(patchset.pull_request_id))
-                patchset_table.add_row("target", patchset.target_branch)
-                patchset_table.add_row("merged", str(patchset.merge_date))
+            if isinstance(contents, GitHubPullRequest):
+                patchset_table.add_row("repo", contents.repo_url)
+                patchset_table.add_row("pr id", str(contents.pull_request_id))
+                patchset_table.add_row("target", contents.target_branch)
+                patchset_table.add_row("merged", str(contents.merge_date))
 
-            patches_table = Table(show_header=False, show_lines=False, box=None)
-            patches_table.add_column(justify="left", no_wrap=True)
+                patches_table = Table(show_header=False, show_lines=False, box=None)
+                patches_table.add_column(justify="left", no_wrap=True)
 
-            for patch in patchset.patches:
-                patch_tree = Tree(f"{Symbols.BULLET} [green]{patch.title}")
+                has_previous = False
+                for patch in contents.patches:
+                    patch_tree = Tree(f"{Symbols.BULLET} [green]{patch.title}")
 
-                patch_table = Table(show_header=False, show_lines=False, box=None)
-                patch_table.add_column(justify="right", style="cyan", no_wrap=True)
-                patch_table.add_column(justify="left", style="magenta", no_wrap=True)
-
-                patch_table.add_row(
-                    "author", f"{patch.author.user} <{patch.author.email}>"
-                )
-                patch_table.add_row("date", str(patch.author_date))
-                if patch.related_to:
-                    patch_table.add_row("related", "\n".join(patch.related_to))
-                if patch.cherry_picked_from:
-                    patch_table.add_row(
-                        "cherry-picked from", "\n".join(patch.cherry_picked_from)
+                    patch_table = Table(show_header=False, show_lines=False, box=None)
+                    patch_table.add_column(justify="right", style="cyan", no_wrap=True)
+                    patch_table.add_column(
+                        justify="left", style="magenta", no_wrap=True
                     )
 
-                _ = patch_tree.add(patch_table)
-                patches_table.add_row(Padding(patch_tree, (0, 0, 1, 0)))
+                    patch_table.add_row(
+                        "author", f"{patch.author.user} <{patch.author.email}>"
+                    )
+                    patch_table.add_row("date", str(patch.author_date))
+                    if patch.related_to:
+                        patch_table.add_row("related", "\n".join(patch.related_to))
+                    if patch.cherry_picked_from:
+                        patch_table.add_row(
+                            "cherry-picked from", "\n".join(patch.cherry_picked_from)
+                        )
 
-            patchset_table.add_row("patches", Group("", patches_table))
+                    _ = patch_tree.add(patch_table)
+                    patches_table.add_row(
+                        Padding(patch_tree, ((1 if has_previous else 0), 0, 0, 0))
+                    )
+                    has_previous = True
 
-            _ = patchset_tree.add(patchset_table)
-            patchsets_tree_lst.append(patchset_tree)
+                patchset_table.add_row("patches", Group("", patches_table))
 
-        return patchsets_tree_lst
+            _ = patchset_tree.add(Padding(patchset_table, (0, 0, 1, 0)))
+            patches_tree_lst.append(patchset_tree)
+
+        return patches_tree_lst
 
     for entry in lst:
         manifest = entry.manifest
@@ -304,7 +347,7 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
                 stage_table.add_row("patch sets", str(len(stage.patchsets)))
                 stage_rdr_lst.append(Padding(stage_table, (0, 0, 1, 0)))
 
-            stage_rdr_lst.extend(_patchset_entry(stage.patchsets, not stage.committed))
+            stage_rdr_lst.extend(_patchset_entry(stage.patches, not stage.committed))
 
             committed_str = " (uncommitted)" if not stage.committed else ""
             title_str = (
@@ -354,11 +397,11 @@ def cmd_manifest_info(ctx: Ctx, manifest_uuid: uuid.UUID | None, stages: bool) -
 
 
 def _manifest_execute(
-    db: ReleasesDB,
     manifest: ReleaseManifest,
     *,
     token: str,
-    repo_path: Path,
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
     no_cleanup: bool = True,
     progress: Progress | None = None,
 ) -> tuple[ManifestExecuteResult, RenderableType]:
@@ -381,7 +424,10 @@ def _manifest_execute(
     progress.start_task(progress_task)
 
     try:
-        res = manifest_execute(db, manifest, repo_path, token, no_cleanup=no_cleanup)
+        # res = manifest_execute(db, manifest, repo_path, token, no_cleanup=no_cleanup)
+        res = manifest_execute_new(
+            manifest, ceph_repo_path, patches_repo_path, token, no_cleanup=no_cleanup
+        )
     except ApplyConflictError as e:
         perror(f"{len(e.conflict_files)} file conflicts found applying manifest")
         pinfo(f"[bold]on sha '{e.sha}':[/bold]")
@@ -431,7 +477,7 @@ def _manifest_execute(
     return (res, apply_summary_group)
 
 
-def _manifest_publish(
+def _manifest_publish(  # pyright: ignore[reportUnusedFunction]
     db: ReleasesDB,
     manifest: ReleaseManifest,
     repo_path: Path,
@@ -446,6 +492,7 @@ def _manifest_publish(
 
     progress.start_task(publish_manifest_task)
     try:
+        # FIXME: this no longer works with the patches repo.
         db.publish_manifest(manifest.release_uuid)
     except ManifestExistsError:
         perror(f"manifest '{manifest.release_uuid}' already published")
@@ -489,20 +536,40 @@ def _manifest_publish(
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
-    "--ceph-git-path",
+    "--ceph-repo",
+    "ceph_repo_path",
     type=click.Path(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
     required=True,
     help="Path to ceph git repository.",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+@click.option(
+    "--no-cleanup",
+    is_flag=True,
+    default=False,
+    show_default=True,
+    help="Whether to clean up after validation.",
+)
 @pass_ctx
 def cmd_manifest_validate(
     ctx: Ctx,
     manifest_uuid: uuid.UUID,
-    ceph_git_path: Path,
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    no_cleanup: bool,
 ) -> None:
-    logger.debug(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_git_path}'")
+    logger.info(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_repo_path}'")
 
     if not ctx.github_token:
         perror("missing github token")
@@ -521,11 +588,11 @@ def cmd_manifest_validate(
         sys.exit(errno.ENOTRECOVERABLE)
 
     (_, apply_summary) = _manifest_execute(
-        ctx.db,
         manifest,
         token=ctx.github_token,
-        repo_path=ceph_git_path,
-        no_cleanup=False,
+        ceph_repo_path=ceph_repo_path,
+        patches_repo_path=patches_repo_path,
+        no_cleanup=no_cleanup,
     )
 
     panel = Panel(
@@ -540,7 +607,8 @@ def cmd_manifest_validate(
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
-    "--ceph-git-path",
+    "--ceph-repo",
+    "ceph_repo_path",
     type=click.Path(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
@@ -548,98 +616,98 @@ def cmd_manifest_validate(
     help="Path to ceph git repository.",
 )
 @click.option(
-    "-r",
-    "--repo",
-    type=str,
-    required=False,
-    default="clyso/ceph",
-    metavar="ORG/REPO",
-    help="Repository to push to.",
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
 )
 @pass_ctx
 def cmd_manifest_publish(
     ctx: Ctx,
     manifest_uuid: uuid.UUID,
-    ceph_git_path: Path,
-    repo: str,
+    _ceph_repo_path: Path,
+    _patches_repo_path: Path,
 ) -> None:
     """
     Publish a manifest.
 
     Will upload the manifest to S3, and push a branch to the specified repository.
     """
-    logger.debug(f"commit manifest uuid '{manifest_uuid}'")
+    logger.info(f"commit manifest uuid '{manifest_uuid}'")
+    pwarn("this command is currently not working")
 
     if not ctx.github_token:
         perror("missing github token")
         sys.exit(errno.EINVAL)
 
-    if not re.match(r"^[\w_.-]+/[\w_.-]+", repo):
-        perror("malformed repository, use ORG/REPO")
-        sys.exit(errno.EINVAL)
+    # FIXME: reimplement the command. Leaving the commented code for future reference.
 
-    try:
-        manifest = ctx.db.load_manifest(manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest '{manifest_uuid}'")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to load manifest '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    if not manifest.committed:
-        perror(f"manifest '{manifest_uuid}' not committed")
-        pwarn("run '[bold bright_magenta]manifest stage commit[/bold bright_magenta]'")
-        sys.exit(errno.EBUSY)
-
-    rich_handler = RichHandler(console=console)
-    logger_set_handler(rich_handler)
-
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-    )
-    progress.start()
-
-    execute_res, execute_summary = _manifest_execute(
-        ctx.db,
-        manifest,
-        token=ctx.github_token,
-        repo_path=ceph_git_path,
-        no_cleanup=True,
-        progress=progress,
-    )
-
-    try:
-        publish_summary = _manifest_publish(
-            ctx.db,
-            manifest,
-            ceph_git_path,
-            execute_res.target_branch,
-            progress,
-        )
-    except _ExitError as e:
-        progress.stop()
-        sys.exit(e.code)
-
-    progress.stop()
-
-    logger_unset_handler(rich_handler)
-
-    panel = Panel(
-        Group(
-            Padding(execute_summary, (0, 0, 1, 0)),
-            Padding(publish_summary, (0, 0, 1, 0)),
-        ),
-        title=f"Manifest {manifest_uuid}",
-        box=rich.box.SQUARE,
-    )
-    console.print(panel)
+    # try:
+    #     manifest = ctx.db.load_manifest(manifest_uuid)
+    # except NoSuchManifestError:
+    #     perror(f"unable to find manifest '{manifest_uuid}'")
+    #     sys.exit(errno.ENOENT)
+    # except MalformedManifestError:
+    #     perror(f"malformed manifest '{manifest_uuid}'")
+    #     sys.exit(errno.EINVAL)
+    # except Exception as e:
+    #     perror(f"unable to load manifest '{manifest_uuid}': {e}")
+    #     sys.exit(errno.ENOTRECOVERABLE)
+    #
+    # if not manifest.committed:
+    #     perror(f"manifest '{manifest_uuid}' not committed")
+    #     pwarn("run '[bold bright_magenta]manifest stage commit[/bold bright_magenta]'")  # noqa: E501
+    #     sys.exit(errno.EBUSY)
+    #
+    # rich_handler = RichHandler(console=console)
+    # logger_set_handler(rich_handler)
+    #
+    # progress = Progress(
+    #     SpinnerColumn(),
+    #     TextColumn("[progress.description]{task.description}"),
+    #     TimeElapsedColumn(),
+    #     console=console,
+    # )
+    # progress.start()
+    #
+    # execute_res, execute_summary = _manifest_execute(
+    #     manifest,
+    #     token=ctx.github_token,
+    #     ceph_repo_path=ceph_repo_path,
+    #     patches_repo_path=patches_repo_path,
+    #     no_cleanup=True,
+    #     progress=progress,
+    # )
+    #
+    # try:
+    #     publish_summary = _manifest_publish(
+    #         ctx.db,
+    #         manifest,
+    #         ceph_repo_path,
+    #         execute_res.target_branch,
+    #         progress,
+    #     )
+    # except _ExitError as e:
+    #     progress.stop()
+    #     sys.exit(e.code)
+    #
+    # progress.stop()
+    #
+    # logger_unset_handler(rich_handler)
+    #
+    # panel = Panel(
+    #     Group(
+    #         Padding(execute_summary, (0, 0, 1, 0)),
+    #         Padding(publish_summary, (0, 0, 1, 0)),
+    #     ),
+    #     title=f"Manifest {manifest_uuid}",
+    #     box=rich.box.SQUARE,
+    # )
+    # console.print(panel)
     pass
 
 

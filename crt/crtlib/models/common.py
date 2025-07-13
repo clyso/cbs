@@ -11,6 +11,13 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from __future__ import annotations
+
+import abc
+import enum
+import re
+import uuid
+
 import pydantic
 
 
@@ -19,3 +26,40 @@ class AuthorData(pydantic.BaseModel):
 
     user: str
     email: str
+
+
+class ManifestPatchSetEntryType(enum.StrEnum):
+    PATCHSET_VANILLA = "vanilla"
+    PATCHSET_GITHUB = "gh"
+    SINGLE = "single"
+
+
+class ManifestPatchEntry(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
+    entry_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
+
+    @pydantic.computed_field
+    @property
+    def entry_type(self) -> ManifestPatchSetEntryType:
+        return self._get_entry_type()
+
+    @abc.abstractmethod
+    def _get_entry_type(self) -> ManifestPatchSetEntryType:
+        pass
+
+    @property
+    def canonical_title(self) -> str:
+        return self._get_canonical_title()
+
+    @abc.abstractmethod
+    def _get_canonical_title(self) -> str:
+        pass
+
+    @abc.abstractmethod
+    def compute_hash_bytes(self) -> bytes:
+        pass
+
+
+def patch_canonical_title(orig: str) -> str:
+    r1 = re.compile(r"[\s:/\]\[\(\)]")
+    r2 = re.compile(r"['\",.+\<>~^$@!?%&=;`]")
+    return r2.sub(r"", r1.sub(r"-", orig.lower()))

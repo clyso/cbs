@@ -17,11 +17,11 @@ from datetime import datetime as dt
 from pathlib import Path
 from typing import cast
 
-import pydantic
 from crtlib.errors import CRTError
 from crtlib.git_utils import SHA, GitError, git_format_patch, git_patch_id
 from crtlib.logger import logger as parent_logger
 from crtlib.models.common import AuthorData
+from crtlib.models.patch import PatchInfo, PatchMeta
 
 logger = parent_logger.getChild("patch")
 
@@ -36,29 +36,6 @@ class MalformedPatchBodyError(PatchError):
 
 class PatchExistsError(PatchError):
     pass
-
-
-class PatchInfo(pydantic.BaseModel):
-    author: AuthorData
-    date: dt
-    title: str
-    desc: str
-    signed_off_by: list[AuthorData]
-    cherry_picked_from: list[str]
-    fixes: list[str]
-
-    @property
-    def canonical_title(self) -> str:
-        r1 = re.compile(r"[\s:/\]\[\(\)]")
-        r2 = re.compile(r"['\",.+\<>~^$@!?%&=;`]")
-        return r2.sub(r"", r1.sub(r"-", self.title.lower()))
-
-
-class PatchMeta(pydantic.BaseModel):
-    sha: SHA
-    patch_id: SHA
-    src_version: str | None
-    info: PatchInfo
 
 
 def _split_version_into_paths(version: str) -> list[Path]:
@@ -223,12 +200,6 @@ def patch_import(
         logger.error(msg)
         raise PatchError(msg=msg) from None
 
-    patch_meta_path = patches_path.joinpath("meta").joinpath(f"{sha}.json")
-    if patch_meta_path.exists():
-        msg = f"patch sha '{sha}' already imported"
-        logger.warning(msg)
-        raise PatchExistsError(msg=msg)
-
     try:
         formatted_patch = git_format_patch(repo_path, sha)
     except GitError as e:
@@ -242,16 +213,29 @@ def patch_import(
         logger.error(f"unable to parse formatted patch info: {e}")
         raise e from None
 
-    patch_path = patches_path.joinpath("patches").joinpath(f"{sha}.patch")
-    patch_meta_path.parent.mkdir(parents=True, exist_ok=True)
-    patch_path.parent.mkdir(parents=True, exist_ok=True)
-
     patch_meta = PatchMeta(
         sha=sha,
         patch_id=patch_id,
         src_version=src_version,
         info=patch_info,
     )
+
+    patch_path = patches_path.joinpath("patches").joinpath(
+        f"{patch_meta.entry_uuid}.patch"
+    )
+    patch_meta_path = (
+        patches_path.joinpath("patches")
+        .joinpath("meta")
+        .joinpath(f"{patch_meta.entry_uuid}.json")
+    )
+    # FIXME: ensure patch sha is not duplicate, maybe with a symlink per sha
+    if patch_meta_path.exists():
+        msg = f"patch uuid '{patch_meta.entry_uuid}' already imported"
+        logger.warning(msg)
+        raise PatchExistsError(msg=msg)
+
+    patch_meta_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         _ = patch_path.write_text(formatted_patch)
@@ -283,7 +267,7 @@ def patch_import(
                     patch_n = p_n
 
         next_patch_n = patch_n + 1
-        target_patch_name = f"{next_patch_n:04d}-{patch_info.canonical_title}.patch"
+        target_patch_name = f"{next_patch_n:04d}-{patch_meta.canonical_title}.patch"
         target_patch_lnk = target_path.joinpath(target_patch_name)
         relative_to_root_path = patches_path.relative_to(target_path, walk_up=True)
         logger.debug(f"relative_to_root_path: {relative_to_root_path}")
@@ -299,3 +283,66 @@ def patch_import(
             f"linked patch '{sha}' to version '{target_version}' "
             + f"patch '{target_patch_name}'"
         )
+
+
+def patch_add(
+    patches_repo_path: Path,
+    src_repo_path: Path,
+    sha: SHA,
+    src_version: str | None,
+) -> PatchMeta:
+    try:
+        patch_id = git_patch_id(src_repo_path, sha)
+    except GitError as e:
+        msg = f"unable to obtain patch id for sha '{sha}': {e}"
+        logger.error(msg)
+        raise PatchError(msg=msg) from None
+
+    try:
+        formatted_patch = git_format_patch(src_repo_path, sha)
+    except GitError as e:
+        msg = f"unable to obtain formatted patch for sha '{sha}': {e}"
+        logger.error(msg)
+        raise PatchError(msg=msg) from None
+
+    try:
+        patch_info = parse_formatted_patch_info(formatted_patch)
+    except PatchError as e:
+        logger.error(f"unable to parse formatted patch info: {e}")
+        raise e from None
+
+    patch_meta = PatchMeta(
+        sha=sha,
+        patch_id=patch_id,
+        src_version=src_version,
+        info=patch_info,
+    )
+    patch_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath(f"{patch_meta.entry_uuid}.patch")
+    )
+    patch_meta_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath("meta")
+        .joinpath(f"{patch_meta.entry_uuid}.json")
+    )
+    # FIXME: ensure patch sha is not duplicate, maybe with a symlink per sha
+    if patch_meta_path.exists():
+        msg = f"patch uuid '{patch_meta.entry_uuid}' already imported"
+        logger.warning(msg)
+        raise PatchExistsError(msg=msg)
+
+    patch_meta_path.parent.mkdir(parents=True, exist_ok=True)
+    patch_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _ = patch_path.write_text(formatted_patch)
+        _ = patch_meta_path.write_text(patch_meta.model_dump_json(indent=2))
+    except Exception as e:
+        msg = f"unable to write imported patch: {e}"
+        logger.error(msg)
+        raise PatchError(msg=msg) from None
+
+    return patch_meta

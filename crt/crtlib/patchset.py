@@ -12,17 +12,30 @@
 # GNU General Public License for more details.
 
 
+import uuid
 from pathlib import Path
 
-from crtlib.errors.patchset import PatchSetCheckError, PatchSetError
+import pydantic
+from crtlib.errors.patchset import (
+    MalformedPatchSetError,
+    NoSuchPatchSetError,
+    PatchSetCheckError,
+    PatchSetError,
+)
 from crtlib.git_utils import (
     GitEmptyPatchDiffError,
+    GitError,
     GitPatchDiffError,
     git_check_patches_diff,
+    git_format_patch,
+    git_prepare_remote,
 )
 from crtlib.logger import logger as parent_logger
+from crtlib.models.discriminator import (
+    ManifestPatchEntryWrapper,
+)
 from crtlib.models.patch import Patch
-from crtlib.models.patchset import PatchSetBase
+from crtlib.models.patchset import GitHubPullRequest, PatchSetBase
 from crtlib.patch import PatchError, patch_import
 
 logger = parent_logger.getChild("patchset")
@@ -35,7 +48,7 @@ def patchset_check_patches_diff(
 
     try:
         added, skipped = git_check_patches_diff(
-            ceph_git_path, base_ref, patchset_branch, limit=patchset.get_base_sha
+            ceph_git_path, base_ref, patchset_branch, limit=patchset.base_sha
         )
     except GitEmptyPatchDiffError:
         logger.warning(
@@ -78,4 +91,143 @@ def patchset_import_patches(
             raise PatchSetError(msg=msg) from None
 
         logger.info(f"imported patch set's patch sha '{patch.sha}'")
+
+
+def patchset_get_gh(
+    patches_repo_path: Path, repo_owner: str, repo_name: str, pr_id: int
+) -> GitHubPullRequest:
+    patchset_pr_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath(repo_owner)
+        .joinpath(repo_name)
+        .joinpath(str(pr_id))
+    )
+    if not patchset_pr_path.exists():
+        raise NoSuchPatchSetError()
+
+    try:
+        patchset_uuid_str = patchset_pr_path.read_text()
+    except Exception as e:
+        msg = f"error reading patch set uuid: {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    if not patchset_uuid_str:
+        msg = "unexpected missing patch set uuid"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    try:
+        patchset_uuid = uuid.UUID(patchset_uuid_str)
+    except Exception:
+        msg = f"unexpected malformed patch set uuid: '{patchset_uuid_str}'"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    patchset_meta_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath("meta")
+        .joinpath(f"{patchset_uuid}.json")
+    )
+    if not patchset_meta_path.exists():
+        msg = f"missing patch set meta for uuid '{patchset_uuid}'"
+        logger.error(msg)
+        raise PatchSetError(msg=msg)
+
+    try:
+        # ta = pydantic.TypeAdapter(ManifestPatchSetEntryType)
+        # entry = ta.validate_json(patchset_meta_path.read_text())
+        wrapped_entry = ManifestPatchEntryWrapper.model_validate_json(
+            patchset_meta_path.read_text()
+        )
+        entry = wrapped_entry.contents
+    except pydantic.ValidationError as e:
+        msg = f"malformed gh patch set uuid '{patchset_uuid}'"
+        logger.error(msg)
+        logger.error(str(e))
+        raise MalformedPatchSetError(msg=msg) from None
+    except Exception as e:
+        msg = f"unexpected error obtaining patch set meta uuid '{patchset_uuid}': {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    if not isinstance(entry, GitHubPullRequest):
+        raise PatchSetError(msg=f"wrong patch set type: {type(entry)}")
+    return entry
+    # return GitHubPullRequest.model_validate_json(patchset_meta_path.read_text())
+
+
+def patchset_fetch_gh_patches(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patchset: GitHubPullRequest,
+    token: str,
+) -> None:
+    pr_id = patchset.pull_request_id
+    # check for the patchset in the patches repo path
+    patchset_pr_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath(patchset.org_name)
+        .joinpath(patchset.repo_name)
+        .joinpath(str(pr_id))
+    )
+    if patchset_pr_path.exists():
+        logger.info(f"patch set '{pr_id}' already exists")
+        return
+    patchset_pr_path.parent.mkdir(exist_ok=True, parents=True)
+
+    patchset_meta_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath("meta")
+        .joinpath(f"{patchset.entry_uuid}.json")
+    )
+    patchset_meta_path.parent.mkdir(exist_ok=True, parents=True)
+
+    patchset_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath(f"{patchset.entry_uuid}.patch")
+    )
+    patchset_path.parent.mkdir(exist_ok=True, parents=True)
+
+    # obtain patches
+    repo_path = f"{patchset.org_name}/{patchset.repo_name}"
+    remote = git_prepare_remote(
+        ceph_repo_path, f"github.com/{repo_path}", repo_path, token
+    )
+    src_ref = f"pull/{pr_id}/head"
+    dst_ref = f"patchset/gh/{repo_path}/{pr_id}"
+    try:
+        _ = remote.fetch(f"{src_ref}:{dst_ref}")
+    except Exception as e:
+        msg = f"error fetching patchset '{pr_id}' from '{repo_path}': {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    try:
+        formatted_patchset = git_format_patch(
+            ceph_repo_path,
+            patchset.head_sha,
+            base_rev=patchset.base_sha,
+        )
+    except GitError as e:
+        msg = f"error formatting patch set: {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    try:
+        _ = patchset_path.write_text(formatted_patchset)
+        _ = patchset_pr_path.write_text(str(patchset.entry_uuid))
+        _ = patchset_meta_path.write_text(
+            ManifestPatchEntryWrapper(contents=patchset).model_dump_json(indent=2)
+        )
+    except Exception as e:
+        msg = f"error writing patch set '{pr_id}' from '{repo_path}': {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
     pass

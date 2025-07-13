@@ -19,7 +19,13 @@ from pathlib import Path
 from typing import cast
 
 import click
-from crtlib.apply import ApplyConflictError, ApplyError, patchset_apply_to_manifest
+from crtlib.apply import (
+    ApplyConflictError,
+    ApplyError,
+    patches_apply_to_manifest,
+    patchset_apply_to_manifest,
+)
+from crtlib.db.db import ReleasesDB
 from crtlib.errors.manifest import (
     MalformedManifestError,
     NoSuchManifestError,
@@ -31,7 +37,11 @@ from crtlib.errors.patchset import (
 )
 from crtlib.github import gh_get_pr
 from crtlib.models.patchset import GitHubPullRequest
-from crtlib.patchset import patchset_import_patches
+from crtlib.patchset import (
+    patchset_fetch_gh_patches,
+    patchset_get_gh,
+    patchset_import_patches,
+)
 from crtlib.utils import print_patch_tree
 
 from cmds import Ctx, pass_ctx, perror, pinfo, psuccess, pwarn, rprint
@@ -45,7 +55,7 @@ def cmd_patchset() -> None:
     pass
 
 
-@cmd_patchset.group("add", help="Add a patch set to a release.")
+@cmd_patchset.group("gh", help="Add a patch set from GitHub to a release.")
 @click.option(
     "-c",
     "--ceph-git-path",
@@ -56,7 +66,7 @@ def cmd_patchset() -> None:
     help="Path to ceph git repository",
 )
 @pass_ctx
-def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
+def cmd_patchset_gh(ctx: Ctx, ceph_git_path: Path) -> None:
     if not ceph_git_path.joinpath(".git").exists():
         perror(f"path at '{ceph_git_path}' is not a git repository")
         sys.exit(errno.EINVAL)
@@ -68,7 +78,7 @@ def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
     ctx.ceph_git_path = ceph_git_path
 
 
-@cmd_patchset_add.command("gh", help="Add patch set from GitHub")
+@cmd_patchset_gh.command("add", help="Add patch set from GitHub")
 @click.argument(
     "pr_id",
     type=int,
@@ -107,7 +117,7 @@ def cmd_patchset_add(ctx: Ctx, ceph_git_path: Path) -> None:
     help="Path to CES patches git repository.",
 )
 @pass_ctx
-def cmd_patchset_add_gh(
+def cmd_patchset_gh_add(
     ctx: Ctx,
     pr_id: int,
     manifest_uuid: uuid.UUID,
@@ -170,8 +180,7 @@ def cmd_patchset_add_gh(
             db.store_gh_patchset(patchset)
         except Exception as e:
             perror(
-                f"unable to write patch set '{patchset.patchset_uuid}' "
-                + f"to disk: {e}"
+                f"unable to write patch set '{patchset.entry_uuid}' " + f"to disk: {e}"
             )
             sys.exit(errno.ENOTRECOVERABLE)
 
@@ -230,7 +239,35 @@ def cmd_patchset_add_gh(
     psuccess(f"pr id '{pr_id}' added to manifest '{manifest_uuid}'")
 
 
-@cmd_patchset.command("create")
+def _add_gh_patchset(  # pyright: ignore[reportUnusedFunction]
+    db: ReleasesDB, pr_id: int, gh_repo_owner: str, gh_repo_name: str, token: str
+) -> None:
+    patchset: GitHubPullRequest | None = None
+    try:
+        patchset = db.load_gh_pr(gh_repo_owner, gh_repo_name, pr_id)
+    except NoSuchPatchSetError:
+        pinfo("patch set not found, obtain from github")
+    except PatchSetError as e:
+        perror(f"unable to obtain patch set: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+    except Exception as e:
+        perror(f"error: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not patchset:
+        patchset = gh_get_pr(gh_repo_owner, gh_repo_name, pr_id, token=token)
+
+        try:
+            db.store_gh_patchset(patchset)
+        except Exception as e:
+            perror(
+                f"unable to write patch set '{patchset.entry_uuid}' " + f"to disk: {e}"
+            )
+            sys.exit(errno.ENOTRECOVERABLE)
+    pass
+
+
+@cmd_patchset.command("add", help="Add a new patch set to a release.")
 @click.option(
     "-p",
     "--patches-repo",
@@ -263,28 +300,161 @@ def cmd_patchset_add_gh(
     required=True,
     help="Path to the staging ceph git repository.",
 )
-@click.option("-v", "--version", type=str, required=True, help="Target Ceph version.")
-@click.option("--desc", type=str, required=False, help="Patch Set description.")
 @click.option(
-    "--fixes", type=str, required=False, multiple=True, help="Trackers fixed."
-)
-@click.option("--from-gh", type=int, required=False, help="From a GitHub pull request.")
-@click.option(
-    "--author", "author_name", type=str, required=True, help="Patch Set's author name."
+    "--from-gh",
+    type=str,
+    required=False,
+    metavar="PR_ID|URL",
+    help="From a GitHub pull request.",
 )
 @click.option(
-    "--email", "author_email", type=str, required=True, help="Patch Set's author email."
+    "--from-gh-repo",
+    type=str,
+    required=False,
+    metavar="OWNER/REPO",
+    default="ceph/ceph",
+    help="Specify GitHub repository to obtain patch set from",
+    show_default=True,
+)
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to which the patch set will be added.",
 )
 @pass_ctx
-def cmd_patchset_create(
+def cmd_patchset_add(
     ctx: Ctx,
     patches_repo_path: Path,
     ceph_repo_path: Path,
-    version: str,
-    desc: str | None,
-    fixes: list[str] | None,
-    from_gh: int | None,
-    author_name: str,
-    author_email: str,
+    from_gh: str | None,
+    from_gh_repo: str | None,
+    manifest_uuid: uuid.UUID,
 ) -> None:
-    pass
+    if not ctx.github_token:
+        perror("missing GitHub token")
+        sys.exit(errno.EINVAL)
+
+    def _check_repo(repo_path: Path, what: str) -> None:
+        if not repo_path.exists():
+            perror(f"{what} repository does not exist at '{repo_path}'")
+            sys.exit(errno.ENOENT)
+
+        if not repo_path.joinpath(".git").exists():
+            perror(f"provided path for {what} repository is not a git repository")
+            sys.exit(errno.EINVAL)
+
+    def _get_gh_pr_data() -> tuple[int | None, str | None, str | None]:
+        pr_id: int | None = None
+        if from_gh:
+            if m := re.match(r"^(\d+)$|^https://.*/pull/(\d+).*$", from_gh):
+                pr_id = int(m.group(1))
+            else:
+                perror("malformed GitHub pull request ID or URL")
+                sys.exit(errno.EINVAL)
+
+        gh_owner: str | None = None
+        gh_repo: str | None = None
+        if from_gh_repo:
+            if m := re.match(r"^([\w\d_.-]+)/([\w\d_.-]+)$", from_gh_repo):
+                gh_owner = cast(str, m.group(1))
+                gh_repo = cast(str, m.group(2))
+            else:
+                perror("malformed GitHub repository name")
+                sys.exit(errno.EINVAL)
+
+        if from_gh and not from_gh_repo:
+            perror("missing GitHub repository to obtain patch set from")
+            sys.exit(errno.EINVAL)
+
+        return (pr_id, gh_owner, gh_repo)
+
+    _check_repo(patches_repo_path, "patches")
+    _check_repo(ceph_repo_path, "ceph")
+    gh_pr_id, gh_repo_owner, gh_repo = _get_gh_pr_data()
+
+    db = ctx.db
+
+    try:
+        manifest = db.load_manifest(manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{manifest_uuid}' in db")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest '{manifest_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to obtain manifest '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not manifest.active_stage:
+        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
+        pwarn(
+            "please run '[bold bright_magenta]manifest stage new[/bold bright_magenta]'"
+        )
+        sys.exit(errno.ENOENT)
+
+    if not gh_pr_id:
+        # FIXME: for now, we don't deal with anything other than gh patch sets
+        pwarn("not currently supported")
+        return
+
+    # FIXME: this must be properly checked once we support more than just gh prs
+    assert gh_repo_owner
+    assert gh_repo
+
+    patchset: GitHubPullRequest | None = None
+    try:
+        patchset = patchset_get_gh(patches_repo_path, gh_repo_owner, gh_repo, gh_pr_id)
+        pinfo("found patch set")
+    except NoSuchPatchSetError:
+        pinfo("patch set not found, obtain from github")
+    except PatchSetError as e:
+        perror(f"unable to obtain patch set: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+    except Exception as e:
+        perror(f"error found: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not patchset:
+        # obtain from github
+        try:
+            patchset = gh_get_pr(
+                gh_repo_owner, gh_repo, gh_pr_id, token=ctx.github_token
+            )
+            patchset_fetch_gh_patches(
+                ceph_repo_path, patches_repo_path, patchset, ctx.github_token
+            )
+        except PatchSetError as e:
+            perror(f"unable to obtain patch set: {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+        except Exception as e:
+            perror(f"unexpected error: {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+    pinfo("apply patch set to manifest's repository")
+    try:
+        _, added, skipped = patches_apply_to_manifest(
+            manifest, patchset, ceph_repo_path, patches_repo_path, ctx.github_token
+        )
+    except (ApplyError, Exception) as e:
+        perror(f"unable to apply to manifest: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    logger.debug(f"added: {added}")
+    logger.debug(f"skipped: {skipped}")
+    psuccess("successfully applied patch set to manifest")
+
+    if not manifest.add_patchset(patchset):
+        perror("unexpected error adding patch set to manifest !!")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        db.store_manifest(manifest)
+    except Exception as e:
+        perror(f"unable to write manifest '{manifest_uuid}' to db: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"pr id '{gh_pr_id}' added to manifest '{manifest_uuid}'")

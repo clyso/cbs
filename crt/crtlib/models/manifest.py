@@ -11,6 +11,8 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from __future__ import annotations
+
 import datetime
 import hashlib
 import string
@@ -25,8 +27,14 @@ from crtlib.errors.manifest import (
     NoActiveManifestStageError,
 )
 from crtlib.git_utils import SHA
-from crtlib.models.common import AuthorData
-from crtlib.models.patchset import PatchSetBase
+from crtlib.models.common import (
+    AuthorData,
+    ManifestPatchEntry,
+)
+from crtlib.models.discriminator import (
+    ManifestPatchEntryWrapper,
+)
+from crtlib.models.patch import PatchMeta
 
 from . import logger as parent_logger
 
@@ -36,6 +44,7 @@ logger = parent_logger.getChild("manifest")
 class ManifestStage(pydantic.BaseModel):
     author: AuthorData
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
+    patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
     patchsets: list[uuid.UUID] = pydantic.Field(default=[])
 
     committed: bool = pydantic.Field(default=False)
@@ -47,8 +56,8 @@ class ManifestStage(pydantic.BaseModel):
         h.update(self.creation_date.isoformat().encode())
         h.update(bytes(self.committed))
 
-        for patchset_uuid in self.patchsets:
-            h.update(patchset_uuid.bytes)
+        for entry in self.patches:
+            h.update(entry.contents.compute_hash_bytes())
 
         return h.hexdigest()
 
@@ -115,6 +124,10 @@ class ReleaseManifest(pydantic.BaseModel):
         return lst
 
     @property
+    def patches(self) -> list[ManifestPatchEntry]:
+        return [e.contents for stage in self.stages for e in stage.patches]
+
+    @property
     def active_stage(self) -> ManifestStage | None:
         try:
             return self.get_active_stage()
@@ -125,9 +138,14 @@ class ReleaseManifest(pydantic.BaseModel):
     def committed(self) -> bool:
         return all(s.committed for s in self.stages)
 
-    def contains_patchset(self, patchset: PatchSetBase) -> bool:
+    def contains_patchset(self, patchset: ManifestPatchEntry) -> bool:
         """Check if the release manifest contains a given patch set."""
-        return patchset.patchset_uuid in self.patchsets
+        return patchset.entry_uuid in self.patchsets
+        # return (
+        #     patchset.patchset_uuid in self.patchsets
+        #     if isinstance(patchset, PatchSetBase)
+        #     else patchset in self.patchsets
+        # )
 
     def get_active_stage(self) -> ManifestStage:
         """
@@ -188,7 +206,7 @@ class ReleaseManifest(pydantic.BaseModel):
         stage.committed = True
         return stage
 
-    def add_patchset(self, patchset: PatchSetBase) -> bool:
+    def add_patchset(self, patchset: ManifestPatchEntry) -> bool:
         """
         Add a patch set to this release manifest.
 
@@ -203,7 +221,16 @@ class ReleaseManifest(pydantic.BaseModel):
 
         # propagate 'NoActiveManifestStageError'
         stage = self.get_active_stage()
-        stage.patchsets.append(patchset.patchset_uuid)
+        stage.patchsets.append(patchset.entry_uuid)
+
+        stage.patches.append(ManifestPatchEntryWrapper(contents=patchset))  # pyright: ignore[reportArgumentType]
+        return True
+
+    def add_patch(self, patch: PatchMeta) -> bool:
+        if self.contains_patchset(patch):
+            return False
+        stage = self.get_active_stage()
+        stage.patches.append(ManifestPatchEntryWrapper(contents=patch))
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:

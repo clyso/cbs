@@ -69,6 +69,10 @@ class GitCherryPickConflictError(GitCherryPickError):
         self.conflicts = files if files else []
 
 
+class GitAMApplyError(GitError):
+    pass
+
+
 class GitMissingRemoteError(GitError):
     remote_name: str
 
@@ -256,6 +260,27 @@ def git_abort_cherry_pick(repo_path: Path) -> None:
         logger.error(f"found error aborting cherry-pick: {e.stderr}")
 
 
+def git_am_apply(repo_path: Path, patch_path: Path) -> None:
+    repo = git.Repo(repo_path)
+
+    try:
+        _ = repo.git.am(str(patch_path))  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        msg = f"unable to apply patch '{patch_path}'"
+        logger.error(msg)
+        logger.error(e.stderr)
+        raise GitAMApplyError(msg=msg) from None
+
+
+def git_am_abort(repo_path: Path) -> None:
+    repo = git.Repo(repo_path)
+
+    try:
+        _ = repo.git.am(["--abort"])  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        logger.error(f"found error aborting git-am:\n{e.stderr}")
+
+
 def git_cleanup_repo(repo_path: Path) -> None:
     repo = git.Repo(repo_path)
     try:
@@ -266,6 +291,7 @@ def git_cleanup_repo(repo_path: Path) -> None:
                 "-f",
             ]
         )
+        repo.git.clean(["-ffdx"])  # pyright: ignore[reportAny]
         repo.git.reset(["--hard"])  # pyright: ignore[reportAny]
     except git.CommandError as e:
         msg = f"unable to clean up repository '{repo_path}': {e}"
@@ -621,13 +647,15 @@ def git_revparse(repo_path: Path, commitish: SHA | str) -> str:
     return res.hexsha
 
 
-def git_format_patch(repo_path: Path, rev: SHA) -> str:
+def git_format_patch(repo_path: Path, rev: SHA, *, base_rev: SHA | None = None) -> str:
     repo = git.Repo(repo_path)
 
+    rev_str = f"{base_rev}..{rev}" if base_rev else f"{rev}~1..{rev}"
+
     try:
-        res = cast(str, repo.git.format_patch(["--stdout", f"{rev}~1..{rev}"]))  # pyright: ignore[reportAny]
+        res = cast(str, repo.git.format_patch(["--stdout", rev_str]))  # pyright: ignore[reportAny]
     except git.CommandError as e:
-        msg = f"unable to obtain format patch for '{rev}': {e}"
+        msg = f"unable to obtain format patch for '{rev_str}': {e}"
         logger.error(msg)
         raise GitError(msg=msg) from None
 

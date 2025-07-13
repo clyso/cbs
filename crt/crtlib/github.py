@@ -326,7 +326,7 @@ def gh_get_pr(
     )
 
     pr_commits = gh_pr_get_patches(
-        pr_commits_url, patchset.patchset_uuid, repo_url=repo_url, token=token
+        pr_commits_url, patchset.entry_uuid, repo_url=repo_url, token=token
     )
     patchset.patches = pr_commits
 
