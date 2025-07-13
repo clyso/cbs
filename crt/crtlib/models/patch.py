@@ -13,10 +13,16 @@
 
 import uuid
 from datetime import datetime as dt
+from typing import override
 
 import pydantic
 from crtlib.git_utils import SHA
-from crtlib.models.common import AuthorData
+from crtlib.models.common import (
+    AuthorData,
+    ManifestPatchEntry,
+    ManifestPatchSetEntryType,
+    patch_canonical_title,
+)
 
 
 class Patch(pydantic.BaseModel):
@@ -37,3 +43,32 @@ class Patch(pydantic.BaseModel):
     patch_id: SHA
     patch_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
     patchset_uuid: uuid.UUID | None
+
+
+class PatchInfo(pydantic.BaseModel):
+    author: AuthorData
+    date: dt
+    title: str
+    desc: str
+    signed_off_by: list[AuthorData]
+    cherry_picked_from: list[str]
+    fixes: list[str]
+
+
+class PatchMeta(ManifestPatchEntry):
+    sha: SHA
+    patch_id: SHA
+    src_version: str | None
+    info: PatchInfo
+
+    @override
+    def _get_entry_type(self) -> ManifestPatchSetEntryType:
+        return ManifestPatchSetEntryType.SINGLE
+
+    @override
+    def _get_canonical_title(self) -> str:
+        return patch_canonical_title(self.info.title)
+
+    @override
+    def compute_hash_bytes(self) -> bytes:
+        return self.model_dump_json().encode()

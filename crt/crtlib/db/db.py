@@ -356,5 +356,5 @@ class ReleasesDB:
 
         # clean up
         logger.info(f"published manifest '{manifest.release_uuid}'")
-        logger.debug("clean up local artefacts")
-        self._local_db.remove_manifest(manifest.release_uuid)
+        # logger.debug("clean up local artefacts")
+        # self._local_db.remove_manifest(manifest.release_uuid)

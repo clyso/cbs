@@ -13,18 +13,22 @@
 
 
 import abc
-import uuid
 from datetime import datetime as dt
-from typing import Annotated, Any
+from typing import Annotated, Any, override
 
 import pydantic
 from crtlib.errors.patchset import EmptyPatchSetError
 from crtlib.git_utils import SHA
-from crtlib.models.common import AuthorData
+from crtlib.models.common import (
+    AuthorData,
+    ManifestPatchEntry,
+    ManifestPatchSetEntryType,
+    patch_canonical_title,
+)
 from crtlib.models.patch import Patch
 
 
-class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafeMultipleInheritance]
+class PatchSetBase(ManifestPatchEntry, abc.ABC):
     """Represents a set of related patches."""
 
     author: AuthorData
@@ -33,15 +37,21 @@ class PatchSetBase(pydantic.BaseModel, abc.ABC):  # pyright: ignore[reportUnsafe
     related_to: list[str]
     patches: list[Patch]
 
-    patchset_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
-
     @property
-    def get_base_sha(self) -> SHA:
+    def base_sha(self) -> SHA:
         if not self.patches:
-            raise EmptyPatchSetError(str(self.patchset_uuid))
+            raise EmptyPatchSetError(str(self.entry_uuid))
 
         first_patch = next(iter(self.patches))
         return first_patch.parent
+
+    @property
+    def head_sha(self) -> SHA:
+        if not self.patches:
+            raise EmptyPatchSetError(str(self.entry_uuid))
+
+        last_patch = next(reversed(self.patches))
+        return last_patch.sha
 
 
 class GitHubPullRequest(PatchSetBase):
@@ -54,6 +64,19 @@ class GitHubPullRequest(PatchSetBase):
     merge_date: dt | None
     merged: bool
     target_branch: str
+
+    @override
+    def _get_entry_type(self) -> ManifestPatchSetEntryType:
+        return ManifestPatchSetEntryType.PATCHSET_GITHUB
+
+    @override
+    def _get_canonical_title(self) -> str:
+        patch_title = patch_canonical_title(self.title)
+        return f"[{self.pull_request_id}]-{patch_title}"
+
+    @override
+    def compute_hash_bytes(self) -> bytes:
+        return self.model_dump_json().encode()
 
 
 def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny, reportAny]
