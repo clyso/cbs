@@ -36,6 +36,7 @@ from crtlib.errors.patchset import (
     PatchSetExistsError,
 )
 from crtlib.github import gh_get_pr
+from crtlib.manifest import load_manifest, store_manifest
 from crtlib.models.patchset import GitHubPullRequest
 from crtlib.patchset import (
     patchset_fetch_gh_patches,
@@ -375,10 +376,11 @@ def cmd_patchset_add(
     _check_repo(ceph_repo_path, "ceph")
     gh_pr_id, gh_repo_owner, gh_repo = _get_gh_pr_data()
 
-    db = ctx.db
+    # db = ctx.db
 
     try:
-        manifest = db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -452,7 +454,8 @@ def cmd_patchset_add(
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        db.store_manifest(manifest)
+        store_manifest(patches_repo_path, manifest)
+        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest '{manifest_uuid}' to db: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

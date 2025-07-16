@@ -31,9 +31,11 @@ from crtlib.errors.manifest import (
 )
 from crtlib.manifest import (
     ManifestExecuteResult,
-    manifest_create,
+    list_manifests,
+    load_manifest,
     manifest_execute_new,
     manifest_publish_branch,
+    store_manifest,
 )
 from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.manifest import ReleaseManifest
@@ -96,9 +98,24 @@ def cmd_manifest() -> None:
     default="clyso/ceph",
     help="Destination repository.",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
 @pass_ctx
 def cmd_manifest_create(
-    ctx: Ctx, name: str, base_release: str, base_ref: str, dst_repo: str
+    _ctx: Ctx,
+    name: str,
+    base_release: str,
+    base_ref: str,
+    dst_repo: str,
+    patches_repo_path: Path,
 ) -> None:
     m = re.match(r"(?:(.+)@)?([\w\d_.-]+)", base_ref)
     if not m:
@@ -134,7 +151,8 @@ def cmd_manifest_create(
     )
 
     try:
-        manifest_create(ctx.db, manifest)
+        store_manifest(patches_repo_path, manifest)
+        # manifest_create(ctx.db, manifest)
     except ManifestError as e:
         perror(f"unable to create manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -154,26 +172,43 @@ def cmd_manifest_create(
 
 
 @cmd_manifest.command("list", help="List existing release manifest.")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
 @pass_ctx
-def cmd_manifest_list(ctx: Ctx) -> None:
-    lst = ctx.db.list_manifests(from_remote=True)
-    for entry in lst:
-        classifiers: list[str] = []
-        if entry.local:
-            classifiers.append("[bold green]staged[/bold green]")
-        if entry.from_s3:
-            classifiers.append("[bold gold1]remote[/bold gold1]")
-        if entry.modified:
-            classifiers.append("[bold red]modified[/bold red]")
+def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
+    # lst = ctx.db.list_manifests(from_remote=True)
 
-        classifiers_str_lst = ", ".join(classifiers)
-        classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
+    try:
+        manifest_lst = list_manifests(patches_repo_path)
+    except ManifestError as e:
+        perror(f"unable to list manifests: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
-        table = _gen_rich_manifest_table(entry.manifest)
+    for entry in manifest_lst:
+        # classifiers: list[str] = []
+        # if entry.local:
+        #     classifiers.append("[bold green]staged[/bold green]")
+        # if entry.from_s3:
+        #     classifiers.append("[bold gold1]remote[/bold gold1]")
+        # if entry.modified:
+        #     classifiers.append("[bold red]modified[/bold red]")
+        #
+        # classifiers_str_lst = ", ".join(classifiers)
+        # classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
+
+        table = _gen_rich_manifest_table(entry)
         console.print(
             Panel(
                 table,
-                title=f"Manifest {entry.manifest.release_uuid}{classifiers_str}",
+                title=f"Manifest {entry.release_uuid}",
                 box=rich.box.SQUARE,
             )
         )
@@ -208,14 +243,18 @@ def cmd_manifest_list(ctx: Ctx) -> None:
 )
 @pass_ctx
 def cmd_manifest_info(
-    ctx: Ctx,
+    _ctx: Ctx,
     manifest_uuid: uuid.UUID | None,
     patches_repo_path: Path,
     stages: bool,
 ) -> None:
-    db = ctx.db
+    # db = ctx.db
 
-    lst = db.list_manifests(from_remote=True)
+    try:
+        manifest_lst = list_manifests(patches_repo_path)
+    except ManifestError as e:
+        perror(f"unable to obtain manifest list: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     def _patchset_entry(
         patches: list[ManifestPatchEntryWrapper], uncommitted: bool | None = None
@@ -321,8 +360,7 @@ def cmd_manifest_info(
 
         return patches_tree_lst
 
-    for entry in lst:
-        manifest = entry.manifest
+    for manifest in manifest_lst:
         if manifest_uuid and manifest.release_uuid != manifest_uuid:
             continue
 
@@ -373,16 +411,16 @@ def cmd_manifest_info(
             else Group("[bold red]None")
         )
 
-        classifiers: list[str] = []
-        if entry.local:
-            classifiers.append("[bold green]staging[/bold green]")
-        if entry.from_s3:
-            classifiers.append("[bold gold1]remote[/bold gold1]")
-        if entry.modified:
-            classifiers.append("[bold red]modified[/bold red]")
-
-        classifiers_str_lst = ", ".join(classifiers)
-        classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
+        # classifiers: list[str] = []
+        # if entry.local:
+        #     classifiers.append("[bold green]staging[/bold green]")
+        # if entry.from_s3:
+        #     classifiers.append("[bold gold1]remote[/bold gold1]")
+        # if entry.modified:
+        #     classifiers.append("[bold red]modified[/bold red]")
+        #
+        # classifiers_str_lst = ", ".join(classifiers)
+        # classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
 
         panel = Panel(
             Group(
@@ -391,7 +429,7 @@ def cmd_manifest_info(
                 Padding(stages_group, (0, 0, 0, 2)),
             ),
             box=rich.box.SQUARE,
-            title=f"Manifest {manifest.release_uuid}{classifiers_str}",
+            title=f"Manifest {manifest.release_uuid}",
         )
         console.print(panel)
 
@@ -576,7 +614,8 @@ def cmd_manifest_validate(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = ctx.db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = ctx.db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}'")
         sys.exit(errno.ENOENT)
