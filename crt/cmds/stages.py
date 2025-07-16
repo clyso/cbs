@@ -14,6 +14,7 @@
 import errno
 import sys
 import uuid
+from pathlib import Path
 
 import click
 from crtlib.errors.manifest import (
@@ -22,6 +23,7 @@ from crtlib.errors.manifest import (
     MismatchStageAuthorError,
     NoSuchManifestError,
 )
+from crtlib.manifest import load_manifest, store_manifest
 from crtlib.models.common import AuthorData
 
 from . import Ctx, Symbols, pass_ctx, perror, pinfo, pwarn
@@ -60,18 +62,33 @@ def cmd_manifest_stage() -> None:
     metavar="EMAIL",
     help="Author's email.",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to patches git repository",
+)
 @pass_ctx
 def cmd_manifest_stage_new(
-    ctx: Ctx, manifest_uuid: uuid.UUID, author_name: str, author_email: str
+    _ctx: Ctx,
+    manifest_uuid: uuid.UUID,
+    author_name: str,
+    author_email: str,
+    patches_repo_path: Path,
 ) -> None:
     logger.debug(
         f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
     )
 
-    db = ctx.db
+    # db = ctx.db
 
     try:
-        manifest = db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -93,7 +110,8 @@ def cmd_manifest_stage_new(
     pinfo(f"{Symbols.RIGHT_ARROW} active patchsets: {len(stage.patchsets)}")
 
     try:
-        db.store_manifest(manifest)
+        store_manifest(patches_repo_path, manifest)
+        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -110,14 +128,29 @@ def cmd_manifest_stage_new(
     metavar="UUID",
     help="Manifest UUID to operate on.",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to patches git repository",
+)
 @pass_ctx
-def cmd_manifest_stage_abort(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
+def cmd_manifest_stage_abort(
+    _ctx: Ctx,
+    manifest_uuid: uuid.UUID,
+    patches_repo_path: Path,
+) -> None:
     logger.debug(f"abort manifest uuid '{manifest_uuid}' active stage")
 
-    db = ctx.db
+    # db = ctx.db
 
     try:
-        manifest = db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -136,7 +169,8 @@ def cmd_manifest_stage_abort(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
     pinfo(f"{Symbols.RIGHT_ARROW} aborted patch sets: {len(stage.patchsets)}")
 
     try:
-        db.store_manifest(manifest)
+        store_manifest(patches_repo_path, manifest)
+        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -153,14 +187,27 @@ def cmd_manifest_stage_abort(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
     metavar="UUID",
     help="Manifest UUID to operate on.",
 )
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to patches git repository",
+)
 @pass_ctx
-def cmd_manifest_stage_commit(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
+def cmd_manifest_stage_commit(
+    _ctx: Ctx, manifest_uuid: uuid.UUID, patches_repo_path: Path
+) -> None:
     logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
 
-    db = ctx.db
+    # db = ctx.db
 
     try:
-        manifest = db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -187,7 +234,8 @@ def cmd_manifest_stage_commit(ctx: Ctx, manifest_uuid: uuid.UUID) -> None:
     pinfo(f"{Symbols.RIGHT_ARROW} sha: {stage.computed_hash}")
 
     try:
-        db.store_manifest(manifest)
+        store_manifest(patches_repo_path, manifest)
+        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

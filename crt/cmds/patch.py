@@ -22,6 +22,7 @@ import click
 from crtlib.apply import ApplyError, patches_apply_to_manifest
 from crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
 from crtlib.git_utils import GitError, git_prepare_remote, git_revparse
+from crtlib.manifest import load_manifest, store_manifest
 from crtlib.patch import (
     PatchError,
     PatchExistsError,
@@ -291,10 +292,11 @@ def cmd_patch_add(
         pwarn("no patches to add")
         sys.exit(errno.ENOENT)
 
-    db = ctx.db
+    # db = ctx.db
 
     try:
-        manifest = db.load_manifest(manifest_uuid)
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -354,7 +356,8 @@ def cmd_patch_add(
         psuccess(f"patch sha '{sha}' added to manifest '{manifest_uuid}'")
 
     try:
-        db.store_manifest(manifest)
+        store_manifest(patches_repo_path, manifest)
+        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest '{manifest_uuid}' to db: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

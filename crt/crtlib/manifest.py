@@ -20,7 +20,11 @@ from pathlib import Path
 import pydantic
 from crtlib.apply import ApplyError, apply_manifest, apply_manifest_new
 from crtlib.db.db import ReleasesDB
-from crtlib.errors.manifest import ManifestError
+from crtlib.errors.manifest import (
+    MalformedManifestError,
+    ManifestError,
+    NoSuchManifestError,
+)
 from crtlib.git_utils import (
     GitError,
     GitFetchError,
@@ -322,3 +326,64 @@ def manifest_publish_branch(
         heads_updated=heads_updated,
         heads_rejected=heads_rejected,
     )
+
+
+def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseManifest:
+    logger.info(f"load manifest uuid '{manifest_uuid}'")
+    manifest_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("manifests")
+        .joinpath(f"{manifest_uuid}.json")
+    )
+    if not manifest_path.exists():
+        logger.error(f"manifest uuid '{manifest_uuid}' does not exist")
+        raise NoSuchManifestError(manifest_uuid)
+
+    try:
+        return ReleaseManifest.model_validate_json(manifest_path.read_text())
+    except pydantic.ValidationError:
+        logger.error(f"malformed manifest uuid '{manifest_uuid}'")
+        raise MalformedManifestError(manifest_uuid) from None
+
+
+def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
+    logger.info(f"store manifest uuid '{manifest.release_uuid}'")
+    manifest_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("manifests")
+        .joinpath(f"{manifest.release_uuid}.json")
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _ = manifest_path.write_text(manifest.model_dump_json(indent=2))
+    except Exception as e:
+        msg = (
+            f"error writing manifest uuid '{manifest.release_uuid}' "
+            + f"to '{manifest_path}': {e}"
+        )
+        logger.error(msg)
+        raise ManifestError(manifest.release_uuid, msg=msg) from None
+
+
+def list_manifests(patches_repo_path: Path) -> list[ReleaseManifest]:
+    manifests_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+    if not manifests_path.exists():
+        return []
+
+    manifests: list[ReleaseManifest] = []
+    for entry in manifests_path.glob("*.json"):
+        try:
+            entry_uuid = uuid.UUID(entry.stem)
+        except Exception:
+            logger.warning(f"malformed manifest uuid '{entry.stem}', ignore")
+            continue
+
+        try:
+            manifests.append(load_manifest(patches_repo_path, entry_uuid))
+        except ManifestError as e:
+            logger.error(f"error loading manifest uuid '{entry_uuid}', skip")
+            logger.error(f"error: {e}")
+            continue
+
+    return sorted(manifests, key=lambda e: e.creation_date)
