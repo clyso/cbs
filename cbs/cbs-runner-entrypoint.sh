@@ -14,6 +14,7 @@
 # GNU General Public License for more details.
 
 ourpath="$(dirname "$(realpath "$0")")"
+workspacepath="$(dirname "${ourpath}/..")"
 
 RUNNER_DIR="/runner"
 
@@ -26,6 +27,8 @@ mkdir "${RUNNER_DIR}"/bin || true
 
 PATH="${RUNNER_DIR}/bin:$PATH"
 export PATH
+
+echo "PATH: ${PATH}"
 
 curl -LsSf https://astral.sh/uv/install.sh |
   UV_INSTALL_DIR="${RUNNER_DIR}"/bin \
@@ -41,7 +44,7 @@ uv venv --python 3.13 "${RUNNER_DIR}"/venv
 # shellcheck source=/dev/null
 source "${RUNNER_DIR}"/venv/bin/activate
 
-uv --directory "${ourpath}" sync --all-packages --no-dev --active || exit 1
+uv --directory "${workspacepath}" sync --all-packages --no-dev --active || exit 1
 
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"
