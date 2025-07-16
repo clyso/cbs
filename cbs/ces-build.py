@@ -187,7 +187,7 @@ def build(
     skip_build: bool,
     force: bool,
 ) -> None:
-    our_dir = Path(sys.argv[0]).parent
+    our_dir = Path(sys.argv[0]).parent.parent
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(

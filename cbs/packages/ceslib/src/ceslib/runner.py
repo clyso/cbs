@@ -125,7 +125,7 @@ async def runner(
             args=podman_args,
             volumes=podman_volumes,
             devices={"/dev/fuse": "/dev/fuse:rw"},
-            entrypoint="/runner/tools/cbs-runner-entrypoint.sh",
+            entrypoint="/runner/tools/cbs/cbs-runner-entrypoint.sh",
             name=ctr_name,
             use_user_ns=False,
             timeout=timeout,
