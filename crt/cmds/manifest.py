@@ -387,9 +387,15 @@ def cmd_manifest_info(
 
             stage_rdr_lst.extend(_patchset_entry(stage.patches, not stage.committed))
 
+            stage_tags = (
+                " ".join(f"<{t}={n}>" for t, n in stage.tags) if stage.tags else ""
+            )
+            stage_tags_str = f" {stage_tags}" if stage_tags else ""
+
             committed_str = " (uncommitted)" if not stage.committed else ""
             title_str = (
-                f"[bold]{Symbols.DOWN_ARROW} Stage #{stage_n}{committed_str}[/bold]"
+                f"[bold]{Symbols.DOWN_ARROW} Stage #{stage_n}"
+                + f"{stage_tags_str}{committed_str}[/bold]"
             )
             stages_renderables.append(
                 Group(

@@ -23,8 +23,10 @@ from crtlib.errors.manifest import (
     MismatchStageAuthorError,
     NoSuchManifestError,
 )
+from crtlib.errors.stages import MalformedStageTagError
 from crtlib.manifest import load_manifest, store_manifest
 from crtlib.models.common import AuthorData
+from crtlib.utils import get_tags
 
 from . import Ctx, Symbols, pass_ctx, perror, pinfo, pwarn
 from . import logger as parent_logger
@@ -63,6 +65,16 @@ def cmd_manifest_stage() -> None:
     help="Author's email.",
 )
 @click.option(
+    "--tag",
+    "-t",
+    "stage_tags",
+    required=False,
+    type=str,
+    metavar="TYPE=N",
+    multiple=True,
+    help="Tag type for this stage",
+)
+@click.option(
     "-p",
     "--patches-repo",
     "patches_repo_path",
@@ -78,11 +90,18 @@ def cmd_manifest_stage_new(
     manifest_uuid: uuid.UUID,
     author_name: str,
     author_email: str,
+    stage_tags: list[str],
     patches_repo_path: Path,
 ) -> None:
     logger.debug(
         f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
     )
+
+    try:
+        tags = get_tags(stage_tags)
+    except MalformedStageTagError as e:
+        perror(f"malformed stage tag: {e}")
+        sys.exit(errno.EINVAL)
 
     # db = ctx.db
 
@@ -100,7 +119,9 @@ def cmd_manifest_stage_new(
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        stage = manifest.new_stage(AuthorData(user=author_name, email=author_email))
+        stage = manifest.new_stage(
+            AuthorData(user=author_name, email=author_email), tags
+        )
     except MismatchStageAuthorError as e:
         perror("already active manifest stage, author mismatch")
         perror(f"active author: {e.stage_author.user} <{e.stage_author.email}>")
