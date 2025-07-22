@@ -25,6 +25,7 @@ from crtlib.errors.manifest import (
     EmptyActiveStageError,
     MismatchStageAuthorError,
     NoActiveManifestStageError,
+    NoStageError,
 )
 from crtlib.git_utils import SHA
 from crtlib.models.common import (
@@ -148,6 +149,13 @@ class ReleaseManifest(pydantic.BaseModel):
         #     else patchset in self.patchsets
         # )
 
+    @property
+    def latest_stage(self) -> ManifestStage:
+        try:
+            return next(reversed(self.stages))
+        except StopIteration:
+            raise NoStageError(self.release_uuid) from None
+
     def get_active_stage(self) -> ManifestStage:
         """
         Get currently active release manifest stage.
@@ -156,8 +164,8 @@ class ReleaseManifest(pydantic.BaseModel):
         """
         stage: ManifestStage | None = None
         try:
-            stage = next(reversed(self.stages))
-        except StopIteration:
+            stage = self.latest_stage
+        except NoStageError:
             logger.debug(f"no available stages on manifest '{self.release_uuid}'")
 
         if not stage or stage.committed:
