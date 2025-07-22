@@ -87,6 +87,12 @@ class EmptyActiveStageError(ManifestError):
         )
 
 
+class NoStageError(ManifestError):
+    @override
+    def __str__(self) -> str:
+        return f"no stage available for manifest '{self.manifest_uuid}'"
+
+
 class ManifestCorruptedStageError(ManifestError):
     expected: SHA
     found: SHA
