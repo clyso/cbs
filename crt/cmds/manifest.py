@@ -359,7 +359,7 @@ def cmd_manifest_info(
                 stage_table.add_row("committed", "Yes" if stage.committed else "No")
                 if stage.committed:
                     stage_table.add_row("hash", stage.hash)
-                stage_table.add_row("patch sets", str(len(stage.patchsets)))
+                stage_table.add_row("patch sets", str(len(stage.patches)))
                 stage_rdr_lst.append(Padding(stage_table, (0, 0, 1, 0)))
 
             stage_rdr_lst.extend(_patchset_entry(stage.patches, not stage.committed))

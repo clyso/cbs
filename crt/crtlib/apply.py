@@ -233,7 +233,7 @@ def patches_apply_to_manifest(
     token: str,
 ) -> tuple[bool, list[ManifestPatchEntry], list[ManifestPatchEntry]]:
     manifest = orig_manifest.model_copy(deep=True)
-    if not manifest.add_patchset(patch):
+    if not manifest.add_patches(patch):
         raise PatchExistsError(msg=f"uuid '{patch.entry_uuid}'")
 
     seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")

@@ -35,7 +35,6 @@ from crtlib.models.common import (
 from crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
 )
-from crtlib.models.patch import PatchMeta
 
 from . import logger as parent_logger
 
@@ -47,7 +46,6 @@ class ManifestStage(pydantic.BaseModel):
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
     tags: list[tuple[str, int]] | None = pydantic.Field(default=[])
     patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
-    patchsets: list[uuid.UUID] = pydantic.Field(default=[])
 
     committed: bool = pydantic.Field(default=False)
     hash: str = pydantic.Field(default="")
@@ -119,13 +117,6 @@ class ReleaseManifest(pydantic.BaseModel):
         return self.computed_hash == self.hash
 
     @property
-    def patchsets(self) -> list[uuid.UUID]:
-        lst: list[uuid.UUID] = []
-        for stage in self.stages:
-            lst.extend(stage.patchsets)
-        return lst
-
-    @property
     def patches(self) -> list[ManifestPatchEntry]:
         return [e.contents for stage in self.stages for e in stage.patches]
 
@@ -140,14 +131,9 @@ class ReleaseManifest(pydantic.BaseModel):
     def committed(self) -> bool:
         return all(s.committed for s in self.stages)
 
-    def contains_patchset(self, patchset: ManifestPatchEntry) -> bool:
+    def contains_patches(self, patches: ManifestPatchEntry) -> bool:
         """Check if the release manifest contains a given patch set."""
-        return patchset.entry_uuid in self.patchsets
-        # return (
-        #     patchset.patchset_uuid in self.patchsets
-        #     if isinstance(patchset, PatchSetBase)
-        #     else patchset in self.patchsets
-        # )
+        return patches.entry_uuid in [e.entry_uuid for e in self.patches]
 
     @property
     def latest_stage(self) -> ManifestStage:
@@ -211,13 +197,13 @@ class ReleaseManifest(pydantic.BaseModel):
         except NoActiveManifestStageError:
             return None
 
-        if not stage.patchsets:
+        if not stage.patches:
             raise EmptyActiveStageError(self.release_uuid)
 
         stage.committed = True
         return stage
 
-    def add_patchset(self, patchset: ManifestPatchEntry) -> bool:
+    def add_patches(self, patches: ManifestPatchEntry) -> bool:
         """
         Add a patch set to this release manifest.
 
@@ -227,21 +213,12 @@ class ReleaseManifest(pydantic.BaseModel):
         - `list[Patch]`, with the patches that were skipped and not added to the
                          release manifest.
         """
-        if self.contains_patchset(patchset):
+        if self.contains_patches(patches):
             return False
 
         # propagate 'NoActiveManifestStageError'
         stage = self.get_active_stage()
-        stage.patchsets.append(patchset.entry_uuid)
-
-        stage.patches.append(ManifestPatchEntryWrapper(contents=patchset))  # pyright: ignore[reportArgumentType]
-        return True
-
-    def add_patch(self, patch: PatchMeta) -> bool:
-        if self.contains_patchset(patch):
-            return False
-        stage = self.get_active_stage()
-        stage.patches.append(ManifestPatchEntryWrapper(contents=patch))
+        stage.patches.append(ManifestPatchEntryWrapper(contents=patches))  # pyright: ignore[reportArgumentType]
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:

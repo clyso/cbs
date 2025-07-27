@@ -245,7 +245,7 @@ def cmd_patch_add(
         logger.debug(f"skipped: {skipped}")
         psuccess(f"successfully applied patch sha '{sha}' to manifest")
 
-        if not manifest.add_patchset(patch_meta):
+        if not manifest.add_patches(patch_meta):
             perror("unexpected error adding patch to manifest !!")
             sys.exit(errno.ENOTRECOVERABLE)
 
