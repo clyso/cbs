@@ -145,7 +145,6 @@ def cmd_manifest_new(
 
     try:
         store_manifest(patches_repo_path, manifest)
-        # manifest_create(ctx.db, manifest)
     except ManifestError as e:
         perror(f"unable to create manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -177,8 +176,6 @@ def cmd_manifest_new(
 )
 @pass_ctx
 def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
-    # lst = ctx.db.list_manifests(from_remote=True)
-
     try:
         manifest_lst = list_manifests(patches_repo_path)
     except ManifestError as e:
@@ -186,17 +183,6 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
         sys.exit(errno.ENOTRECOVERABLE)
 
     for entry in manifest_lst:
-        # classifiers: list[str] = []
-        # if entry.local:
-        #     classifiers.append("[bold green]staged[/bold green]")
-        # if entry.from_s3:
-        #     classifiers.append("[bold gold1]remote[/bold gold1]")
-        # if entry.modified:
-        #     classifiers.append("[bold red]modified[/bold red]")
-        #
-        # classifiers_str_lst = ", ".join(classifiers)
-        # classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
-
         table = _gen_rich_manifest_table(entry)
         console.print(
             Panel(
@@ -241,8 +227,6 @@ def cmd_manifest_info(
     patches_repo_path: Path,
     stages: bool,
 ) -> None:
-    # db = ctx.db
-
     try:
         manifest_lst = list_manifests(patches_repo_path)
     except ManifestError as e:
@@ -410,17 +394,6 @@ def cmd_manifest_info(
             else Group("[bold red]None")
         )
 
-        # classifiers: list[str] = []
-        # if entry.local:
-        #     classifiers.append("[bold green]staging[/bold green]")
-        # if entry.from_s3:
-        #     classifiers.append("[bold gold1]remote[/bold gold1]")
-        # if entry.modified:
-        #     classifiers.append("[bold red]modified[/bold red]")
-        #
-        # classifiers_str_lst = ", ".join(classifiers)
-        # classifiers_str = f" ({classifiers_str_lst})" if classifiers_str_lst else ""
-
         panel = Panel(
             Group(
                 table,
@@ -461,7 +434,6 @@ def _manifest_execute(
     progress.start_task(progress_task)
 
     try:
-        # res = manifest_execute(db, manifest, repo_path, token, no_cleanup=no_cleanup)
         res = manifest_execute_new(
             manifest, ceph_repo_path, patches_repo_path, token, no_cleanup=no_cleanup
         )
