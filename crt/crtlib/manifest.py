@@ -18,8 +18,7 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
-from crtlib.apply import ApplyError, apply_manifest, apply_manifest_new
-from crtlib.db.db import ReleasesDB
+from crtlib.apply import ApplyError, apply_manifest
 from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
@@ -57,15 +56,6 @@ class ManifestPublishResult(pydantic.BaseModel):
     remote_updated: bool
     heads_updated: list[str]
     heads_rejected: list[str]
-
-
-def manifest_create(db: ReleasesDB, manifest: ReleaseManifest) -> None:
-    try:
-        db.store_manifest(manifest, exist_ok=False)
-    except Exception as e:
-        msg = f"unexpected error creating manifest uuid '{manifest.release_uuid}': {e}"
-        logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg=msg) from None
 
 
 def _prepare_repo(
@@ -143,9 +133,9 @@ def _prepare_repo(
 
 
 def manifest_execute(
-    db: ReleasesDB,
     manifest: ReleaseManifest,
-    repo_path: Path,
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
     token: str,
     *,
     no_cleanup: bool = True,
@@ -162,67 +152,9 @@ def manifest_execute(
 
     If the target branch doesn't exist at all, checkout the branch from the manifest's
     base ref and execute the manifest against it.
+
+    Patches will be applied from the patches repository, `patches_repo_path`.
     """
-    base_remote_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
-    logger.info(
-        f"execute manifest '{manifest.release_uuid}' for repo '{base_remote_name}'"
-    )
-
-    ts = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
-    seq = f"exec-{ts}"
-    target_branch = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
-    logger.debug(f"execute manifest on branch '{target_branch}'")
-
-    try:
-        _prepare_repo(
-            repo_path,
-            manifest.release_uuid,
-            manifest.base_ref,
-            target_branch,
-            base_remote_name,
-            manifest.dst_repo,
-            token,
-        )
-    except ManifestError as e:
-        logger.error(f"unable to prepare repository to execute manifest: {e}")
-        raise e from None
-
-    # apply manifest to currently checked out branch
-    try:
-        res, added, skipped = apply_manifest(
-            db,
-            manifest,
-            repo_path,
-            token,
-            target_branch,
-            no_cleanup=no_cleanup,
-        )
-        pass
-    except ApplyError as e:
-        msg = f"unable to apply manifest to '{target_branch}': {e}"
-        logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg) from None
-
-    logger.debug(
-        f"applied manifest: {res}, added '{len(added)}' "
-        + f"skipped '{len(skipped)}' patches"
-    )
-    return ManifestExecuteResult(
-        applied=res,
-        target_branch=target_branch,
-        added=added,
-        skipped=skipped,
-    )
-
-
-def manifest_execute_new(
-    manifest: ReleaseManifest,
-    ceph_repo_path: Path,
-    patches_repo_path: Path,
-    token: str,
-    *,
-    no_cleanup: bool = True,
-) -> ManifestExecuteResult:
     base_remote_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
     logger.info(
         f"execute manifest '{manifest.release_uuid}' for repo '{base_remote_name}'"
@@ -257,7 +189,7 @@ def manifest_execute_new(
 
     # apply manifest to currently checked out branch
     try:
-        res, added, skipped = apply_manifest_new(
+        res, added, skipped = apply_manifest(
             manifest,
             ceph_repo_path,
             patches_repo_path,

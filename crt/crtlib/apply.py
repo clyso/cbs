@@ -13,29 +13,16 @@
 
 
 import datetime
-import uuid
 from datetime import datetime as dt
 from pathlib import Path
 from typing import override
 
 import git
-from crtlib.db.db import ReleasesDB
-from crtlib.errors.patchset import (
-    PatchSetCheckError,
-    PatchSetExistsError,
-)
 from crtlib.git_utils import (
     SHA,
     GitAMApplyError,
-    GitCherryPickConflictError,
-    GitCherryPickError,
-    GitEmptyPatchDiffError,
-    GitPatchDiffError,
-    git_abort_cherry_pick,
     git_am_abort,
     git_am_apply,
-    git_check_patches_diff,
-    git_cherry_pick,
     git_cleanup_repo,
     git_get_local_head,
     git_prepare_remote,
@@ -43,15 +30,7 @@ from crtlib.git_utils import (
 from crtlib.logger import logger as parent_logger
 from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.manifest import ReleaseManifest
-from crtlib.models.patch import Patch
-from crtlib.models.patchset import (
-    GitHubPullRequest,
-    PatchSetBase,
-)
 from crtlib.patch import PatchExistsError
-from crtlib.patchset import (
-    patchset_check_patches_diff,
-)
 
 logger = parent_logger.getChild("apply")
 
@@ -76,30 +55,6 @@ class ApplyConflictError(ApplyError):
         super().__init__(msg=f"{len(files)} file conflicts on sha '{sha}'")
         self.sha = sha
         self.conflict_files = files
-
-
-def _check_patch_needed(repo_path: Path, sha: str) -> int:
-    try:
-        added, skipped = git_check_patches_diff(
-            repo_path, "HEAD", sha, limit=f"{sha}~1"
-        )
-    except GitEmptyPatchDiffError:
-        logger.warning(f"patch sha '{sha}' diff with HEAD is empty")
-        return 0
-    except GitPatchDiffError as e:
-        msg = f"unable to check if patch sha '{sha}' is needed in HEAD: {e}"
-        logger.error(msg)
-        raise ApplyError(msg=msg) from None
-
-    if len(added) + len(skipped) > 1:
-        msg = (
-            f"unexpected number of patches needed for sha '{sha}': added '{added}' "
-            + "skipped '{skipped}'"
-        )
-        logger.error(msg)
-        raise ApplyError(msg=msg)
-
-    return 1 if added else -1 if skipped else 0
 
 
 def _update_submodules(repo_path: Path) -> None:
@@ -182,175 +137,7 @@ def _prepare_repo(repo_path: Path):
     _update_submodules(repo_path)
 
 
-def _prepare_patchsets(
-    db: ReleasesDB,
-    repo_path: Path,
-    token: str,
-    patchset_uuid_lst: list[uuid.UUID],
-    base_ref: str,
-) -> list[GitHubPullRequest]:
-    logger.debug("prepare patchset list from manifest")
-
-    patchset_lst: list[GitHubPullRequest] = []
-    for patchset_uuid in patchset_uuid_lst:
-        try:
-            patchset, _ = db.load_patchset(patchset_uuid)
-        except Exception as e:
-            raise e from None
-
-        if not isinstance(patchset, GitHubPullRequest):
-            logger.debug(f"patchset uuid '{patchset.entry_uuid}' not a github patchset")
-            continue
-
-        patchset_lst.append(patchset)
-        repo_name = f"{patchset.org_name}/{patchset.repo_name}"
-        remote = git_prepare_remote(
-            repo_path, f"github.com/{repo_name}", repo_name, token
-        )
-        pr_id = patchset.pull_request_id
-        src_ref = f"pull/{pr_id}/head"
-        dst_ref = f"patchset/gh/{patchset.org_name}/{patchset.repo_name}/{pr_id}"
-        _ = remote.fetch(f"{src_ref}:{dst_ref}")
-
-        try:
-            _ = patchset_check_patches_diff(repo_path, patchset, dst_ref, base_ref)
-        except PatchSetCheckError as e:
-            msg = f"unable to check patchset patch diff: {e}"
-            logger.error(msg)
-            raise ApplyError(msg=msg) from None
-
-    return patchset_lst
-
-
 def apply_manifest(
-    db: ReleasesDB,
-    manifest: ReleaseManifest,
-    ceph_git_path: Path,
-    token: str,
-    target_branch: str,
-    *,
-    no_cleanup: bool = False,
-) -> tuple[bool, list[Patch], list[Patch]]:
-    repo = git.Repo(ceph_git_path)
-
-    logger.debug(
-        f"apply manifest '{manifest.release_uuid}' to branch '{target_branch}'"
-    )
-
-    def _cleanup(*, abort_cherrypick: bool = False) -> None:
-        logger.debug(f"cleanup state, branch '{target_branch}'")
-        if abort_cherrypick:
-            git_abort_cherry_pick(ceph_git_path)
-
-        git_cleanup_repo(ceph_git_path)
-        repo.head.reference = repo.heads.main
-        repo.git.branch("-D", target_branch)  # pyright: ignore[reportAny]
-
-    def _apply_patchsets(
-        patchsets: list[GitHubPullRequest],
-    ) -> tuple[list[Patch], list[Patch]]:
-        logger.debug(f"apply {len(patchsets)} patchsets")
-
-        skipped: list[Patch] = []
-        added: list[Patch] = []
-
-        for patchset in patchsets:
-            logger.debug(
-                f"apply patch set uuid '{patchset.entry_uuid}', "
-                + f"pr id '{patchset.pull_request_id}'"
-            )
-            for patch in patchset.patches:
-                logger.debug(f"apply patch uuid '{patch.patch_uuid}' sha '{patch.sha}'")
-
-                if _check_patch_needed(ceph_git_path, patch.sha) <= 0:
-                    logger.info(
-                        f"patch uuid '{patch.patch_uuid}' sha '{patch.sha}' skipped"
-                    )
-                    skipped.append(patch)
-                    continue
-
-                try:
-                    git_cherry_pick(ceph_git_path, patch.sha)
-                except GitCherryPickConflictError as e:
-                    raise e from None
-                except GitCherryPickError as e:
-                    msg = (
-                        f"unable to cherry-pick uuid '{patch.patch_uuid}' "
-                        + f"sha '{patch.sha}': {e}"
-                    )
-                    logger.error(msg)
-                    raise ApplyError(msg=msg) from None
-
-                added.append(patch)
-
-        return (added, skipped)
-
-    try:
-        _prepare_repo(ceph_git_path)
-        repo_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
-        _ = git_prepare_remote(
-            ceph_git_path, f"github.com/{repo_name}", repo_name, token
-        )
-    except ApplyError as e:
-        logger.error(e)
-        raise e from None
-
-    try:
-        _branch = _checkout_ref(ceph_git_path, manifest.base_ref, target_branch)
-        patchsets = _prepare_patchsets(
-            db, ceph_git_path, token, manifest.patchsets, manifest.base_ref
-        )
-    except ApplyError as e:
-        msg = f"unable to apply manifest patchsets: {e}"
-        logger.error(msg)
-        if not no_cleanup:
-            _cleanup()
-
-        raise ApplyError(msg=msg) from e
-
-    abort_cherrypick = True
-    try:
-        added, skipped = _apply_patchsets(patchsets)
-    except GitCherryPickConflictError as e:
-        raise ApplyConflictError(e.sha, e.conflicts) from None
-    except ApplyError as e:
-        logger.error(f"unable to apply patchsets to '{target_branch}': {e}")
-        return (False, [], [])
-    else:
-        abort_cherrypick = False
-    finally:
-        if not no_cleanup:
-            _cleanup(abort_cherrypick=abort_cherrypick)
-
-    return (len(added) > 0, added, skipped)
-
-
-def patchset_apply_to_manifest(
-    db: ReleasesDB,
-    orig_manifest: ReleaseManifest,
-    patchset: PatchSetBase,
-    repo_path: Path,
-    token: str,
-) -> tuple[bool, list[Patch], list[Patch]]:
-    manifest = orig_manifest.model_copy(deep=True)
-    if not manifest.add_patchset(patchset):
-        raise PatchSetExistsError(msg=f"uuid '{patchset.entry_uuid}'")
-
-    seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
-    target_branch = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
-
-    # propagate exceptions to caller
-    return apply_manifest(
-        db,
-        manifest,
-        repo_path,
-        token,
-        target_branch,
-        no_cleanup=False,
-    )
-
-
-def apply_manifest_new(
     manifest: ReleaseManifest,
     ceph_repo_path: Path,
     patches_repo_path: Path,
@@ -452,7 +239,7 @@ def patches_apply_to_manifest(
     seq = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
     target_branch = f"{manifest.name}-{manifest.release_git_uid}-{seq}"
 
-    return apply_manifest_new(
+    return apply_manifest(
         manifest,
         ceph_repo_path,
         patches_repo_path,
