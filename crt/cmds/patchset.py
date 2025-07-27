@@ -229,7 +229,7 @@ def cmd_patchset_add(
     logger.debug(f"skipped: {skipped}")
     psuccess("successfully applied patch set to manifest")
 
-    if not manifest.add_patchset(patchset):
+    if not manifest.add_patches(patchset):
         perror("unexpected error adding patch set to manifest !!")
         sys.exit(errno.ENOTRECOVERABLE)
 

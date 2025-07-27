@@ -125,7 +125,7 @@ def cmd_manifest_stage_new(
         sys.exit(errno.EEXIST)
 
     pinfo(f"currently active stage for manifest uuid '{manifest.release_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} active patchsets: {len(stage.patchsets)}")
+    pinfo(f"{Symbols.RIGHT_ARROW} active patchsets: {len(stage.patches)}")
 
     try:
         store_manifest(patches_repo_path, manifest)
@@ -180,7 +180,7 @@ def cmd_manifest_stage_abort(
         pinfo(f"manifest uuid '{manifest_uuid}' has no active stage")
         return
     pinfo(f"aborted active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} aborted patch sets: {len(stage.patchsets)}")
+    pinfo(f"{Symbols.RIGHT_ARROW} aborted patch sets: {len(stage.patches)}")
 
     try:
         store_manifest(patches_repo_path, manifest)
@@ -240,7 +240,7 @@ def cmd_manifest_stage_commit(
         sys.exit(errno.ENOENT)
 
     pinfo(f"committed active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} committed patch sets: {len(stage.patchsets)}")
+    pinfo(f"{Symbols.RIGHT_ARROW} committed patch sets: {len(stage.patches)}")
     pinfo(f"{Symbols.RIGHT_ARROW} sha: {stage.computed_hash}")
 
     try:
