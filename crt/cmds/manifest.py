@@ -33,7 +33,7 @@ from crtlib.manifest import (
     ManifestExecuteResult,
     list_manifests,
     load_manifest,
-    manifest_execute_new,
+    manifest_execute,
     manifest_publish_branch,
     store_manifest,
 )
@@ -434,7 +434,7 @@ def _manifest_execute(
     progress.start_task(progress_task)
 
     try:
-        res = manifest_execute_new(
+        res = manifest_execute(
             manifest, ceph_repo_path, patches_repo_path, token, no_cleanup=no_cleanup
         )
     except ApplyConflictError as e:
