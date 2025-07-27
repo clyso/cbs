@@ -34,7 +34,7 @@ from . import logger as parent_logger
 logger = parent_logger.getChild("manifest")
 
 
-@click.group("stage", help="Operate on manifest stages.")
+@click.group("stage", help="Operate on release manifest stages.")
 def cmd_manifest_stage() -> None:
     pass
 
