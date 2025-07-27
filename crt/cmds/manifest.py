@@ -49,8 +49,6 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
 
-from cmds import stages
-
 from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, pwarn
 from . import logger as parent_logger
 
@@ -80,12 +78,7 @@ def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
     return table
 
 
-@click.group("manifest", help="Manifest operations.")
-def cmd_manifest() -> None:
-    pass
-
-
-@cmd_manifest.command("create", help="Create a new release manifest.")
+@click.command("new", help="Create a new release manifest.")
 @click.argument("name", type=str, required=True, metavar="NAME")
 @click.argument("base_release", type=str, required=True, metavar="BASE_RELEASE")
 @click.argument("base_ref", type=str, required=True, metavar="[REPO@]REF")
@@ -109,7 +102,7 @@ def cmd_manifest() -> None:
     help="Path to CES patches git repository.",
 )
 @pass_ctx
-def cmd_manifest_create(
+def cmd_manifest_new(
     _ctx: Ctx,
     name: str,
     base_release: str,
@@ -171,7 +164,7 @@ def cmd_manifest_create(
     console.print(panel)
 
 
-@cmd_manifest.command("list", help="List existing release manifest.")
+@click.command("list", help="List existing release manifest.")
 @click.option(
     "-p",
     "--patches-repo",
@@ -214,7 +207,7 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
         )
 
 
-@cmd_manifest.command("info", help="Show information about release manifests.")
+@click.command("info", help="Show information about release manifests.")
 @click.option(
     "-m",
     "--manifest-uuid",
@@ -576,7 +569,7 @@ def _manifest_publish(  # pyright: ignore[reportUnusedFunction]
     )
 
 
-@cmd_manifest.command("validate", help="Validate locally a release manifest.")
+@click.command("validate", help="Validate locally a release manifest.")
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
@@ -648,7 +641,7 @@ def cmd_manifest_validate(
     console.print(panel)
 
 
-@cmd_manifest.command("publish")
+@click.command("publish")
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
@@ -754,6 +747,3 @@ def cmd_manifest_publish(
     # )
     # console.print(panel)
     pass
-
-
-cmd_manifest.add_command(stages.cmd_manifest_stage)

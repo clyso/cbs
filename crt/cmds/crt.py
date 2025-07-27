@@ -19,7 +19,7 @@ import click
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 
-from cmds import db, patch
+from cmds import db, patch, stages
 
 from . import Ctx, manifest, pass_ctx, patchset, perror, pwarn, set_debug_logging
 from . import logger as parent_logger
@@ -139,7 +139,14 @@ def cmd_crt(
         )
 
 
+# release manifest commands
+cmd_crt.add_command(manifest.cmd_manifest_new)
+cmd_crt.add_command(manifest.cmd_manifest_list)
+cmd_crt.add_command(manifest.cmd_manifest_info)
+cmd_crt.add_command(manifest.cmd_manifest_validate)
+
+# command groups
 cmd_crt.add_command(db.cmd_db)
-cmd_crt.add_command(manifest.cmd_manifest)
 cmd_crt.add_command(patchset.cmd_patchset)
 cmd_crt.add_command(patch.cmd_patch)
+cmd_crt.add_command(stages.cmd_manifest_stage)
