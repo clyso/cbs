@@ -31,7 +31,7 @@ from crtlib.utils import get_tags
 from . import Ctx, Symbols, pass_ctx, perror, pinfo, pwarn
 from . import logger as parent_logger
 
-logger = parent_logger.getChild("manifest")
+logger = parent_logger.getChild("stages")
 
 
 @click.group("stage", help="Operate on release manifest stages.")
@@ -103,11 +103,8 @@ def cmd_manifest_stage_new(
         perror(f"malformed stage tag: {e}")
         sys.exit(errno.EINVAL)
 
-    # db = ctx.db
-
     try:
         manifest = load_manifest(patches_repo_path, manifest_uuid)
-        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -132,7 +129,6 @@ def cmd_manifest_stage_new(
 
     try:
         store_manifest(patches_repo_path, manifest)
-        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -167,11 +163,8 @@ def cmd_manifest_stage_abort(
 ) -> None:
     logger.debug(f"abort manifest uuid '{manifest_uuid}' active stage")
 
-    # db = ctx.db
-
     try:
         manifest = load_manifest(patches_repo_path, manifest_uuid)
-        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -191,7 +184,6 @@ def cmd_manifest_stage_abort(
 
     try:
         store_manifest(patches_repo_path, manifest)
-        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -224,11 +216,8 @@ def cmd_manifest_stage_commit(
 ) -> None:
     logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
 
-    # db = ctx.db
-
     try:
         manifest = load_manifest(patches_repo_path, manifest_uuid)
-        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -256,7 +245,6 @@ def cmd_manifest_stage_commit(
 
     try:
         store_manifest(patches_repo_path, manifest)
-        # db.store_manifest(manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
