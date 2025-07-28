@@ -49,7 +49,7 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.tree import Tree
 
-from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, pwarn
+from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, psuccess, pwarn
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("manifest")
@@ -719,3 +719,40 @@ def cmd_manifest_publish(
     # )
     # console.print(panel)
     pass
+
+
+@click.command("manifest-update", help="Update the manifest on-disk representation.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=False,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID for which information will be shown.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+def cmd_manifest_update(manifest_uuid: uuid.UUID, patches_repo_path: Path) -> None:
+    pwarn(f"updating on-disk representation of manifest '{manifest_uuid}'")
+
+    try:
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+    except Exception as e:
+        perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        store_manifest(patches_repo_path, manifest)
+    except Exception as e:
+        perror(f"unable to store manifest '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"updated manifest '{manifest_uuid}' on-disk representation")
