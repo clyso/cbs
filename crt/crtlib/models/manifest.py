@@ -44,7 +44,7 @@ logger = parent_logger.getChild("manifest")
 class ManifestStage(pydantic.BaseModel):
     author: AuthorData
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
-    tags: list[tuple[str, int]] | None = pydantic.Field(default=[])
+    tags: list[tuple[str, int]] = pydantic.Field(default=[])
     patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
 
     stage_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
