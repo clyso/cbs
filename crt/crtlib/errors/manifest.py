@@ -59,6 +59,14 @@ class NoActiveManifestStageError(ManifestError):
         )
 
 
+class ActiveManifestStageFoundError(ManifestError):
+    @override
+    def __str__(self) -> str:
+        return self.with_maybe_msg(
+            f"active stage found on manifest '{self.manifest_uuid}'"
+        )
+
+
 class MismatchStageAuthorError(ManifestError):
     stage_author: AuthorData
     other_author: AuthorData
