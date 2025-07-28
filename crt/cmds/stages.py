@@ -77,7 +77,7 @@ def cmd_manifest_stage() -> None:
     "--tag",
     "-t",
     "stage_tags",
-    required=False,
+    required=True,
     type=str,
     metavar="TYPE=N",
     multiple=True,
@@ -214,6 +214,118 @@ def cmd_manifest_stage_info(
         )
 
     pass
+
+
+@cmd_manifest_stage.command("amend", help="Amend metada for a given stage.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to operate on.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to patches git repository",
+)
+@click.option(
+    "-s",
+    "--stage",
+    "stage_uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Stage UUID to show information on.",
+)
+@click.option(
+    "--author",
+    "author_name",
+    required=False,
+    type=str,
+    metavar="NAME",
+    help="Author's name.",
+)
+@click.option(
+    "--email",
+    "author_email",
+    required=False,
+    type=str,
+    metavar="EMAIL",
+    help="Author's email.",
+)
+@click.option(
+    "--tag",
+    "-t",
+    "stage_tags",
+    required=False,
+    type=str,
+    metavar="TYPE=N",
+    multiple=True,
+    help="Tag type for this stage",
+)
+def cmd_manifest_stage_amend(
+    manifest_uuid: uuid.UUID,
+    patches_repo_path: Path,
+    stage_uuid: uuid.UUID,
+    author_name: str | None,
+    author_email: str | None,
+    stage_tags: list[str],
+) -> None:
+    if not author_name and not author_email and not stage_tags:
+        perror("no paramenters were specified to amend stage")
+        sys.exit(errno.EINVAL)
+
+    try:
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    stage: ManifestStage | None = None
+    for s in manifest.stages:
+        if s.stage_uuid == stage_uuid:
+            stage = s
+            break
+
+    if not stage:
+        perror(
+            f"could not find stage uuid '{stage_uuid}' "
+            + f"in manifest uuid '{manifest_uuid}'"
+        )
+        sys.exit(errno.ENOENT)
+
+    if author_name:
+        stage.author.user = author_name
+
+    if author_email:
+        stage.author.email = author_email
+
+    if stage_tags:
+        try:
+            tags = get_tags(stage_tags)
+        except MalformedStageTagError as e:
+            perror(f"malformed stage tag: {e}")
+            sys.exit(errno.EINVAL)
+        stage.tags = tags
+
+    try:
+        store_manifest(patches_repo_path, manifest)
+    except Exception as e:
+        perror(f"unable to write manifest to disk: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    _show_stage_summary(stage)
+    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
 
 
 @cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")
