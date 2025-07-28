@@ -18,20 +18,29 @@ from pathlib import Path
 
 import click
 from crtlib.errors.manifest import (
+    ActiveManifestStageFoundError,
     EmptyActiveStageError,
     MalformedManifestError,
-    MismatchStageAuthorError,
     NoSuchManifestError,
 )
 from crtlib.errors.stages import MalformedStageTagError
 from crtlib.manifest import load_manifest, store_manifest
 from crtlib.models.common import AuthorData
+from crtlib.models.manifest import ManifestStage
 from crtlib.utils import get_tags
+from rich.padding import Padding
 
-from . import Ctx, Symbols, pass_ctx, perror, pinfo, pwarn
+from cmds._common import get_stage_rdr, get_stage_summary_rdr
+
+from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, pwarn
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("stages")
+
+
+def _show_stage_summary(stage: ManifestStage) -> None:
+    rdr = get_stage_summary_rdr(stage)
+    console.print(Padding(rdr, (1, 0, 1, 0)))
 
 
 @click.group("stage", help="Operate on release manifest stages.")
@@ -119,13 +128,13 @@ def cmd_manifest_stage_new(
         stage = manifest.new_stage(
             AuthorData(user=author_name, email=author_email), tags
         )
-    except MismatchStageAuthorError as e:
-        perror("already active manifest stage, author mismatch")
-        perror(f"active author: {e.stage_author.user} <{e.stage_author.email}>")
-        sys.exit(errno.EEXIST)
+    except ActiveManifestStageFoundError:
+        pinfo("active manifest stage found, not creating new stage")
+        _show_stage_summary(manifest.get_active_stage())
+        return
 
     pinfo(f"currently active stage for manifest uuid '{manifest.release_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} active patchsets: {len(stage.patches)}")
+    _show_stage_summary(stage)
 
     try:
         store_manifest(patches_repo_path, manifest)
@@ -134,6 +143,77 @@ def cmd_manifest_stage_new(
         sys.exit(errno.ENOTRECOVERABLE)
 
     pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
+
+
+@cmd_manifest_stage.command("info", help="Show information about a stage.")
+@click.option(
+    "-m",
+    "--manifest-uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Manifest UUID to operate on.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to patches git repository",
+)
+@click.option(
+    "-s",
+    "--stage",
+    "stage_uuid",
+    required=False,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Stage UUID to show information on.",
+)
+@click.option(
+    "-e",
+    "--extended",
+    "extended_info",
+    is_flag=True,
+    default=False,
+    help="Show extended patch information.",
+)
+def cmd_manifest_stage_info(
+    manifest_uuid: uuid.UUID,
+    patches_repo_path: Path,
+    stage_uuid: uuid.UUID | None,
+    extended_info: bool,
+) -> None:
+    try:
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    stage_uuid_lst = [e.stage_uuid for e in manifest.stages]
+    if stage_uuid and stage_uuid not in stage_uuid_lst:
+        perror(f"unknown stage uuid '{stage_uuid}' in manifest uuid '{manifest_uuid}'")
+        sys.exit(errno.ENOENT)
+
+    elif not stage_uuid_lst:
+        pinfo(f"no stages available in manifest uuid '{manifest_uuid}'")
+        return
+
+    for stage in manifest.stages:
+        if stage_uuid and stage.stage_uuid != stage_uuid:
+            continue
+
+        console.print(
+            get_stage_rdr(patches_repo_path, stage, extended_info=extended_info)
+        )
+
+    pass
 
 
 @cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")

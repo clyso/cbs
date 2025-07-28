@@ -22,8 +22,8 @@ from random import choices
 
 import pydantic
 from crtlib.errors.manifest import (
+    ActiveManifestStageFoundError,
     EmptyActiveStageError,
-    MismatchStageAuthorError,
     NoActiveManifestStageError,
     NoStageError,
 )
@@ -47,6 +47,7 @@ class ManifestStage(pydantic.BaseModel):
     tags: list[tuple[str, int]] | None = pydantic.Field(default=[])
     patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
 
+    stage_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
     committed: bool = pydantic.Field(default=False)
     hash: str = pydantic.Field(default="")
 
@@ -58,6 +59,8 @@ class ManifestStage(pydantic.BaseModel):
 
         for entry in self.patches:
             h.update(entry.contents.compute_hash_bytes())
+
+        h.update(self.stage_uuid.bytes)
 
         return h.hexdigest()
 
@@ -167,16 +170,14 @@ class ReleaseManifest(pydantic.BaseModel):
 
         An uncommitted stage is created, ready to have patch sets added to.
 
-        If there's a currently active stage, return said stage instead.
+        If a stage is currently active, raise an error.
         """
         try:
             stage = self.get_active_stage()
         except NoActiveManifestStageError:
             stage = ManifestStage(author=author, tags=tags)
         else:
-            if stage.author.user != author.user or stage.author.email != author.email:
-                raise MismatchStageAuthorError(self.release_uuid, stage.author, author)
-            return stage
+            raise ActiveManifestStageFoundError(self.release_uuid) from None
 
         self.stages.append(stage)
         return stage

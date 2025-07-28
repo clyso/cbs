@@ -37,17 +37,15 @@ from crtlib.manifest import (
     manifest_publish_branch,
     store_manifest,
 )
-from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.manifest import ReleaseManifest
 from crtlib.models.patch import Patch
-from crtlib.models.patchset import GitHubPullRequest
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
-from rich.rule import Rule
 from rich.table import Table
-from rich.tree import Tree
+
+from cmds._common import get_stage_rdr
 
 from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, psuccess, pwarn
 from . import logger as parent_logger
@@ -213,129 +211,25 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
     help="Path to CES patches git repository.",
 )
 @click.option(
-    "-s",
-    "--stages",
-    required=False,
+    "-e",
+    "--extended",
+    "extended_info",
     is_flag=True,
     default=False,
-    help="Show stages information.",
+    help="Show stage extended information.",
 )
 @pass_ctx
 def cmd_manifest_info(
     _ctx: Ctx,
     manifest_uuid: uuid.UUID | None,
     patches_repo_path: Path,
-    stages: bool,
+    extended_info: bool,
 ) -> None:
     try:
         manifest_lst = list_manifests(patches_repo_path)
     except ManifestError as e:
         perror(f"unable to obtain manifest list: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
-
-    def _patchset_entry(
-        patches: list[ManifestPatchEntryWrapper], uncommitted: bool | None = None
-    ) -> list[RenderableType]:
-        patches_tree_lst: list[RenderableType] = []
-        for patch in patches:
-            contents = patch.contents
-            patch_meta_path = (
-                patches_repo_path.joinpath("ceph")
-                .joinpath("patches")
-                .joinpath("meta")
-                .joinpath(f"{contents.entry_uuid}.json")
-            )
-
-            if not patch_meta_path.exists():
-                perror(f"missing patch set uuid '{contents.entry_uuid}")
-                patches_tree_lst.append(
-                    "[bold][red]missing patch UUID[/red] "
-                    + f"'{contents.entry_uuid}'[/bold]"
-                )
-                continue
-
-            patch_title = (
-                contents.title
-                if isinstance(contents, GitHubPullRequest)
-                else contents.info.title
-            )
-            patch_author = (
-                contents.author
-                if isinstance(contents, GitHubPullRequest)
-                else contents.info.author
-            )
-            patch_date = (
-                contents.creation_date
-                if isinstance(contents, GitHubPullRequest)
-                else contents.info.date
-            )
-            patch_fixes = "\n".join(
-                contents.related_to
-                if isinstance(contents, GitHubPullRequest)
-                else contents.info.fixes
-            )
-
-            classifiers_lst: list[str] = []
-            if uncommitted:
-                classifiers_lst.append("[bold magenta]uncommitted[/bold magenta]")
-            classifiers_str = ", ".join(classifiers_lst)
-            classifiers_str = f" ({classifiers_str})" if classifiers_str else ""
-            patchset_tree = Tree(
-                f"{Symbols.RIGHT_ARROW} [blue]{patch_title}{classifiers_str}"
-            )
-            patchset_table = Table(show_header=False, show_lines=False, box=None)
-            patchset_table.add_column(justify="right", style="cyan", no_wrap=True)
-            patchset_table.add_column(justify="left", style="magenta", no_wrap=True)
-
-            patchset_table.add_row(
-                "author", f"{patch_author.user} <{patch_author.email}>"
-            )
-            patchset_table.add_row("created", str(patch_date))
-            if patch_fixes:
-                patchset_table.add_row("related", patch_fixes)
-
-            if isinstance(contents, GitHubPullRequest):
-                patchset_table.add_row("repo", contents.repo_url)
-                patchset_table.add_row("pr id", str(contents.pull_request_id))
-                patchset_table.add_row("target", contents.target_branch)
-                patchset_table.add_row("merged", str(contents.merge_date))
-
-                patches_table = Table(show_header=False, show_lines=False, box=None)
-                patches_table.add_column(justify="left", no_wrap=True)
-
-                has_previous = False
-                for patch in contents.patches:
-                    patch_tree = Tree(f"{Symbols.BULLET} [green]{patch.title}")
-
-                    patch_table = Table(show_header=False, show_lines=False, box=None)
-                    patch_table.add_column(justify="right", style="cyan", no_wrap=True)
-                    patch_table.add_column(
-                        justify="left", style="magenta", no_wrap=True
-                    )
-
-                    patch_table.add_row(
-                        "author", f"{patch.author.user} <{patch.author.email}>"
-                    )
-                    patch_table.add_row("date", str(patch.author_date))
-                    if patch.related_to:
-                        patch_table.add_row("related", "\n".join(patch.related_to))
-                    if patch.cherry_picked_from:
-                        patch_table.add_row(
-                            "cherry-picked from", "\n".join(patch.cherry_picked_from)
-                        )
-
-                    _ = patch_tree.add(patch_table)
-                    patches_table.add_row(
-                        Padding(patch_tree, ((1 if has_previous else 0), 0, 0, 0))
-                    )
-                    has_previous = True
-
-                patchset_table.add_row("patches", Group("", patches_table))
-
-            _ = patchset_tree.add(Padding(patchset_table, (0, 0, 1, 0)))
-            patches_tree_lst.append(patchset_tree)
-
-        return patches_tree_lst
 
     for manifest in manifest_lst:
         if manifest_uuid and manifest.release_uuid != manifest_uuid:
@@ -344,49 +238,10 @@ def cmd_manifest_info(
         table = _gen_rich_manifest_table(manifest)
 
         stages_renderables: list[RenderableType] = []
-        stage_n = 1
         for stage in manifest.stages:
-            stage_rdr_lst: list[RenderableType] = []
-
-            if stages:
-                stage_table = Table(show_header=False, show_lines=False, box=None)
-                stage_table.add_column(justify="right", style="cyan", no_wrap=True)
-                stage_table.add_column(justify="left", style="magenta", no_wrap=True)
-                stage_table.add_row(
-                    "author", f"{stage.author.user} <{stage.author.email}>"
-                )
-                stage_table.add_row("created", str(stage.creation_date))
-                stage_table.add_row("committed", "Yes" if stage.committed else "No")
-                if stage.committed:
-                    stage_table.add_row("hash", stage.hash)
-                stage_table.add_row("patch sets", str(len(stage.patches)))
-                stage_rdr_lst.append(Padding(stage_table, (0, 0, 1, 0)))
-
-            stage_rdr_lst.extend(_patchset_entry(stage.patches, not stage.committed))
-
-            stage_tags = (
-                " ".join(f"<{t}={n}>" for t, n in stage.tags) if stage.tags else ""
-            )
-            stage_tags_str = f" {stage_tags}" if stage_tags else ""
-
-            committed_str = " (uncommitted)" if not stage.committed else ""
-            title_str = (
-                f"[bold]{Symbols.DOWN_ARROW} Stage #{stage_n}"
-                + f"{stage_tags_str}{committed_str}[/bold]"
-            )
             stages_renderables.append(
-                Group(
-                    Padding(
-                        Rule(
-                            title_str,
-                            align="left",
-                        ),
-                        (0, 0, 1, 0),
-                    ),
-                    *stage_rdr_lst,
-                ),
+                get_stage_rdr(patches_repo_path, stage, extended_info=extended_info)
             )
-            stage_n += 1
 
         stages_group = (
             Group(*stages_renderables)
