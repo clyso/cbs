@@ -21,12 +21,14 @@ from crtlib.errors.manifest import (
     ActiveManifestStageFoundError,
     EmptyActiveStageError,
     MalformedManifestError,
+    NoActiveManifestStageError,
     NoSuchManifestError,
 )
 from crtlib.errors.stages import MalformedStageTagError
 from crtlib.manifest import load_manifest, store_manifest
 from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ManifestStage
+from crtlib.stages import stage_commit
 from crtlib.utils import get_tags
 from rich.padding import Padding
 
@@ -402,9 +404,31 @@ def cmd_manifest_stage_abort(
     required=True,
     help="Path to patches git repository",
 )
+@click.option(
+    "-s",
+    "--stage",
+    "stage_uuid",
+    required=False,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Stage UUID to show information on.",
+)
+@click.option(
+    "-f",
+    "--force",
+    "force_commit",
+    required=False,
+    is_flag=True,
+    default=False,
+    help="Force committing a stage.",
+)
 @pass_ctx
 def cmd_manifest_stage_commit(
-    _ctx: Ctx, manifest_uuid: uuid.UUID, patches_repo_path: Path
+    _ctx: Ctx,
+    manifest_uuid: uuid.UUID,
+    patches_repo_path: Path,
+    stage_uuid: uuid.UUID | None,
+    force_commit: bool,
 ) -> None:
     logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
 
@@ -421,19 +445,22 @@ def cmd_manifest_stage_commit(
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        stage = manifest.commit_active_stage()
+        n_patches, stage = stage_commit(
+            patches_repo_path, manifest, force=force_commit, stage_uuid=stage_uuid
+        )
+    except NoActiveManifestStageError:
+        pwarn("no active stage, nothing to commit")
+        return
     except EmptyActiveStageError:
         perror(f"manifest uuid '{manifest_uuid}' active stage is empty")
         pwarn("either add patch sets to active stage, or abort active stage")
         sys.exit(errno.EAGAIN)
 
-    if not stage:
-        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
-        sys.exit(errno.ENOENT)
-
     pinfo(f"committed active stage on manifest uuid '{manifest_uuid}'")
     pinfo(f"{Symbols.RIGHT_ARROW} committed patch sets: {len(stage.patches)}")
+    pinfo(f"{Symbols.RIGHT_ARROW} uuid: {stage.stage_uuid}")
     pinfo(f"{Symbols.RIGHT_ARROW} sha: {stage.computed_hash}")
+    pinfo(f"{Symbols.RIGHT_ARROW} total patches: {n_patches}")
 
     try:
         store_manifest(patches_repo_path, manifest)
