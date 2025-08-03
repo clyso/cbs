@@ -162,6 +162,16 @@ class ReleaseManifest(pydantic.BaseModel):
 
         return stage
 
+    def get_stage(self, stage_uuid: uuid.UUID) -> ManifestStage:
+        """Obtain a stage by its UUID."""
+        for stage in self.stages:
+            if stage.stage_uuid == stage_uuid:
+                return stage
+
+        msg = f"no such stage uuid '{stage_uuid}'"
+        logger.error(msg)
+        raise NoStageError(self.release_uuid, msg)
+
     def new_stage(
         self, author: AuthorData, tags: list[tuple[str, int]]
     ) -> ManifestStage:

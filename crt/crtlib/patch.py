@@ -22,6 +22,7 @@ from crtlib.git_utils import SHA, GitError, git_format_patch, git_patch_id
 from crtlib.logger import logger as parent_logger
 from crtlib.models.common import AuthorData
 from crtlib.models.patch import PatchInfo, PatchMeta
+from crtlib.utils import split_version_into_paths
 
 logger = parent_logger.getChild("patch")
 
@@ -36,60 +37,6 @@ class MalformedPatchBodyError(PatchError):
 
 class PatchExistsError(PatchError):
     pass
-
-
-def _split_version_into_paths(version: str) -> list[Path]:
-    if not version:
-        raise PatchError(msg="missing version")
-
-    def _parse_version_hierarchy() -> list[str]:
-        v_re = re.compile(
-            r"""
-            ^(?P<prefix>.*?)(?:-)?  # optional prefix plus dash
-            v
-            (?P<major>\d{2})        # major version (required)
-            (?:\.(?P<minor>\d{2}))? # minor version (optional)
-            (?:\.(?P<patch>\d+))?   # patch version (optional)
-            (?:-(?P<suffix>.+))?    # dash with suffix (optional)
-            $
-            """,
-            re.VERBOSE,
-        )
-        m = v_re.match(version)
-        if not m:
-            raise ValueError(f"invalid version '{version}'")  # noqa: TRY003
-
-        prefix = cast(str | None, m.group("prefix"))
-        major = cast(str, m.group("major"))
-        minor = cast(str | None, m.group("minor"))
-        patch = cast(str | None, m.group("patch"))
-        suffix = cast(str | None, m.group("suffix"))
-
-        levels: list[str] = []
-        base = f"v{major}"
-        levels.append(base)
-        if minor:
-            base = f"{base}.{minor}"
-            levels.append(base)
-        if patch:
-            base = f"{base}.{patch}"
-            levels.append(base)
-
-        if prefix:
-            levels = [f"{prefix}-{lvl}" for lvl in levels]
-        if suffix:
-            last = next(reversed(levels))
-            levels.append(f"{last}-{suffix}")
-
-        return levels
-
-    paths_lst: list[Path] = []
-    for p in _parse_version_hierarchy():
-        last_elem_path = next(reversed(paths_lst)) if paths_lst else Path()
-        part_path = last_elem_path.joinpath(p)
-        paths_lst.append(part_path)
-
-    return paths_lst
 
 
 def parse_formatted_patch_info(patch: str) -> PatchInfo:
@@ -246,7 +193,7 @@ def patch_import(
         raise PatchError(msg=msg) from None
 
     if target_version:
-        target_paths = _split_version_into_paths(target_version)
+        target_paths = split_version_into_paths(target_version)
         if not target_paths:
             msg = f"unable to get destination path for '{target_version}'"
             logger.error(msg)

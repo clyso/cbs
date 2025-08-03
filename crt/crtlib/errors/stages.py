@@ -21,3 +21,11 @@ class StageError(CRTError):
 
 class MalformedStageTagError(StageError):
     pass
+
+
+class StagePatchesExistError(StageError):
+    pass
+
+
+class MissingStagePatchError(StageError):
+    pass

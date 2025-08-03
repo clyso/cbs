@@ -72,7 +72,9 @@ class GitHubPullRequest(PatchSetBase):
     @override
     def _get_canonical_title(self) -> str:
         patch_title = patch_canonical_title(self.title)
-        return f"[{self.pull_request_id}]-{patch_title}"
+        return (
+            f"[{self.org_name}\\{self.repo_name}#{self.pull_request_id}]-{patch_title}"
+        )
 
     @override
     def compute_hash_bytes(self) -> bytes:
