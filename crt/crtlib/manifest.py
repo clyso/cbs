@@ -287,6 +287,41 @@ def manifest_exists(
         return base_path.joinpath(f"{manifest_name}.json").exists()
 
 
+def remove_manifest(
+    patches_repo_path: Path,
+    *,
+    manifest_uuid: uuid.UUID | None = None,
+    manifest_name: str | None = None,
+) -> tuple[uuid.UUID, str]:
+    if not manifest_uuid and not manifest_name:
+        raise CRTError("either uuid or name must be provided")
+
+    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+    manifest_uuid_path: Path | None = None
+    manifest_name_path: Path | None = None
+
+    if manifest_name:
+        try:
+            manifest = load_manifest_by_name(patches_repo_path, manifest_name)
+        except Exception as e:
+            raise e from None
+    else:
+        assert manifest_uuid
+        try:
+            manifest = load_manifest(patches_repo_path, manifest_uuid)
+        except Exception as e:
+            raise e from None
+
+    manifest_name_path = base_path.joinpath(f"{manifest.name}.json")
+    if manifest_name_path.exists():
+        manifest_name_path.unlink()
+
+    manifest_uuid_path = base_path.joinpath(f"{manifest.release_uuid}.json")
+    manifest_uuid_path.unlink()
+
+    return (manifest.release_uuid, manifest.name)
+
+
 def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseManifest:
     logger.info(f"load manifest uuid '{manifest_uuid}'")
     manifest_path = (

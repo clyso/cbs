@@ -39,6 +39,7 @@ from crtlib.manifest import (
     manifest_execute,
     manifest_exists,
     manifest_publish_branch,
+    remove_manifest,
     store_manifest,
 )
 from crtlib.models.manifest import ReleaseManifest
@@ -221,6 +222,42 @@ def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> 
         f"created manifest name '{name}' uuid '{new_manifest.release_uuid}'\n"
         + f"   from manifest name '{old_name}' uuid '{old_uuid}'"
     )
+
+
+@click.command("rm")
+@click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+@click.confirmation_option(prompt="Really remove manifest?")
+def cmd_manifest_remove(name_or_uuid: str, patches_repo_path: Path) -> None:
+    manifest_uuid: uuid.UUID | None = None
+    manifest_name: str | None = None
+
+    try:
+        manifest_uuid = uuid.UUID(name_or_uuid)
+    except Exception:
+        manifest_name = name_or_uuid
+
+    try:
+        rm_uuid, rm_name = remove_manifest(
+            patches_repo_path, manifest_uuid=manifest_uuid, manifest_name=manifest_name
+        )
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{name_or_uuid}'")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"unable to remove manifest '{name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"removed manifest name '{rm_name}' uuid '{rm_uuid}'")
 
 
 @click.command("list", help="List existing release manifest.")
