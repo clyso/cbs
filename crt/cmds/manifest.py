@@ -12,10 +12,12 @@
 # GNU General Public License for more details.
 
 
+import datetime
 import errno
 import re
 import sys
 import uuid
+from datetime import datetime as dt
 from pathlib import Path
 from typing import cast
 
@@ -33,7 +35,9 @@ from crtlib.manifest import (
     ManifestExecuteResult,
     list_manifests,
     load_manifest,
+    load_manifest_by_name_or_uuid,
     manifest_execute,
+    manifest_exists,
     manifest_publish_branch,
     store_manifest,
 )
@@ -159,6 +163,64 @@ def cmd_manifest_new(
         title="Manifest Created",
     )
     console.print(panel)
+
+
+@click.command("from", help="Create a release manifest from an existing manifest.")
+@click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
+@click.option(
+    "--name",
+    "-n",
+    type=str,
+    required=True,
+    metavar="NAME",
+    help="Name of the new release.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> None:
+    if manifest_exists(patches_repo_path, manifest_name=name):
+        perror(f"manifest name '{name}' already exists")
+        sys.exit(errno.EEXIST)
+
+    try:
+        new_manifest = load_manifest_by_name_or_uuid(patches_repo_path, name_or_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{name_or_uuid}'")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest '{name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to load manifest '{name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    old_uuid = new_manifest.release_uuid
+    old_name = new_manifest.name
+
+    new_manifest.name = name
+    new_manifest.release_uuid = uuid.uuid4()
+    new_manifest.creation_date = dt.now(datetime.UTC)
+    new_manifest.from_name = old_name
+    new_manifest.from_uuid = old_uuid
+
+    try:
+        store_manifest(patches_repo_path, new_manifest)
+    except ManifestError as e:
+        perror(f"unable to create new manifest '{name}' from '{name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(
+        f"created manifest name '{name}' uuid '{new_manifest.release_uuid}'\n"
+        + f"   from manifest name '{old_name}' uuid '{old_uuid}'"
+    )
 
 
 @click.command("list", help="List existing release manifest.")

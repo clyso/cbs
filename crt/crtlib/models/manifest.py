@@ -87,6 +87,9 @@ class ReleaseManifest(pydantic.BaseModel):
 
     stages: list[ManifestStage] = pydantic.Field(default=[])
 
+    from_name: str | None = pydantic.Field(default=None)
+    from_uuid: uuid.UUID | None = pydantic.Field(default=None)
+
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
     release_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
     release_git_uid: str = pydantic.Field(
@@ -143,7 +146,7 @@ class ReleaseManifest(pydantic.BaseModel):
         try:
             return next(reversed(self.stages))
         except StopIteration:
-            raise NoStageError(self.release_uuid) from None
+            raise NoStageError(uuid=self.release_uuid) from None
 
     def get_active_stage(self) -> ManifestStage:
         """
@@ -158,7 +161,7 @@ class ReleaseManifest(pydantic.BaseModel):
             logger.debug(f"no available stages on manifest '{self.release_uuid}'")
 
         if not stage or stage.committed:
-            raise NoActiveManifestStageError(self.release_uuid)
+            raise NoActiveManifestStageError(uuid=self.release_uuid)
 
         return stage
 
@@ -170,7 +173,7 @@ class ReleaseManifest(pydantic.BaseModel):
 
         msg = f"no such stage uuid '{stage_uuid}'"
         logger.error(msg)
-        raise NoStageError(self.release_uuid, msg)
+        raise NoStageError(uuid=self.release_uuid, msg=msg)
 
     def new_stage(
         self, author: AuthorData, tags: list[tuple[str, int]]
@@ -187,7 +190,7 @@ class ReleaseManifest(pydantic.BaseModel):
         except NoActiveManifestStageError:
             stage = ManifestStage(author=author, tags=tags)
         else:
-            raise ActiveManifestStageFoundError(self.release_uuid) from None
+            raise ActiveManifestStageFoundError(uuid=self.release_uuid) from None
 
         self.stages.append(stage)
         return stage
@@ -209,7 +212,7 @@ class ReleaseManifest(pydantic.BaseModel):
             return None
 
         if not stage.patches:
-            raise EmptyActiveStageError(self.release_uuid)
+            raise EmptyActiveStageError(uuid=self.release_uuid)
 
         stage.committed = True
         return stage
@@ -233,7 +236,7 @@ class ReleaseManifest(pydantic.BaseModel):
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:
-        return [
+        entries = [
             ("name", self.name),
             ("base release", self.base_release_name),
             ("base repository", f"{self.base_ref_org}/{self.base_ref_repo}"),
@@ -243,3 +246,8 @@ class ReleaseManifest(pydantic.BaseModel):
             ("manifest uuid", str(self.release_uuid)),
             ("stages", str(len(self.stages))),
         ]
+        if self.from_name and self.from_uuid:
+            entries.append(("from name", self.from_name))
+            entries.append(("from uuid", str(self.from_uuid)))
+
+        return entries

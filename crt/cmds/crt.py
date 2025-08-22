@@ -141,6 +141,7 @@ def cmd_crt(
 
 # release manifest commands
 cmd_crt.add_command(manifest.cmd_manifest_new)
+cmd_crt.add_command(manifest.cmd_manifest_from)
 cmd_crt.add_command(manifest.cmd_manifest_list)
 cmd_crt.add_command(manifest.cmd_manifest_info)
 cmd_crt.add_command(manifest.cmd_manifest_validate)

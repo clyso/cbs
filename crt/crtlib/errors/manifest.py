@@ -20,51 +20,65 @@ from crtlib.models.common import AuthorData
 
 
 class ManifestError(CRTError):
-    manifest_uuid: uuid.UUID
+    manifest_uuid: uuid.UUID | None
+    manifest_name: str | None
 
-    def __init__(self, _uuid: uuid.UUID, msg: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        uuid: uuid.UUID | None = None,
+        name: str | None = None,
+        msg: str | None = None,
+    ) -> None:
         super().__init__(msg)
-        self.manifest_uuid = _uuid
+        self.manifest_uuid = uuid
+        self.manifest_name = name
+
+        if not self.manifest_uuid and not self.manifest_name:
+            raise CRTError("either uuid or name must be provided")
 
     @override
     def __str__(self) -> str:
-        return self.with_maybe_msg(f"manifest error on '{self.manifest_uuid}'")
+        msg = "manifest error" + (f"on {self.what}" if self.what else "")
+        return self.with_maybe_msg(msg)
+
+    @property
+    def what(self) -> str:
+        return (
+            f"name '{self.manifest_name}'"
+            if self.manifest_name
+            else (f"uuid '{self.manifest_uuid}" if self.manifest_uuid else "")
+        )
 
 
 class NoSuchManifestError(ManifestError):
     @override
     def __str__(self) -> str:
-        return f"no such manifest '{self.manifest_uuid}'"
+        return f"no such manifest {self.what}'"
 
 
 class ManifestExistsError(ManifestError):
     @override
     def __str__(self) -> str:
-        return self.with_maybe_msg(
-            f"manifest uuid '{self.manifest_uuid}' already exists"
-        )
+        return self.with_maybe_msg(f"manifest {self.what} already exists")
 
 
 class MalformedManifestError(ManifestError):
     @override
     def __str__(self) -> str:
-        return f"malformed manifest '{self.manifest_uuid}'"
+        return f"malformed manifest {self.what}"
 
 
 class NoActiveManifestStageError(ManifestError):
     @override
     def __str__(self) -> str:
-        return self.with_maybe_msg(
-            f"no active stage on manifest '{self.manifest_uuid}'"
-        )
+        return self.with_maybe_msg(f"no active stage on manifest {self.what}")
 
 
 class ActiveManifestStageFoundError(ManifestError):
     @override
     def __str__(self) -> str:
-        return self.with_maybe_msg(
-            f"active stage found on manifest '{self.manifest_uuid}'"
-        )
+        return self.with_maybe_msg(f"active stage found on manifest {self.what}")
 
 
 class MismatchStageAuthorError(ManifestError):
@@ -74,7 +88,7 @@ class MismatchStageAuthorError(ManifestError):
     def __init__(
         self, _uuid: uuid.UUID, stage_author: AuthorData, other_author: AuthorData
     ) -> None:
-        super().__init__(_uuid)
+        super().__init__(uuid=_uuid)
         self.stage_author = stage_author
         self.other_author = other_author
 
@@ -91,14 +105,14 @@ class EmptyActiveStageError(ManifestError):
     @override
     def __str__(self) -> str:
         return self.with_maybe_msg(
-            f"no patch sets on active stage for manifest '{self.manifest_uuid}'"
+            f"no patch sets on active stage for manifest {self.what}"
         )
 
 
 class NoStageError(ManifestError):
     @override
     def __str__(self) -> str:
-        return f"no stage available for manifest '{self.manifest_uuid}'"
+        return f"no stage available for manifest {self.what}"
 
 
 class ManifestCorruptedStageError(ManifestError):
@@ -106,7 +120,7 @@ class ManifestCorruptedStageError(ManifestError):
     found: SHA
 
     def __init__(self, _uuid: uuid.UUID, expected: SHA, found: SHA) -> None:
-        super().__init__(_uuid)
+        super().__init__(uuid=_uuid)
         self.expected = expected
         self.found = found
 
@@ -124,7 +138,7 @@ class ManifestCorruptedError(ManifestError):
     found: SHA
 
     def __init__(self, _uuid: uuid.UUID, expected: SHA, found: SHA) -> None:
-        super().__init__(_uuid)
+        super().__init__(uuid=_uuid)
         self.expected = expected
         self.found = found
 

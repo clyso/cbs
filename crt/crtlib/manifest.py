@@ -19,9 +19,11 @@ from pathlib import Path
 
 import pydantic
 from crtlib.apply import ApplyError, apply_manifest
+from crtlib.errors import CRTError
 from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
+    ManifestExistsError,
     NoStageError,
     NoSuchManifestError,
 )
@@ -72,7 +74,7 @@ def _prepare_repo(
     except GitError as e:
         msg = f"unable to clean up repository: {e}"
         logger.error(msg)
-        raise ManifestError(manifest_uuid, msg) from None
+        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
 
     try:
         base_remote_uri = f"github.com/{base_remote_name}"
@@ -80,7 +82,7 @@ def _prepare_repo(
         push_remote_uri = f"github.com/{push_remote_name}"
         _ = git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
     except GitError as e:
-        raise ManifestError(manifest_uuid, msg=str(e)) from None
+        raise ManifestError(uuid=manifest_uuid, msg=str(e)) from None
 
     # fetch from base repository, if it exists.
     try:
@@ -88,7 +90,7 @@ def _prepare_repo(
     except GitIsTagError as e:
         msg = f"unexpected tag for branch '{target_branch}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest_uuid, msg) from None
+        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
     except GitFetchHeadNotFoundError:
         # does not exist in the provided remote.
         logger.info(
@@ -97,14 +99,14 @@ def _prepare_repo(
     except GitFetchError as e:
         msg = f"unable to fetch '{target_branch}' from '{push_remote_name}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest_uuid, msg=msg) from None
+        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
     except GitError as e:
         msg = (
             f"unexpected error fetching branch '{target_branch}' "
             + f"from '{push_remote_name}': {e}"
         )
         logger.error(msg)
-        raise ManifestError(manifest_uuid, msg) from None
+        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
 
     # we either fetched and thus we have an up-to-date local branch, or we didn't find
     # a corresponding reference in the remote and we need to either:
@@ -125,7 +127,7 @@ def _prepare_repo(
     except GitError as e:
         msg = f"unable to checkout ref '{base_ref}' to '{target_branch}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest_uuid, msg) from None
+        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
 
     logger.debug(f"checked out '{target_branch}'")
 
@@ -165,7 +167,7 @@ def manifest_execute(
     except NoStageError:
         msg = f"no stage to execute for manifest uuid '{manifest.release_uuid}'"
         logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg=msg) from None
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
 
     tags_str = ("-" + ("-".join(f"{t}.{n}" for t, n in tags))) if tags else ""
     ts = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
@@ -201,7 +203,7 @@ def manifest_execute(
     except ApplyError as e:
         msg = f"unable to apply manifest to '{target_branch}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg) from None
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
 
     logger.debug(
         f"applied manifest: {res}, added '{len(added)}' "
@@ -250,11 +252,11 @@ def manifest_publish_branch(
     except GitPushError as e:
         msg = f"unable to push '{our_branch}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg) from None
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
     except GitError as e:
         msg = f"unexpected error pushing '{our_branch}': {e}"
         logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg) from None
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
 
     if not push_res:
         logger.info(f"branch '{dst_branch}' not updated on remote '{dst_repo}'")
@@ -269,6 +271,22 @@ def manifest_publish_branch(
     )
 
 
+def manifest_exists(
+    patches_repo_path: Path,
+    *,
+    manifest_uuid: uuid.UUID | None = None,
+    manifest_name: str | None = None,
+) -> bool:
+    if not manifest_uuid and not manifest_name:
+        raise CRTError("either uuid or name must be provided")
+
+    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+    if manifest_uuid:
+        return base_path.joinpath(f"{manifest_uuid}.json").exists()
+    else:
+        return base_path.joinpath(f"{manifest_name}.json").exists()
+
+
 def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseManifest:
     logger.info(f"load manifest uuid '{manifest_uuid}'")
     manifest_path = (
@@ -278,33 +296,92 @@ def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseM
     )
     if not manifest_path.exists():
         logger.error(f"manifest uuid '{manifest_uuid}' does not exist")
-        raise NoSuchManifestError(manifest_uuid)
+        raise NoSuchManifestError(uuid=manifest_uuid)
 
     try:
         return ReleaseManifest.model_validate_json(manifest_path.read_text())
     except pydantic.ValidationError:
         logger.error(f"malformed manifest uuid '{manifest_uuid}'")
-        raise MalformedManifestError(manifest_uuid) from None
+        raise MalformedManifestError(uuid=manifest_uuid) from None
+
+
+def load_manifest_by_name(patches_repo_path: Path, name: str) -> ReleaseManifest:
+    logger.info(f"load manifest by name '{name}'")
+    manifest_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("manifests")
+        .joinpath(f"{name}.json")
+    )
+    if not manifest_path.exists():
+        logger.error(f"manifest name '{name}' does not exist")
+        raise NoSuchManifestError(name=name)
+
+    try:
+        return ReleaseManifest.model_validate_json(manifest_path.read_text())
+    except pydantic.ValidationError:
+        logger.error(f"malformed manifest name '{name}'")
+        raise MalformedManifestError(name=name) from None
+
+
+def load_manifest_by_name_or_uuid(
+    patches_repo_path: Path, what: str
+) -> ReleaseManifest:
+    logger.info(f"load manifest by name or uuid '{what}'")
+    manifest_uuid: uuid.UUID | None = None
+    manifest_name: str | None = None
+
+    try:
+        manifest_uuid = uuid.UUID(what)
+    except Exception:
+        manifest_name = what
+
+    if manifest_uuid:
+        return load_manifest(patches_repo_path, manifest_uuid)
+    elif manifest_name:
+        return load_manifest_by_name(patches_repo_path, manifest_name)
+    else:
+        raise CRTError("either uuid or name must be provided")
 
 
 def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
     logger.info(f"store manifest uuid '{manifest.release_uuid}'")
-    manifest_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("manifests")
-        .joinpath(f"{manifest.release_uuid}.json")
-    )
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+    manifest_uuid_path = base_path.joinpath(f"{manifest.release_uuid}.json")
+    manifest_name_path = base_path.joinpath(f"{manifest.name}.json")
+    base_path.mkdir(parents=True, exist_ok=True)
+
+    if manifest_name_path.exists():
+        if not manifest_name_path.is_symlink():
+            msg = f"manifest name '{manifest.name}' exists and is not a symlink"
+            logger.error(msg)
+            raise CRTError(msg)
+        elif manifest_name_path.resolve() != manifest_uuid_path:
+            msg = f"manifest name '{manifest.name}' already in use by another manifest"
+            logger.error(msg)
+            raise ManifestExistsError(name=manifest.name, msg=msg)
 
     try:
-        _ = manifest_path.write_text(manifest.model_dump_json(indent=2))
+        _ = manifest_uuid_path.write_text(manifest.model_dump_json(indent=2))
     except Exception as e:
         msg = (
             f"error writing manifest uuid '{manifest.release_uuid}' "
-            + f"to '{manifest_path}': {e}"
+            + f"to '{manifest_uuid_path}': {e}"
         )
         logger.error(msg)
-        raise ManifestError(manifest.release_uuid, msg=msg) from None
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
+
+    if not manifest_name_path.exists():
+        try:
+            manifest_name_path.symlink_to(manifest_uuid_path.name)
+        except Exception as e:
+            msg = (
+                f"unable to symlink manifest name '{manifest.name}' "
+                + f"to uuid '{manifest.release_uuid}': {e}"
+            )
+            logger.error(msg)
+            raise ManifestError(
+                uuid=manifest.release_uuid, name=manifest.name, msg=msg
+            ) from None
 
 
 def list_manifests(patches_repo_path: Path) -> list[ReleaseManifest]:
