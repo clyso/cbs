@@ -4,9 +4,7 @@ version = "0.0.0"
 description = "Clyso Enterprise Storage main project"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "basedpyright>=1.29.5",
-]
+dependencies = ["basedpyright>=1.29.5"]
 
 [tool.uv.workspace]
 members = ["cbs", "cbs/packages/ceslib", "crt"]
@@ -62,6 +60,7 @@ ignore = [
   "CPY001", # missing copyright notice
   "S101",   # use of assert
   "BLE001", # ignore bling exceptions
+  "TRY003", # avoid long messages outside exception class
   "TRY400", # ignore using 'exception' logging instead of 'error'
 ]
 
