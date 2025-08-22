@@ -204,6 +204,15 @@ class ReleaseManifest(pydantic.BaseModel):
 
         return self.stages.pop()
 
+    def remove_stage(self, stage_uuid: uuid.UUID) -> None:
+        new_stage_lst: list[ManifestStage] = [
+            s for s in self.stages if s.stage_uuid != stage_uuid
+        ]
+        if len(new_stage_lst) == len(self.stages):
+            raise NoStageError(uuid=self.release_uuid)
+
+        self.stages = new_stage_lst
+
     def commit_active_stage(self) -> ManifestStage | None:
         """Commit the currently active stage."""
         try:

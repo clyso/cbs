@@ -22,10 +22,11 @@ from crtlib.errors.manifest import (
     EmptyActiveStageError,
     MalformedManifestError,
     NoActiveManifestStageError,
+    NoStageError,
     NoSuchManifestError,
 )
 from crtlib.errors.stages import MalformedStageTagError
-from crtlib.manifest import load_manifest, store_manifest
+from crtlib.manifest import load_manifest, load_manifest_by_name_or_uuid, store_manifest
 from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ManifestStage
 from crtlib.stages import stage_commit
@@ -34,7 +35,7 @@ from rich.padding import Padding
 
 from cmds._common import get_stage_rdr, get_stage_summary_rdr
 
-from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, pwarn
+from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, psuccess, pwarn
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("stages")
@@ -328,6 +329,64 @@ def cmd_manifest_stage_amend(
 
     _show_stage_summary(stage)
     pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
+
+
+@cmd_manifest_stage.command("remove", help="Remove a stage from a manifest.")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    required=True,
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    help="Path to patches git repository",
+)
+@click.option(
+    "-m",
+    "--manifest",
+    "manifest_name_or_uuid",
+    required=True,
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to operate on.",
+)
+@click.option(
+    "-s",
+    "--stage",
+    "stage_uuid",
+    required=True,
+    type=uuid.UUID,
+    metavar="UUID",
+    help="Stage UUID to show information on.",
+)
+def cmd_manifest_stage_remove(
+    patches_repo_path: Path, manifest_name_or_uuid: str, stage_uuid: uuid.UUID
+) -> None:
+    try:
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        manifest.remove_stage(stage_uuid)
+    except NoStageError:
+        perror(f"stage '{stage_uuid}' not found in manifest")
+        sys.exit(errno.ENOENT)
+
+    try:
+        store_manifest(patches_repo_path, manifest)
+    except Exception as e:
+        perror(f"unable to write manifest to disk: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"removed stage '{stage_uuid}' from manifest")
 
 
 @cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")
