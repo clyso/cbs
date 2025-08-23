@@ -38,6 +38,8 @@ def get_stage_summary_rdr(stage: ManifestStage) -> RenderableType:
     table.add_row("uuid", str(stage.stage_uuid))
     table.add_row("author", f"{stage.author.user} <{stage.author.email}>")
     table.add_row("created", str(stage.creation_date))
+    if stage.desc:
+        table.add_row("description", stage.desc)
     table.add_row(
         "tags", (" ".join(f"{t}={n}" for t, n in stage.tags) if stage.tags else "None")
     )

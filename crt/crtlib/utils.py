@@ -12,8 +12,8 @@
 # GNU General Public License for more details.
 
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import cast
 
 from crtlib.errors.stages import MalformedStageTagError
@@ -27,15 +27,15 @@ def print_patch_tree(what: str, lst: list[Patch]) -> None:
         _ = tree.add(f"{patch.title} ({patch.sha})")
 
 
-def get_tags(tags_lst: list[str] | None) -> list[tuple[str, int]]:
+def get_tags(tags_lst: list[str] | None) -> list[tuple[str, str]]:
     if not tags_lst:
         return []
 
-    tags: list[tuple[str, int]] = []
-    tag_re = re.compile(r"^(?P<tag>\w+)=(?P<n>\d+)")
+    tags: list[tuple[str, str]] = []
+    tag_re = re.compile(r"^(?P<tag>\w+)=(?P<n>\w+)")
     for t in tags_lst:
         if m := tag_re.match(t):
-            tags.append((cast(str, m.group("tag")), int(m.group("n"))))
+            tags.append((cast(str, m.group("tag")), cast(str, m.group("n"))))
         else:
             raise MalformedStageTagError(msg=f"tag '{t}'")
 
@@ -58,7 +58,7 @@ def split_version_into_paths(version: str) -> list[Path]:
         )
         m = v_re.match(version)
         if not m:
-            raise ValueError(f"invalid version '{version}'")  # noqa: TRY003
+            raise ValueError(f"invalid version '{version}'")
 
         prefix = cast(str | None, m.group("prefix"))
         major = cast(str, m.group("major"))

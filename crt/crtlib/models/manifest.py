@@ -44,7 +44,8 @@ logger = parent_logger.getChild("manifest")
 class ManifestStage(pydantic.BaseModel):
     author: AuthorData
     creation_date: dt = pydantic.Field(default_factory=lambda: dt.now(datetime.UTC))
-    tags: list[tuple[str, int]] = pydantic.Field(default=[])
+    desc: str = pydantic.Field(default="")
+    tags: list[tuple[str, str]] = pydantic.Field(default=[])
     patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
 
     stage_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
@@ -176,7 +177,10 @@ class ReleaseManifest(pydantic.BaseModel):
         raise NoStageError(uuid=self.release_uuid, msg=msg)
 
     def new_stage(
-        self, author: AuthorData, tags: list[tuple[str, int]]
+        self,
+        author: AuthorData,
+        tags: list[tuple[str, str]],
+        desc: str,
     ) -> ManifestStage:
         """
         Create a new stage in the release manifest.
@@ -188,7 +192,7 @@ class ReleaseManifest(pydantic.BaseModel):
         try:
             stage = self.get_active_stage()
         except NoActiveManifestStageError:
-            stage = ManifestStage(author=author, tags=tags)
+            stage = ManifestStage(author=author, tags=tags, desc=desc)
         else:
             raise ActiveManifestStageFoundError(uuid=self.release_uuid) from None
 

@@ -11,8 +11,8 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from pathlib import Path
 import uuid
+from pathlib import Path
 
 from crtlib.errors.manifest import EmptyActiveStageError
 from crtlib.errors.stages import (
@@ -43,7 +43,7 @@ def stage_commit(
 
     if not commit_stage.patches:
         logger.error("empty stage, don't commit")
-        raise EmptyActiveStageError(manifest.release_uuid)
+        raise EmptyActiveStageError(uuid=manifest.release_uuid)
 
     tags_str = "-".join([f"{t}.{n}" for t, n in commit_stage.tags])
     version = f"{manifest.name}-{tags_str}"
