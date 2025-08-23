@@ -80,11 +80,21 @@ def cmd_manifest_stage() -> None:
     "--tag",
     "-t",
     "stage_tags",
-    required=True,
+    required=False,
     type=str,
-    metavar="TYPE=N",
+    metavar="TAG=VALUE",
     multiple=True,
-    help="Tag type for this stage",
+    help="Tags for this stage.",
+)
+@click.option(
+    "--desc",
+    "-D",
+    "stage_desc",
+    required=False,
+    default="",
+    type=str,
+    metavar="TEXT",
+    help="Short description of this stage.",
 )
 @click.option(
     "-p",
@@ -103,6 +113,7 @@ def cmd_manifest_stage_new(
     author_name: str,
     author_email: str,
     stage_tags: list[str],
+    stage_desc: str,
     patches_repo_path: Path,
 ) -> None:
     logger.debug(
@@ -129,7 +140,9 @@ def cmd_manifest_stage_new(
 
     try:
         stage = manifest.new_stage(
-            AuthorData(user=author_name, email=author_email), tags
+            AuthorData(user=author_name, email=author_email),
+            tags,
+            stage_desc,
         )
     except ActiveManifestStageFoundError:
         pinfo("active manifest stage found, not creating new stage")

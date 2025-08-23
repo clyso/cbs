@@ -24,7 +24,6 @@ from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
     ManifestExistsError,
-    NoStageError,
     NoSuchManifestError,
 )
 from crtlib.git_utils import (
@@ -162,17 +161,9 @@ def manifest_execute(
         f"execute manifest '{manifest.release_uuid}' for repo '{base_remote_name}'"
     )
 
-    try:
-        tags = manifest.latest_stage.tags
-    except NoStageError:
-        msg = f"no stage to execute for manifest uuid '{manifest.release_uuid}'"
-        logger.error(msg)
-        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
-
-    tags_str = ("-" + ("-".join(f"{t}.{n}" for t, n in tags))) if tags else ""
     ts = dt.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
     seq = f"exec-{ts}"
-    target_branch = f"{manifest.name}{tags_str}-{manifest.release_git_uid}-{seq}"
+    target_branch = f"{manifest.name}-{seq}"
     logger.debug(f"execute manifest on branch '{target_branch}'")
 
     try:
