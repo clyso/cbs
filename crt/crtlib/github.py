@@ -57,6 +57,7 @@ class _GitHubPullRequestInfo(pydantic.BaseModel):
     title: str
     user: _GitHubUser
     created_at: dt
+    updated_at: dt
     closed_at: dt | None
     merged_at: dt | None
     base: _GitHubPullRequestBase
@@ -106,21 +107,21 @@ def gh_get_user_info(url: str, *, token: str | None = None) -> AuthorData:
     try:
         user_info_res = httpx.get(url, headers=headers)
     except httpx.ConnectError as e:
-        logger.error(f"error: unable to connect to github: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to connect to github: {e}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
     except Exception as e:
-        logger.error(f"error: unable to obtain user info: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to obtain user info: {e}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
 
     if not user_info_res.is_success:
-        logger.error(f"error: unable to obtain user info: {user_info_res.text}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to obtain user info: {user_info_res.text}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
 
     try:
         user_info = _GitHubUserInfo.model_validate(user_info_res.json())
     except pydantic.ValidationError:
-        logger.error("error: malformed user info")
-        sys.exit(errno.EINVAL)
+        msg = "error: malformed user info"
+        raise CRTError(msg=msg, ec=errno.EINVAL) from None
 
     user_name = user_info.name if user_info.name else user_info.login
     user_email = user_info.email if user_info.email else "unknown"
@@ -289,21 +290,21 @@ def gh_get_pr(
     try:
         pr_res = httpx.get(pr_base_url, headers=headers)
     except httpx.ConnectError as e:
-        logger.error(f"error: unable to connect to github: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to connect to github: {e}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
     except Exception as e:
-        logger.error(f"error: unable to obtain PR {pr_id}: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to obtain PR {pr_id}: {e}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
 
     if not pr_res.is_success:
-        logger.error(f"error: unable to obtain PR {pr_id}: {pr_res.text}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        msg = f"error: unable to obtain PR {pr_id}: {pr_res.text}"
+        raise CRTError(msg=msg, ec=errno.ENOTRECOVERABLE) from None
 
     try:
         pr = _GitHubPullRequestInfo.model_validate(pr_res.json())
     except pydantic.ValidationError as e:
-        logger.error(f"error: malformed github PR response: {e}")
-        sys.exit(errno.EINVAL)
+        msg = f"error: malformed github PR response: {e}"
+        raise CRTError(msg=msg, ec=errno.EINVAL) from None
 
     pr_body = _gh_parse_message_body(pr.body)
     pr_user = gh_get_user_info(pr.user.url, token=token)
@@ -314,6 +315,7 @@ def gh_get_pr(
         repo_name=repo,
         repo_url=repo_url,
         pull_request_id=pr_id,
+        updated_date=pr.updated_at,
         merge_date=pr.merged_at,
         merged=pr.merged,
         target_branch=pr.base.ref,

@@ -19,10 +19,12 @@ from pathlib import Path
 from typing import cast
 
 import click
+import pydantic
 from crtlib.apply import (
     ApplyError,
     patches_apply_to_manifest,
 )
+from crtlib.errors import CRTError
 from crtlib.errors.manifest import (
     MalformedManifestError,
     NoSuchManifestError,
@@ -33,9 +35,11 @@ from crtlib.errors.patchset import (
 )
 from crtlib.github import gh_get_pr
 from crtlib.manifest import load_manifest, store_manifest
+from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.patchset import GitHubPullRequest
 from crtlib.patchset import (
     patchset_fetch_gh_patches,
+    patchset_from_gh_needs_update,
     patchset_get_gh,
 )
 
@@ -160,7 +164,6 @@ def cmd_patchset_add(
 
     try:
         manifest = load_manifest(patches_repo_path, manifest_uuid)
-        # manifest = db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}' in db")
         sys.exit(errno.ENOENT)
@@ -185,12 +188,18 @@ def cmd_patchset_add(
     assert gh_repo_owner
     assert gh_repo
 
+    needs_patchset = False
+    update_from_gh = False
     patchset: GitHubPullRequest | None = None
+    existing_patchset: GitHubPullRequest | None = None
     try:
-        patchset = patchset_get_gh(patches_repo_path, gh_repo_owner, gh_repo, gh_pr_id)
+        existing_patchset = patchset_get_gh(
+            patches_repo_path, gh_repo_owner, gh_repo, gh_pr_id
+        )
         pinfo("found patch set")
     except NoSuchPatchSetError:
         pinfo("patch set not found, obtain from github")
+        needs_patchset = True
     except PatchSetError as e:
         perror(f"unable to obtain patch set: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -198,14 +207,50 @@ def cmd_patchset_add(
         perror(f"error found: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    if not patchset:
+    if existing_patchset:
+        if not existing_patchset.merged:
+            pinfo("update patch set from github")
+            update_from_gh = True
+        else:
+            patchset = existing_patchset
+
+    if needs_patchset or update_from_gh:
         # obtain from github
         try:
             patchset = gh_get_pr(
                 gh_repo_owner, gh_repo, gh_pr_id, token=ctx.github_token
             )
+        except CRTError as e:
+            perror(f"unable to obtain pull request info from github: {e}")
+            sys.exit(e.ec if e.ec else errno.ENOTRECOVERABLE)
+
+    assert patchset
+
+    force_update = False
+    if update_from_gh:
+        assert existing_patchset
+
+        if patchset_from_gh_needs_update(existing_patchset, patchset):
+            pinfo("patch set needs update, will update")
+            needs_patchset = True
+            force_update = True
+        else:
+            pinfo("patch set is up-to-date with github, don't fetch")
+            needs_patchset = False
+            # ensure we use the existing patchset instead of whatever we obtained from
+            # gh -- otherwise we'll be looking for a patch set that does not exist on
+            # disk, given we'd be using a "new" patch set that we'll not actually
+            # obtain.
+            patchset = existing_patchset
+
+    if needs_patchset:
+        try:
             patchset_fetch_gh_patches(
-                ceph_repo_path, patches_repo_path, patchset, ctx.github_token
+                ceph_repo_path,
+                patches_repo_path,
+                patchset,
+                ctx.github_token,
+                force=force_update,
             )
         except PatchSetError as e:
             perror(f"unable to obtain patch set: {e}")
@@ -213,6 +258,11 @@ def cmd_patchset_add(
         except Exception as e:
             perror(f"unexpected error: {e}")
             sys.exit(errno.ENOTRECOVERABLE)
+
+    if manifest.contains_patchset(patchset):
+        _pr_id = f"{gh_repo_owner}/{gh_repo}#{gh_pr_id}"
+        pinfo(f"manifest '{manifest_uuid}' already contains pr '{_pr_id}'")
+        return
 
     pinfo("apply patch set to manifest's repository")
     try:
@@ -238,3 +288,133 @@ def cmd_patchset_add(
         sys.exit(errno.ENOTRECOVERABLE)
 
     psuccess(f"pr id '{gh_pr_id}' added to manifest '{manifest_uuid}'")
+
+
+@cmd_patchset.command("migrate", help="Migrate patch sets' store format")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+def cmd_patchset_migrate(patches_repo_path: Path) -> None:
+    if not patches_repo_path.exists():
+        perror(f"patches repository does not exist at '{patches_repo_path}'")
+        sys.exit(errno.ENOENT)
+
+    if not patches_repo_path.joinpath(".git").exists():
+        perror("provided path for patches repository is not a git repository")
+        sys.exit(errno.EINVAL)
+
+    patches_path = patches_repo_path / "ceph" / "patches"
+    if not patches_path.exists():
+        pinfo(f"patches path does not exist at '{patches_path}', nothing to do")
+        return
+
+    n_patchsets = 0
+    candidate_dirs: list[Path] = []
+    for p in patches_path.iterdir():
+        if p.is_dir() and p.name != "meta":
+            candidate_dirs.append(p)
+
+    print(candidate_dirs)
+    for d in candidate_dirs:
+        for p in list(d.walk()):
+            for sub in p[1]:
+                sub_path = Path(p[0]) / sub
+                if not sub_path.is_dir():
+                    continue
+
+                if not re.match(r"^[\w\d_.-]+$", sub):
+                    # not a valid repo name
+                    continue
+
+                repo_name = f"{d.name}/{sub}"
+
+                for pr in sub_path.iterdir():
+                    if pr.is_dir():
+                        continue
+
+                    if not re.match(r"^\d+$", pr.name):
+                        # not a valid pr id
+                        pwarn(f"skip invalid pr id '{pr.name}' in '{repo_name}'")
+                        continue
+
+                    try:
+                        patchset_uuid = uuid.UUID(pr.read_text())
+                    except Exception:
+                        pwarn(
+                            f"malformed patch set uuid in '{pr}' in '{repo_name}', skip"
+                        )
+                        continue
+
+                    pinfo(f"pr id '{pr.name}' uuid '{patchset_uuid}' in '{repo_name}'")
+                    latest_patchset_path = patches_path / f"{patchset_uuid}.patch"
+                    latest_meta_path = patches_path / "meta" / f"{patchset_uuid}.json"
+
+                    if (
+                        not latest_patchset_path.exists()
+                        and not latest_meta_path.exists()
+                    ):
+                        pwarn(
+                            f"missing patch file '{latest_patchset_path}', "
+                            + "skip migration"
+                        )
+                        continue
+
+                    try:
+                        patchset_meta = ManifestPatchEntryWrapper.model_validate_json(
+                            latest_meta_path.read_text()
+                        )
+                    except pydantic.ValidationError as e:
+                        perror(f"malformed meta file '{latest_meta_path}': {e}")
+                        continue
+
+                    if not isinstance(patchset_meta.contents, GitHubPullRequest):
+                        perror(
+                            f"found meta for patchset uuid '{patchset_uuid}' "
+                            + "is not a gh pr"
+                        )
+                        continue
+
+                    patchset = patchset_meta.contents
+                    if not patchset.patches:
+                        perror(
+                            f"found empty patch set for uuid '{patchset_uuid}' "
+                            + f"pr id '{pr.name}' repo '{repo_name}'"
+                        )
+                        continue
+
+                    head_patch_sha = next(reversed(patchset.patches)).sha
+                    pinfo(
+                        f"pr id '{pr.name}' repo '{repo_name}' "
+                        + f"head patch sha '{head_patch_sha}'"
+                    )
+                    head_path_sha_path = pr / head_patch_sha
+                    latest_path = pr / "latest"
+
+                    try:
+                        pr.unlink()
+                        pr.mkdir()
+                        _ = head_path_sha_path.write_text(str(patchset_uuid))
+                        latest_path.symlink_to(head_patch_sha)
+                    except Exception as e:
+                        perror(f"unable to migrate pr id '{pr.name}': {e}")
+                        continue
+
+                    psuccess(
+                        f"successfully migrated pr id '{pr.name}' repo '{repo_name}'"
+                    )
+                    n_patchsets += 1
+
+    psuccess(f"successfully migrated {n_patchsets} patch sets")

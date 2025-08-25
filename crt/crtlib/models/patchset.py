@@ -61,6 +61,7 @@ class GitHubPullRequest(PatchSetBase):
     repo_name: str
     repo_url: str
     pull_request_id: int
+    updated_date: dt | None = pydantic.Field(default=None)
     merge_date: dt | None
     merged: bool
     target_branch: str
