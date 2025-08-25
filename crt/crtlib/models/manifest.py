@@ -74,9 +74,9 @@ class ReleaseManifest(pydantic.BaseModel):
     def patches(self) -> list[ManifestPatchEntry]:
         return [e.contents for stage in self.stages for e in stage.patches]
 
-    def contains_patches(self, patches: ManifestPatchEntry) -> bool:
+    def contains_patchset(self, patchset: ManifestPatchEntry) -> bool:
         """Check if the release manifest contains a given patch set."""
-        return patches.entry_uuid in [e.entry_uuid for e in self.patches]
+        return patchset.entry_uuid in [e.entry_uuid for e in self.patches]
 
     @property
     def latest_stage(self) -> ManifestStage:
@@ -133,7 +133,7 @@ class ReleaseManifest(pydantic.BaseModel):
 
         self.stages = new_stage_lst
 
-    def add_patches(self, patches: ManifestPatchEntry) -> bool:
+    def add_patches(self, patchset: ManifestPatchEntry) -> bool:
         """
         Add a patch set to this release manifest.
 
@@ -143,12 +143,12 @@ class ReleaseManifest(pydantic.BaseModel):
         - `list[Patch]`, with the patches that were skipped and not added to the
                          release manifest.
         """
-        if self.contains_patches(patches):
+        if self.contains_patchset(patchset):
             return False
 
         # propagate 'NoActiveManifestStageError'
         stage = self.latest_stage
-        stage.patches.append(ManifestPatchEntryWrapper(contents=patches))  # pyright: ignore[reportArgumentType]
+        stage.patches.append(ManifestPatchEntryWrapper(contents=patchset))  # pyright: ignore[reportArgumentType]
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:
