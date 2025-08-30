@@ -44,9 +44,6 @@ def get_stage_summary_rdr(stage: ManifestStage) -> RenderableType:
         "tags", (" ".join(f"{t}={n}" for t, n in stage.tags) if stage.tags else "None")
     )
     table.add_row("patch sets", str(len(stage.patches)))
-    table.add_row(
-        "committed", "[green]Yes[/green]" if stage.committed else "[red]No[/red]"
-    )
 
     return table
 

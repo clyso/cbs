@@ -18,10 +18,7 @@ from pathlib import Path
 
 import click
 from crtlib.errors.manifest import (
-    ActiveManifestStageFoundError,
-    EmptyActiveStageError,
     MalformedManifestError,
-    NoActiveManifestStageError,
     NoStageError,
     NoSuchManifestError,
 )
@@ -29,13 +26,12 @@ from crtlib.errors.stages import MalformedStageTagError
 from crtlib.manifest import load_manifest, load_manifest_by_name_or_uuid, store_manifest
 from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ManifestStage
-from crtlib.stages import stage_commit
 from crtlib.utils import get_tags
 from rich.padding import Padding
 
 from cmds._common import get_stage_rdr, get_stage_summary_rdr
 
-from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, psuccess, pwarn
+from . import Ctx, console, pass_ctx, perror, pinfo, psuccess
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("stages")
@@ -138,18 +134,15 @@ def cmd_manifest_stage_new(
         perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    try:
-        stage = manifest.new_stage(
-            AuthorData(user=author_name, email=author_email),
-            tags,
-            stage_desc,
-        )
-    except ActiveManifestStageFoundError:
-        pinfo("active manifest stage found, not creating new stage")
-        _show_stage_summary(manifest.get_active_stage())
-        return
+    stage = manifest.new_stage(
+        AuthorData(user=author_name, email=author_email),
+        tags,
+        stage_desc,
+    )
 
-    pinfo(f"currently active stage for manifest uuid '{manifest.release_uuid}'")
+    psuccess(
+        f"new stage '{stage.stage_uuid}' for manifest uuid '{manifest.release_uuid}'"
+    )
     _show_stage_summary(stage)
 
     try:
@@ -400,144 +393,3 @@ def cmd_manifest_stage_remove(
         sys.exit(errno.ENOTRECOVERABLE)
 
     psuccess(f"removed stage '{stage_uuid}' from manifest")
-
-
-@cmd_manifest_stage.command("abort", help="Abort currently active manifest stage.")
-@click.option(
-    "-m",
-    "--manifest-uuid",
-    required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
-)
-@pass_ctx
-def cmd_manifest_stage_abort(
-    _ctx: Ctx,
-    manifest_uuid: uuid.UUID,
-    patches_repo_path: Path,
-) -> None:
-    logger.debug(f"abort manifest uuid '{manifest_uuid}' active stage")
-
-    try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    stage = manifest.abort_active_stage()
-    if not stage:
-        pinfo(f"manifest uuid '{manifest_uuid}' has no active stage")
-        return
-    pinfo(f"aborted active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} aborted patch sets: {len(stage.patches)}")
-
-    try:
-        store_manifest(patches_repo_path, manifest)
-    except Exception as e:
-        perror(f"unable to write manifest to disk: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
-
-
-@cmd_manifest_stage.command("commit", help="Commit currently active manifest stage.")
-@click.option(
-    "-m",
-    "--manifest-uuid",
-    required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
-)
-@click.option(
-    "-s",
-    "--stage",
-    "stage_uuid",
-    required=False,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Stage UUID to show information on.",
-)
-@click.option(
-    "-f",
-    "--force",
-    "force_commit",
-    required=False,
-    is_flag=True,
-    default=False,
-    help="Force committing a stage.",
-)
-@pass_ctx
-def cmd_manifest_stage_commit(
-    _ctx: Ctx,
-    manifest_uuid: uuid.UUID,
-    patches_repo_path: Path,
-    stage_uuid: uuid.UUID | None,
-    force_commit: bool,
-) -> None:
-    logger.debug(f"commit manifest uuid '{manifest_uuid}' active stage")
-
-    try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
-    except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
-        sys.exit(errno.ENOENT)
-    except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
-        sys.exit(errno.EINVAL)
-    except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    try:
-        n_patches, stage = stage_commit(
-            patches_repo_path, manifest, force=force_commit, stage_uuid=stage_uuid
-        )
-    except NoActiveManifestStageError:
-        pwarn("no active stage, nothing to commit")
-        return
-    except EmptyActiveStageError:
-        perror(f"manifest uuid '{manifest_uuid}' active stage is empty")
-        pwarn("either add patch sets to active stage, or abort active stage")
-        sys.exit(errno.EAGAIN)
-
-    pinfo(f"committed active stage on manifest uuid '{manifest_uuid}'")
-    pinfo(f"{Symbols.RIGHT_ARROW} committed patch sets: {len(stage.patches)}")
-    pinfo(f"{Symbols.RIGHT_ARROW} uuid: {stage.stage_uuid}")
-    pinfo(f"{Symbols.RIGHT_ARROW} sha: {stage.computed_hash}")
-    pinfo(f"{Symbols.RIGHT_ARROW} total patches: {n_patches}")
-
-    try:
-        store_manifest(patches_repo_path, manifest)
-    except Exception as e:
-        perror(f"unable to write manifest to disk: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    pinfo(f"wrote manifest '{manifest.release_uuid}' to disk")
