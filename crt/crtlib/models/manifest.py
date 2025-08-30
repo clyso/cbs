@@ -44,6 +44,10 @@ class ManifestStage(pydantic.BaseModel):
     patches: list[ManifestPatchEntryWrapper] = pydantic.Field(default=[])
 
     stage_uuid: uuid.UUID = pydantic.Field(default_factory=lambda: uuid.uuid4())
+    is_published: bool = pydantic.Field(
+        default=False,
+        validation_alias=pydantic.AliasChoices("committed", "is_published"),
+    )
 
 
 class ReleaseManifest(pydantic.BaseModel):
@@ -89,6 +93,14 @@ class ReleaseManifest(pydantic.BaseModel):
         msg = f"no such stage uuid '{stage_uuid}'"
         logger.error(msg)
         raise NoStageError(uuid=self.release_uuid, msg=msg)
+
+    @property
+    def active_stage(self) -> ManifestStage | None:
+        try:
+            stage = self.latest_stage
+        except NoStageError:
+            return None
+        return stage if not stage.is_published else None
 
     def new_stage(
         self,
