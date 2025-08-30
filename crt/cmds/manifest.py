@@ -39,6 +39,7 @@ from crtlib.manifest import (
     manifest_execute,
     manifest_exists,
     manifest_publish_branch,
+    manifest_release_notes,
     remove_manifest,
     store_manifest,
 )
@@ -673,6 +674,79 @@ def cmd_manifest_publish(
     # )
     # console.print(panel)
     pass
+
+
+@click.command("release-notes", help="Automatically generate release notes.")
+@click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to CES patches git repository.",
+)
+@click.option(
+    "--cephadm-loc",
+    "cephadm_loc",
+    type=str,
+    required=False,
+    help="Location (URL) of cephadm binary.",
+)
+@click.option(
+    "--image-loc",
+    "image_loc",
+    type=str,
+    required=False,
+    help="Location (URL) of ceph container image.",
+)
+@click.option(
+    "--stdout",
+    "to_stdout",
+    is_flag=True,
+    default=False,
+    help="Only print release notes to stdout.",
+)
+def cmd_manifest_release_notes(
+    name_or_uuid: str,
+    patches_repo_path: Path,
+    cephadm_loc: str | None,
+    image_loc: str | None,
+    to_stdout: bool,
+) -> None:
+    try:
+        manifest = load_manifest_by_name_or_uuid(patches_repo_path, name_or_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{name_or_uuid}'")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest '{name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to load manifest '{name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    txt = manifest_release_notes(manifest, image_loc=image_loc, cephadm_loc=cephadm_loc)
+    if to_stdout:
+        print(txt)
+
+    dst_path = patches_repo_path / "release-notes" / f"{manifest.name}.md"
+    if dst_path.exists() and not click.confirm(
+        "Release notes file exists. Overwrite?", default=False, prompt_suffix=""
+    ):
+        pinfo(f"not writing release notes to {dst_path}")
+        sys.exit(0)
+
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ = dst_path.write_text(txt, encoding="utf-8")
+    except Exception as e:
+        perror(f"unable to write release notes to '{dst_path}': {e}")
+        sys.exit(errno.EIO)
+
+    psuccess(f"wrote release notes to '{dst_path}'")
 
 
 @click.command("manifest-update", help="Update the manifest on-disk representation.")

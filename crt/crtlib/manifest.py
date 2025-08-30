@@ -13,9 +13,11 @@
 
 
 import datetime
+import re
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
+from typing import cast
 
 import pydantic
 from crtlib.apply import ApplyError, apply_manifest
@@ -40,8 +42,10 @@ from crtlib.git_utils import (
     git_status,
 )
 from crtlib.logger import logger as parent_logger
+from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.manifest import ReleaseManifest
-from crtlib.models.patch import Patch
+from crtlib.models.patch import Patch, PatchMeta
+from crtlib.models.patchset import GitHubPullRequest
 
 logger = parent_logger.getChild("manifest")
 
@@ -431,3 +435,197 @@ def list_manifests(patches_repo_path: Path) -> list[ReleaseManifest]:
             continue
 
     return sorted(manifests, key=lambda e: e.creation_date)
+
+
+def manifest_release_notes(
+    manifest: ReleaseManifest,
+    *,
+    image_loc: str | None = None,
+    cephadm_loc: str | None = None,
+) -> str:
+    doc_lines: list[str] = []
+    doc_links: list[tuple[str, str]] = []
+
+    def _header(title: str, h: int) -> None:
+        if doc_lines and doc_lines[-1].strip() != "":
+            doc_lines.append("")
+
+        doc_lines.append("#" * h + f" {title.strip()}")
+        doc_lines.append("")
+
+    def _paragraph(value: str) -> None:
+        tokens = value.strip().split(" ")
+
+        def _get_line(tkns: list[str]) -> str:
+            acc = 0
+            acc_str = ""
+            it = iter(tkns)
+            for t in it:
+                if acc + len(t) + 1 > 79:
+                    it = iter([t, *list(it)])
+                    break
+                acc += len(t) + 1
+                acc_str += f" {t}"
+
+            acc_str = acc_str.strip()
+
+            if not acc_str:
+                return ""
+            return f"{acc_str}\n{_get_line(list(it))}"
+
+        if len(tokens) > 0:
+            if doc_lines and doc_lines[-1].strip() != "":
+                doc_lines.append("")
+
+            doc_lines.append(_get_line(tokens))
+
+    def _block(contents: str, block_type: str = "text") -> None:
+        content_lines = [ln.strip() for ln in contents.strip().split("\n")]
+        doc_lines.append(f"```{block_type}")
+        doc_lines.extend([ln for ln in content_lines if ln])
+        doc_lines.append("```")
+
+    def _add_link(ref: str, link: str) -> None:
+        doc_links.append((ref, link))
+
+    def _render_links() -> None:
+        if not doc_links:
+            return
+
+        if doc_lines and doc_lines[-1].strip() != "":
+            doc_lines.append("")
+        for ref, link in doc_links:
+            doc_lines.append(f"[{ref}]: {link}")
+        doc_lines.append("")
+
+    def _get_human_version(v: str) -> str | None:
+        rstr = r"""
+            (?P<channel>ces-)?
+            v?
+            (?P<version>\d+\.\d+\.\d+)
+            (?P<suffixes>(?:-(?:[a-zA-Z]+\.\d+))*)
+            """
+
+        m = re.match(rstr, v, re.VERBOSE)
+        if not m:
+            return None
+
+        prefix = "CES" if cast(str, m.group("channel")) else "Ceph"
+        version = cast(str, m.group("version"))
+        suffix_str = ""
+
+        if m.group("suffixes"):
+            suffixes = [
+                s[1:].split(".")
+                for s in cast(
+                    list[str],
+                    re.findall(r"(-[a-zA-Z]+\.\d+)", cast(str, m.group("suffixes"))),
+                )
+            ]
+            suffix_str = " ".join([f"{t.upper()}-{n}" for t, n in suffixes])
+
+        suffix_str = f" ({suffix_str})" if suffix_str else ""
+        return f"{prefix} version {version}{suffix_str}"
+
+    version = _get_human_version(manifest.name)
+
+    _header("Release Notes", 1)
+
+    _paragraph(
+        "At Clyso, we are thrilled to announce the release of a new version of our "
+        + "Enterprise Storage solution, built on the robust and reliable Ceph "
+        + "platform. This release brings a host of fixes and enhancements over the "
+        + "upstream release that we believe will significantly improve your storage "
+        + "experience."
+    )
+
+    _header("About this Release", 2)
+    _paragraph(
+        f"The new {version} is based on Ceph {manifest.base_ref} "
+        + "and has been developed and tested to ensure compatibility and performance."
+    )
+
+    downstream_patches: list[ManifestPatchEntry] = []
+    upstream_patches: list[GitHubPullRequest] = []
+
+    for p in manifest.patches:
+        if isinstance(p, PatchMeta):
+            downstream_patches.append(p)
+            continue
+
+        assert isinstance(p, GitHubPullRequest)
+        if p.org_name == "ceph":
+            upstream_patches.append(p)
+        else:
+            downstream_patches.append(p)
+
+    downstream_patches_items: list[str] = []
+    for p in downstream_patches:
+        if isinstance(p, PatchMeta):
+            downstream_patches_items.append(f"- {p.info.title.strip('.')}")
+        else:
+            assert isinstance(p, GitHubPullRequest)
+            downstream_patches_items.append(f"- {p.title.rstrip('.')}")
+
+    if downstream_patches_items:
+        _header("Downstream patches", 2)
+        doc_lines.extend(downstream_patches_items)
+        doc_lines.append("")
+
+    upstream_patches_items: list[str] = []
+    for p in upstream_patches:
+        upstream_patches_items.append(
+            f"- {p.title.rstrip('.')} ("
+            + f"[{p.pull_request_id}][_pr_{p.pull_request_id}]"
+            + ")"
+        )
+        _add_link(f"_pr_{p.pull_request_id}", f"{p.repo_url}/pull/{p.pull_request_id}")
+
+    if upstream_patches_items:
+        _header("Upstream patches", 2)
+        doc_lines.extend(upstream_patches_items)
+        doc_lines.append("")
+
+    _header("Usage", 2)
+    _paragraph(
+        "This release brings a container image equivalent to the upstream Ceph's "
+        + "image. At Clyso, we value your right to be free from vendor lock-in, "
+        + "and thus we make sure the our images are compatible with the upstream's "
+        + "Ceph releases. This means you will be able to upgrade to our image from "
+        + "an upstream release, and downgrade it back should you want to."
+    )
+
+    cephadm_loc = cephadm_loc or "UPDATE_CEPHADM_LINK_HERE"
+    image_loc = image_loc or "UPDATE_IMAGE_LINK_HERE"
+    _header("Installing `cephadm`", 3)
+    _paragraph(
+        "The `cephadm` binary can be found at [our repositories][_cephadm_loc]."
+        + "To install `cephadm`, the recommended way is to use the following command:"
+    )
+    _block(
+        f"""
+           # curl --silent --remote-name --location {cephadm_loc}
+           """,
+        block_type="shell",
+    )
+    _add_link("_cephadm_loc", cephadm_loc)
+
+    _header("Container image", 3)
+    _paragraph(
+        f"The container image for {version} can be found in "
+        + f"our container registry at `{image_loc}`"
+    )
+
+    _header("Installing or Upgrading", 3)
+    _paragraph(
+        "To install or upgrade to this release, please follow the instructions found "
+        + "in [our documentation][_docs_loc]. If you find any issues, please reach out "
+        + "to our support team."
+    )
+    _add_link(
+        "_docs_loc",
+        "https://docs.clyso.com/docs/products/clyso-enterprise-storage/install/",
+    )
+
+    _render_links()
+    return "\n".join(doc_lines)
