@@ -4,7 +4,9 @@ version = "0.0.0"
 description = "Clyso Enterprise Storage main project"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["basedpyright>=1.29.5"]
+dependencies = [
+    "basedpyright>=1.29.5",
+]
 
 [tool.uv.workspace]
 members = ["cbs", "cbs/packages/ceslib", "crt"]

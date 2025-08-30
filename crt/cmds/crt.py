@@ -146,6 +146,7 @@ cmd_crt.add_command(manifest.cmd_manifest_remove)
 cmd_crt.add_command(manifest.cmd_manifest_list)
 cmd_crt.add_command(manifest.cmd_manifest_info)
 cmd_crt.add_command(manifest.cmd_manifest_validate)
+cmd_crt.add_command(manifest.cmd_manifest_release_notes)
 
 # command groups
 cmd_crt.add_command(patchset.cmd_patchset)
