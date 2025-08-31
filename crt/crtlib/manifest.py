@@ -330,8 +330,9 @@ def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseM
 
     try:
         return ReleaseManifest.model_validate_json(manifest_path.read_text())
-    except pydantic.ValidationError:
+    except pydantic.ValidationError as e:
         logger.error(f"malformed manifest uuid '{manifest_uuid}'")
+        logger.debug(e)
         raise MalformedManifestError(uuid=manifest_uuid) from None
 
 
