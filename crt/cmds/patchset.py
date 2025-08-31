@@ -173,9 +173,7 @@ def cmd_patchset_add(
 
     if not manifest.active_stage:
         perror(f"manifest uuid '{manifest_uuid}' has no active stage")
-        pwarn(
-            "please run '[bold bright_magenta]manifest stage new[/bold bright_magenta]'"
-        )
+        pwarn("please run '[bold bright_magenta]stage new[/bold bright_magenta]'")
         sys.exit(errno.ENOENT)
 
     if not gh_pr_id:
