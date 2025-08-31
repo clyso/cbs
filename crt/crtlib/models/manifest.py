@@ -23,6 +23,7 @@ import pydantic
 from crtlib.errors.manifest import (
     NoStageError,
 )
+from crtlib.errors.stages import StageError
 from crtlib.models.common import (
     AuthorData,
     ManifestPatchEntry,
@@ -115,6 +116,10 @@ class ReleaseManifest(pydantic.BaseModel):
 
         If a stage is currently active, raise an error.
         """
+        active_stage = self.active_stage
+        if active_stage and not active_stage.patches:
+            raise StageError(msg="latest stage has no patches, cannot create new stage")
+
         stage = ManifestStage(author=author, tags=tags, desc=desc)
         self.stages.append(stage)
         return stage
