@@ -22,7 +22,7 @@ from crtlib.errors.manifest import (
     NoStageError,
     NoSuchManifestError,
 )
-from crtlib.errors.stages import MalformedStageTagError
+from crtlib.errors.stages import MalformedStageTagError, StageError
 from crtlib.manifest import load_manifest, load_manifest_by_name_or_uuid, store_manifest
 from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ManifestStage
@@ -134,11 +134,15 @@ def cmd_manifest_stage_new(
         perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    stage = manifest.new_stage(
-        AuthorData(user=author_name, email=author_email),
-        tags,
-        stage_desc,
-    )
+    try:
+        stage = manifest.new_stage(
+            AuthorData(user=author_name, email=author_email),
+            tags,
+            stage_desc,
+        )
+    except StageError as e:
+        perror(f"unable to create new stage: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     psuccess(
         f"new stage '{stage.stage_uuid}' for manifest uuid '{manifest.release_uuid}'"
