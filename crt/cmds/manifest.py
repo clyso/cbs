@@ -225,7 +225,7 @@ def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> 
     )
 
 
-@click.command("rm")
+@click.command("remove", help="Remove a manifest.")
 @click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
     "-p",
