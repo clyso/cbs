@@ -77,17 +77,35 @@ class GitHubPullRequest(PatchSetBase):
             f"[{self.org_name}\\{self.repo_name}#{self.pull_request_id}]-{patch_title}"
         )
 
+
+class CustomPatchSet(PatchSetBase):
+    """Represents a custom patch set, created by the user."""
+
+    description: str | None = pydantic.Field(default=None)
+    release_name: str | None = pydantic.Field(default=None)
+    is_published: bool = pydantic.Field(default=False)
+
     @override
-    def compute_hash_bytes(self) -> bytes:
-        return self.model_dump_json().encode()
+    def _get_entry_type(self) -> ManifestPatchSetEntryType:
+        return ManifestPatchSetEntryType.PATCHSET_CUSTOM
+
+    @override
+    def _get_canonical_title(self) -> str:
+        patch_title = patch_canonical_title(self.title)
+        patch_prefix = self.release_name or "generic"
+        return f"[{patch_prefix}]-{patch_title}"
 
 
 def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny, reportAny]
     if isinstance(v, GitHubPullRequest):
         return "gh"
+    elif isinstance(v, CustomPatchSet):
+        return "custom"
     elif isinstance(v, dict):
         if "pull_request_id" in v:
             return "gh"
+        elif "release_name" in v:
+            return "custom"
         else:
             return "vanilla"
     else:
@@ -97,6 +115,7 @@ def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny
 class PatchSet(pydantic.BaseModel):
     info: Annotated[
         Annotated[GitHubPullRequest, pydantic.Tag("gh")]
-        | Annotated[PatchSetBase, pydantic.Tag("vanilla")],
+        | Annotated[PatchSetBase, pydantic.Tag("vanilla")]
+        | Annotated[CustomPatchSet, pydantic.Tag("custom")],
         pydantic.Discriminator(_patchset_discriminator),
     ]

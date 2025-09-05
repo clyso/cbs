@@ -31,6 +31,7 @@ class AuthorData(pydantic.BaseModel):
 class ManifestPatchSetEntryType(enum.StrEnum):
     PATCHSET_VANILLA = "vanilla"
     PATCHSET_GITHUB = "gh"
+    PATCHSET_CUSTOM = "custom"
     SINGLE = "single"
 
 
@@ -52,10 +53,6 @@ class ManifestPatchEntry(pydantic.BaseModel, abc.ABC):  # pyright: ignore[report
 
     @abc.abstractmethod
     def _get_canonical_title(self) -> str:
-        pass
-
-    @abc.abstractmethod
-    def compute_hash_bytes(self) -> bytes:
         pass
 
 

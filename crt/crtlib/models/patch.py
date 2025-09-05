@@ -68,7 +68,3 @@ class PatchMeta(ManifestPatchEntry):
     @override
     def _get_canonical_title(self) -> str:
         return patch_canonical_title(self.info.title)
-
-    @override
-    def compute_hash_bytes(self) -> bytes:
-        return self.model_dump_json().encode()

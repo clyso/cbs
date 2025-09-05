@@ -31,6 +31,7 @@ from crtlib.git_utils import (
     git_prepare_remote,
 )
 from crtlib.logger import logger as parent_logger
+from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
 )
@@ -69,6 +70,39 @@ def patchset_check_patches_diff(
         raise PatchSetCheckError(msg=msg)
 
     return (added, skipped)
+
+
+def load_patchset(
+    patches_repo_path: Path, patchset_uuid: uuid.UUID
+) -> ManifestPatchEntry:
+    """Load a patch set from the patches repository by its UUID."""
+    patchset_meta_path = (
+        patches_repo_path.joinpath("ceph")
+        .joinpath("patches")
+        .joinpath("meta")
+        .joinpath(f"{patchset_uuid}.json")
+    )
+    if not patchset_meta_path.exists():
+        msg = f"missing patch set meta for uuid '{patchset_uuid}'"
+        logger.error(msg)
+        raise NoSuchPatchSetError()
+
+    try:
+        wrapped_entry = ManifestPatchEntryWrapper.model_validate_json(
+            patchset_meta_path.read_text()
+        )
+        entry = wrapped_entry.contents
+    except pydantic.ValidationError as e:
+        msg = f"malformed patch set uuid '{patchset_uuid}'"
+        logger.error(msg)
+        logger.error(str(e))
+        raise MalformedPatchSetError(msg=msg) from None
+    except Exception as e:
+        msg = f"unexpected error obtaining patch set meta uuid '{patchset_uuid}': {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    return entry
 
 
 def patchset_import_patches(
@@ -138,20 +172,8 @@ def patchset_get_gh(
         logger.error(msg)
         raise PatchSetError(msg=msg)
 
-    try:
-        wrapped_entry = ManifestPatchEntryWrapper.model_validate_json(
-            patchset_meta_path.read_text()
-        )
-        entry = wrapped_entry.contents
-    except pydantic.ValidationError as e:
-        msg = f"malformed gh patch set uuid '{patchset_uuid}'"
-        logger.error(msg)
-        logger.error(str(e))
-        raise MalformedPatchSetError(msg=msg) from None
-    except Exception as e:
-        msg = f"unexpected error obtaining patch set meta uuid '{patchset_uuid}': {e}"
-        logger.error(msg)
-        raise PatchSetError(msg=msg) from None
+    # propagate exceptions
+    entry = load_patchset(patches_repo_path, patchset_uuid)
 
     if not isinstance(entry, GitHubPullRequest):
         raise PatchSetError(msg=f"wrong patch set type: {type(entry)}")
