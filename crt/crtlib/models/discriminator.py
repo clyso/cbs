@@ -17,7 +17,7 @@ from typing import Annotated, Any, cast
 import pydantic
 from crtlib.models.common import ManifestPatchEntry, ManifestPatchSetEntryType
 from crtlib.models.patch import PatchMeta
-from crtlib.models.patchset import GitHubPullRequest
+from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest
 
 
 def _patchset_entry_discriminator(
@@ -36,6 +36,9 @@ class ManifestPatchEntryWrapper(pydantic.BaseModel):
         Annotated[
             GitHubPullRequest, pydantic.Tag(ManifestPatchSetEntryType.PATCHSET_GITHUB)
         ]
-        | Annotated[PatchMeta, pydantic.Tag(ManifestPatchSetEntryType.SINGLE)],
+        | Annotated[PatchMeta, pydantic.Tag(ManifestPatchSetEntryType.SINGLE)]
+        | Annotated[
+            CustomPatchSet, pydantic.Tag(ManifestPatchSetEntryType.PATCHSET_CUSTOM)
+        ],
         pydantic.Discriminator(_patchset_entry_discriminator),
     ]
