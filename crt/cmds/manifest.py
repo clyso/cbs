@@ -91,7 +91,12 @@ def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
     return table
 
 
-@click.command("new", help="Create a new release manifest.")
+@click.group("manifest", help="Operations on manifests.")
+def cmd_manifest() -> None:
+    pass
+
+
+@cmd_manifest.command("new", help="Create a new release manifest.")
 @click.argument("name", type=str, required=True, metavar="NAME")
 @click.argument("base_release", type=str, required=True, metavar="BASE_RELEASE")
 @click.argument("base_ref", type=str, required=True, metavar="[REPO@]REF")
@@ -176,7 +181,9 @@ def cmd_manifest_new(
     console.print(panel)
 
 
-@click.command("from", help="Create a release manifest from an existing manifest.")
+@cmd_manifest.command(
+    "from", help="Create a release manifest from an existing manifest."
+)
 @click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
     "--name",
@@ -234,7 +241,7 @@ def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> 
     )
 
 
-@click.command("remove", help="Remove a manifest.")
+@cmd_manifest.command("remove", help="Remove a manifest.")
 @click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
     "-p",
@@ -270,7 +277,7 @@ def cmd_manifest_remove(name_or_uuid: str, patches_repo_path: Path) -> None:
     psuccess(f"removed manifest name '{rm_name}' uuid '{rm_uuid}'")
 
 
-@click.command("list", help="List existing release manifest.")
+@cmd_manifest.command("list", help="List existing release manifest.")
 @click.option(
     "-p",
     "--patches-repo",
@@ -300,7 +307,7 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
         )
 
 
-@click.command("info", help="Show information about release manifests.")
+@cmd_manifest.command("info", help="Show information about release manifests.")
 @click.option(
     "-m",
     "--manifest-uuid",
@@ -370,7 +377,7 @@ def cmd_manifest_info(
         console.print(panel)
 
 
-@click.command("add", help="Add a patch set to a release.")
+@cmd_manifest.command("add", help="Add a patch set to a release.")
 @click.option(
     "-p",
     "--patches-repo",
@@ -744,7 +751,7 @@ def _manifest_publish(  # pyright: ignore[reportUnusedFunction]
     )
 
 
-@click.command("validate", help="Validate locally a release manifest.")
+@cmd_manifest.command("validate", help="Validate locally a release manifest.")
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
@@ -816,7 +823,7 @@ def cmd_manifest_validate(
     console.print(panel)
 
 
-@click.command("publish")
+@cmd_manifest.command("publish")
 @click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
 @click.option(
     "-c",
@@ -997,7 +1004,14 @@ def cmd_manifest_release_notes(
     psuccess(f"wrote release notes to '{dst_path}'")
 
 
-@click.command("manifest-update", help="Update the manifest on-disk representation.")
+@cmd_manifest.group("advanced", help="Advanced manifest operations.")
+def cmd_manifest_advanced() -> None:
+    pass
+
+
+@cmd_manifest_advanced.command(
+    "manifest-update", help="Update the manifest on-disk representation."
+)
 @click.option(
     "-m",
     "--manifest-uuid",
