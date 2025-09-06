@@ -58,6 +58,7 @@ cmd_crt.add_command(manifest.cmd_manifest_from)
 cmd_crt.add_command(manifest.cmd_manifest_remove)
 cmd_crt.add_command(manifest.cmd_manifest_list)
 cmd_crt.add_command(manifest.cmd_manifest_info)
+cmd_crt.add_command(manifest.cmd_manifest_add_patchset)
 cmd_crt.add_command(manifest.cmd_manifest_validate)
 cmd_crt.add_command(manifest.cmd_manifest_release_notes)
 
