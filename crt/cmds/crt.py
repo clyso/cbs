@@ -55,7 +55,6 @@ def cmd_crt(
 # release manifest commands
 cmd_crt.add_command(manifest.cmd_manifest_new)
 cmd_crt.add_command(manifest.cmd_manifest_from)
-cmd_crt.add_command(manifest.cmd_manifest_remove)
 cmd_crt.add_command(manifest.cmd_manifest_list)
 cmd_crt.add_command(manifest.cmd_manifest_info)
 cmd_crt.add_command(manifest.cmd_manifest_add_patchset)
@@ -63,14 +62,7 @@ cmd_crt.add_command(manifest.cmd_manifest_validate)
 cmd_crt.add_command(manifest.cmd_manifest_release_notes)
 
 # command groups
+cmd_crt.add_command(manifest.cmd_manifest)
 cmd_crt.add_command(patchset.cmd_patchset)
 cmd_crt.add_command(patch.cmd_patch)
 cmd_crt.add_command(stages.cmd_manifest_stage)
-
-
-@cmd_crt.group("advanced", help="Advanced commands.")
-def cmd_crt_advanced() -> None:
-    pass
-
-
-cmd_crt_advanced.add_command(manifest.cmd_manifest_update)
