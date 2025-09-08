@@ -28,6 +28,13 @@ from crtlib.models.common import (
 from crtlib.models.patch import Patch
 
 
+class CustomPatchMeta(pydantic.BaseModel):
+    repo: str
+    sha: SHA
+    sha_end: SHA | None = pydantic.Field(default=None)
+    patches: list[tuple[SHA, str]] = pydantic.Field(default=[])
+
+
 class PatchSetBase(ManifestPatchEntry, abc.ABC):
     """Represents a set of related patches."""
 
@@ -83,6 +90,7 @@ class CustomPatchSet(PatchSetBase):
 
     description: str | None = pydantic.Field(default=None)
     release_name: str | None = pydantic.Field(default=None)
+    patches_meta: list[CustomPatchMeta] = pydantic.Field(default=[])
     is_published: bool = pydantic.Field(default=False)
 
     @override

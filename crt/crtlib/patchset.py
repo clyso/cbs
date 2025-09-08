@@ -35,8 +35,8 @@ from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
 )
-from crtlib.models.patch import Patch
-from crtlib.models.patchset import GitHubPullRequest, PatchSetBase
+from crtlib.models.patch import Patch, PatchMeta
+from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest, PatchSetBase
 from crtlib.patch import PatchError, patch_import
 
 logger = parent_logger.getChild("patchset")
@@ -103,6 +103,30 @@ def load_patchset(
         raise PatchSetError(msg=msg) from None
 
     return entry
+
+
+def get_patchset_meta_path(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> Path:
+    return patches_repo_path / "ceph" / "patches" / "meta" / f"{patchset_uuid}.json"
+
+
+ManifestPatchEntryTypes = GitHubPullRequest | PatchMeta | CustomPatchSet
+
+
+def write_patchset(patches_repo_path: Path, patchset: ManifestPatchEntryTypes) -> None:
+    """Write a patch set's meta file into the patches repository."""
+    patchset_meta_path = get_patchset_meta_path(patches_repo_path, patchset.entry_uuid)
+    patchset_meta_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        _ = patchset_meta_path.write_text(
+            ManifestPatchEntryWrapper(contents=patchset).model_dump_json(indent=2)
+        )
+    except Exception as e:
+        msg = f"unable to write patch set meta file: {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    logger.debug(f"wrote patch set meta file '{patchset_meta_path}'")
 
 
 def patchset_import_patches(
@@ -214,11 +238,6 @@ def patchset_fetch_gh_patches(
     )
     patchset_pr_dir_path.mkdir(exist_ok=True, parents=True)
 
-    patchset_meta_path = (
-        patches_repo_path / "ceph" / "patches" / "meta" / f"{patchset.entry_uuid}.json"
-    )
-    patchset_meta_path.parent.mkdir(exist_ok=True, parents=True)
-
     patchset_path = (
         patches_repo_path / "ceph" / "patches" / f"{patchset.entry_uuid}.patch"
     )
@@ -261,9 +280,7 @@ def patchset_fetch_gh_patches(
     try:
         _ = patchset_path.write_text(formatted_patchset)
         _ = patchset_head_path.write_text(str(patchset.entry_uuid))
-        _ = patchset_meta_path.write_text(
-            ManifestPatchEntryWrapper(contents=patchset).model_dump_json(indent=2)
-        )
+        write_patchset(patches_repo_path, patchset)
         _set_latest(patchset_pr_dir_path, patchset_head_sha)
     except Exception as e:
         msg = f"error writing patch set '{pr_id}' from '{repo_path}': {e}"
