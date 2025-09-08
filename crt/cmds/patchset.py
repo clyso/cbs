@@ -55,6 +55,38 @@ def _is_valid_sha(sha: str) -> bool:
     return re.match(r"^[\da-f]{4}[\da-f]{0,36}$", sha) is not None
 
 
+def _gen_rich_custom_patchset_info(patchset: CustomPatchSet) -> RenderableType:
+    header_table = Table(show_header=False, box=None, expand=False)
+    header_table.add_column(justify="left", style="bold cyan", no_wrap=False)
+    header_table.add_column(justify="left", style="orange3", no_wrap=False)
+
+    header_table.add_row("uuid", f"[gold1]{patchset.entry_uuid}[/gold1]")
+    header_table.add_row("title", patchset.title)
+    header_table.add_row("author", f"{patchset.author.user} <{patchset.author.email}>")
+    header_table.add_row("release", patchset.release_name or "n/a")
+    header_table.add_row(
+        "patches", str(sum(len(meta.patches) for meta in patchset.patches_meta))
+    )
+    header_table.add_row(
+        "published", "[green]Yes[/green]" if patchset.is_published else "[red]No[/red]"
+    )
+
+    patch_lst_table = Table(
+        show_header=False,
+        show_lines=False,
+        box=rich.box.HORIZONTALS,
+    )
+    patch_lst_table.add_column(justify="left", style="bold gold1", no_wrap=True)
+    patch_lst_table.add_column(justify="left", style="white", no_wrap=False)
+
+    for entry in patchset.patches_meta:
+        for sha, title in entry.patches:
+            patch_lst_table.add_row(sha, title)
+
+    group = Group(header_table, patch_lst_table)
+    return group
+
+
 def _gen_rich_patchset_list() -> Table:
     table = Table(
         show_header=False,
@@ -350,6 +382,48 @@ def cmd_patchset_list(patches_repo_path: Path) -> None:
 
     console.print(table)
     pass
+
+
+@cmd_patchset.command("info", help="Obtain info on a given patch set.")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+@click.option(
+    "-u",
+    "--patchset-uuid",
+    "patchset_uuid",
+    type=uuid.UUID,
+    required=True,
+    help="Patch set UUID.",
+)
+def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None:
+    try:
+        patchset = load_patchset(patches_repo_path, patchset_uuid)
+    except MalformedPatchSetError as e:
+        perror(f"malformed patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to load patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not isinstance(patchset, CustomPatchSet):
+        perror("only custom patch sets currently supported")
+        sys.exit(errno.EINVAL)
+
+    console.print(_gen_rich_custom_patchset_info(patchset))
 
 
 @cmd_patchset.command("add", help="Add one or more patches to a patch set.")
