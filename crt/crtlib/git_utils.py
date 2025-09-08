@@ -213,6 +213,63 @@ def git_check_patches_diff(
     return (patches_add, patches_drop)
 
 
+def git_patches_in_interval(
+    repo_path: Path, from_ref: SHA, to_ref: SHA
+) -> list[tuple[SHA, str]]:
+    logger.debug(f"get patch interval from '{from_ref}' to '{to_ref}'")
+    repo = git.Repo(repo_path)
+
+    cmd = [
+        "git",
+        "rev-list",
+        "--ancestry-path",
+        "--pretty=oneline",
+        f"{from_ref}~1..{to_ref}",
+    ]
+    try:
+        res = repo.git.execute(
+            cmd,
+            with_extended_output=False,
+            as_process=False,
+            stdout_as_string=True,
+        )
+    except Exception as e:
+        msg = f"unable to obtain patch interval: {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+    def _split(ln: str) -> tuple[str, str]:
+        sha, title = ln.split(maxsplit=1)
+        return (sha, title)
+
+    return list(
+        map(_split, [line.strip() for line in res.splitlines() if line.strip()])
+    )
+
+
+def git_get_patch_sha_title(repo_path: Path, sha: SHA) -> tuple[str, str]:
+    logger.debug(f"get patch sha and title for '{sha}'")
+    repo = git.Repo(repo_path)
+
+    cmd = ["git", "show", "--format=%H %s", "--no-patch", sha]
+    try:
+        res = repo.git.execute(
+            cmd, with_extended_output=False, as_process=False, stdout_as_string=True
+        )
+    except Exception as e:
+        msg = f"unable to obtain patch sha and title for '{sha}': {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+    logger.debug(res)
+    lst = [line.strip() for line in res.splitlines() if line.strip()]
+    if len(lst) > 1:
+        raise GitError(msg=f"unexpected multiple lines for patch '{sha}'")
+    logger.debug(lst)
+    patch_sha, patch_title = next(iter(lst)).split(maxsplit=1)
+    return (patch_sha, patch_title)
+
+
 def git_status(repo_path: Path) -> list[tuple[str, str]]:
     repo = git.Repo(repo_path)
 

@@ -26,20 +26,33 @@ import rich.box
 from crtlib.errors.patchset import (
     MalformedPatchSetError,
 )
+from crtlib.git_utils import SHA, git_get_patch_sha_title, git_patches_in_interval
 from crtlib.models.common import AuthorData, ManifestPatchEntry
 from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.patch import PatchMeta
-from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest, PatchSetBase
+from crtlib.models.patchset import (
+    CustomPatchMeta,
+    CustomPatchSet,
+    GitHubPullRequest,
+    PatchSetBase,
+)
 from crtlib.patchset import (
+    get_patchset_meta_path,
     load_patchset,
+    write_patchset,
 )
 from rich.console import Group, RenderableType
+from rich.padding import Padding
 from rich.table import Table
 
 from cmds import console, perror, pinfo, psuccess, pwarn
 from cmds import logger as parent_logger
 
 logger = parent_logger.getChild("patchset")
+
+
+def _is_valid_sha(sha: str) -> bool:
+    return re.match(r"^[\da-f]{4}[\da-f]{0,36}$", sha) is not None
 
 
 def _gen_rich_patchset_list() -> Table:
@@ -112,10 +125,11 @@ def _gen_rich_patchset_custom(patchset: CustomPatchSet) -> RenderableType:
     release = patchset.release_name if patchset.release_name else "n/a"
     is_published = "[green]Yes[/green]" if patchset.is_published else "[red]No[/red]"
     t1 = Table(show_header=False, box=None, expand=False, padding=(0, 2, 0, 0))
+    n_patches = sum(len(meta.patches) for meta in patchset.patches_meta)
     t1.add_row(
         f"[italic]release:[/italic] [orange3]{release}[/orange3]",
         f"[italic]published:[/italic] {is_published}",
-        f"[italic]patches:[/italic] [orange3]{len(patchset.patches)}[/orange3]",
+        f"[italic]patches:[/italic] [orange3]{n_patches}[/orange3]",
     )
     return t1
 
@@ -286,16 +300,11 @@ def cmd_patchset_create(
         release_name=release_name,
     )
 
-    patchset_meta_path = (
-        patches_repo_path / "ceph" / "patches" / "meta" / f"{patchset.entry_uuid}.json"
-    )
+    patchset_meta_path = get_patchset_meta_path(patches_repo_path, patchset.entry_uuid)
     assert not patchset_meta_path.exists()
-    patchset_meta_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        _ = patchset_meta_path.write_text(
-            ManifestPatchEntryWrapper(contents=patchset).model_dump_json(indent=2)
-        )
+        write_patchset(patchset_meta_path, patchset)
     except Exception as e:
         perror(f"unable to write patch set meta file: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -341,6 +350,206 @@ def cmd_patchset_list(patches_repo_path: Path) -> None:
 
     console.print(table)
     pass
+
+
+@cmd_patchset.command("add", help="Add one or more patches to a patch set.")
+@click.option(
+    "-c",
+    "--ceph-repo",
+    "ceph_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to ceph git repository where operations will be performed.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+@click.option(
+    "-u",
+    "--patchset-uuid",
+    "patchset_uuid",
+    type=uuid.UUID,
+    required=True,
+    help="Patch set UUID.",
+)
+@click.option(
+    "--gh-repo",
+    "ceph_gh_repo",
+    type=str,
+    required=False,
+    default="ceph/ceph",
+    metavar="OWNER/REPO",
+    help="GitHub repository to obtain the patch(es) from.",
+)
+@click.argument(
+    "patch_sha",
+    metavar="SHA|SHA1..SHA2 [...]",
+    type=str,
+    required=True,
+    nargs=-1,
+)
+def cmd_patchset_add(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patchset_uuid: uuid.UUID,
+    ceph_gh_repo: str,
+    patch_sha: list[str],
+) -> None:
+    try:
+        patchset = load_patchset(patches_repo_path, patchset_uuid)
+    except Exception as e:
+        perror(f"unable to load patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not isinstance(patchset, CustomPatchSet):
+        perror(f"patch set '{patchset_uuid}' is not a custom patch set")
+        sys.exit(errno.EINVAL)
+
+    if patchset.is_published:
+        perror(f"patch set '{patchset_uuid}' is already published")
+        sys.exit(errno.EINVAL)
+
+    existing_shas = [p[0] for meta in patchset.patches_meta for p in meta.patches]
+
+    patches_meta_lst: list[CustomPatchMeta] = []
+    skipped_patches: list[tuple[SHA, str]] = []
+    for sha_entry in patch_sha:
+        sha_begin: SHA
+        sha_end: SHA | None = None
+        if ".." in sha_entry:
+            interval = sha_entry.split("..", 1)
+            if len(interval) != 2 or not interval[0] or not interval[1]:
+                perror(f"malformed patch interval '{sha_entry}'")
+                sys.exit(errno.EINVAL)
+            sha_begin, sha_end = interval[0], interval[1]
+        else:
+            sha_begin = sha_entry
+
+        if not _is_valid_sha(sha_begin) or (sha_end and not _is_valid_sha(sha_end)):
+            perror(f"malformed patch sha '{sha_entry}'")
+            sys.exit(errno.EINVAL)
+
+        patches_lst: list[tuple[SHA, str]] = []
+        if sha_end:
+            try:
+                for sha, title in git_patches_in_interval(
+                    ceph_repo_path, sha_begin, sha_end
+                ):
+                    if sha not in existing_shas:
+                        patches_lst.append((sha, title))
+                    else:
+                        skipped_patches.append((sha, title))
+            except Exception as e:
+                perror(f"unable to obtain patches in interval '{sha_entry}': {e}")
+                sys.exit(errno.ENOTRECOVERABLE)
+        else:
+            try:
+                sha, title = git_get_patch_sha_title(ceph_repo_path, sha_begin)
+                if sha not in existing_shas:
+                    patches_lst.append((sha, title))
+                else:
+                    skipped_patches.append((sha, title))
+            except Exception as e:
+                perror(f"unable to obtain patch info for sha '{sha_entry}': {e}")
+                sys.exit(errno.ENOTRECOVERABLE)
+
+        if patches_lst:
+            patches_meta_lst.append(
+                CustomPatchMeta(
+                    repo=ceph_gh_repo,
+                    sha=sha_begin,
+                    sha_end=sha_end,
+                    patches=patches_lst,
+                )
+            )
+
+    if patchset.patches_meta:
+        existing_patches_table = Table(
+            title="Existing patches",
+            title_style="bold magenta",
+            show_header=False,
+            show_lines=False,
+            box=rich.box.HORIZONTALS,
+        )
+        existing_patches_table.add_column(
+            justify="left", style="bold cyan", no_wrap=True
+        )
+        existing_patches_table.add_column(justify="left", style="white", no_wrap=False)
+
+        for existing_entry in patchset.patches_meta:
+            for sha, title in existing_entry.patches:
+                existing_patches_table.add_row(sha, title)
+
+        console.print(Padding(existing_patches_table, (1, 0, 0, 0)))
+
+    if skipped_patches:
+        skipped_patches_table = Table(
+            title="Skipped patches",
+            title_style="bold orange3",
+            show_header=False,
+            show_lines=False,
+            box=rich.box.HORIZONTALS,
+        )
+        skipped_patches_table.add_column(
+            justify="left", style="bold hot_pink", no_wrap=True
+        )
+        skipped_patches_table.add_column(justify="left", style="white", no_wrap=False)
+
+        for sha, title in skipped_patches:
+            skipped_patches_table.add_row(sha, title)
+
+        console.print(Padding(skipped_patches_table, (1, 0, 0, 0)))
+
+    if not patches_meta_lst:
+        console.print(
+            Padding("[bold yellow]No new patches to add[/bold yellow]", (1, 0, 1, 2))
+        )
+        return
+    else:
+        patch_lst_table = Table(
+            title="Patches to add",
+            title_style="bold green",
+            show_header=False,
+            show_lines=False,
+            box=rich.box.HORIZONTALS,
+        )
+        patch_lst_table.add_column(justify="left", style="bold gold1", no_wrap=True)
+        patch_lst_table.add_column(justify="left", style="white", no_wrap=False)
+
+        for entry in patches_meta_lst:
+            for sha, title in entry.patches:
+                patch_lst_table.add_row(sha, title)
+
+        console.print(Padding(patch_lst_table, (1, 0, 1, 0)))
+        if not click.confirm("Add above patches to patch set?", prompt_suffix=" "):
+            pwarn("Aborted")
+            sys.exit(0)
+
+    patchset.patches_meta.extend(patches_meta_lst)
+
+    try:
+        write_patchset(patches_repo_path, patchset)
+    except Exception as e:
+        perror(f"unable to write patch set meta file: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    n_patches = sum(len(meta.patches) for meta in patches_meta_lst)
+    psuccess(f"wrote patch set '{patchset.entry_uuid}', {n_patches} new patches")
 
 
 @cmd_patchset.group("advanced", help="Advanced patch set operations.")
