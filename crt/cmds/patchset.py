@@ -55,21 +55,65 @@ def _is_valid_sha(sha: str) -> bool:
     return re.match(r"^[\da-f]{4}[\da-f]{0,36}$", sha) is not None
 
 
-def _gen_rich_custom_patchset_info(patchset: CustomPatchSet) -> RenderableType:
+def _gen_rich_patch_meta_info_header(table: Table, patch_meta: PatchMeta) -> Table:
+    table.add_row("sha", f"[orchid2]{patch_meta.sha}[/orchid2]")
+    table.add_row("title", patch_meta.info.title)
+    table.add_row(
+        "author", f"{patch_meta.info.author.user} <{patch_meta.info.author.email}>"
+    )
+    table.add_row("date", f"{patch_meta.info.date}")
+    table.add_row("src version", patch_meta.src_version or "n/a")
+    table.add_row("fixes", "\n".join(patch_meta.info.fixes) or "n/a")
+    return table
+
+
+def _gen_rich_patchset_base_info_header(table: Table, patchset: PatchSetBase) -> Table:
+    table.add_row("title", patchset.title)
+    table.add_row("author", f"{patchset.author.user} <{patchset.author.email}>")
+    table.add_row("created", f"{patchset.creation_date}")
+    table.add_row("related to", "\n".join(patchset.related_to) or "n/a")
+
+    if isinstance(patchset, GitHubPullRequest):
+        table.add_row("repo", f"{patchset.org_name}/{patchset.repo_name}")
+        table.add_row("pr id", str(patchset.pull_request_id))
+        table.add_row("updated on", str(patchset.updated_date) or "n/a")
+        table.add_row("merged", "Yes" if patchset.merged else "No")
+        if patchset.merged:
+            table.add_row("merged on", str(patchset.merge_date) or "n/a")
+        table.add_row("target branch", patchset.target_branch)
+        table.add_row("patches", str(len(patchset.patches)))
+
+    elif isinstance(patchset, CustomPatchSet):
+        table.add_row("release", patchset.release_name or "n/a")
+        table.add_row(
+            "patches", str(sum(len(meta.patches) for meta in patchset.patches_meta))
+        )
+        table.add_row(
+            "published",
+            "[green]Yes[/green]" if patchset.is_published else "[red]No[/red]",
+        )
+
+    return table
+
+
+def _gen_rich_patchset_info_header(table: Table, patchset: ManifestPatchEntry) -> Table:
+    if isinstance(patchset, PatchMeta):
+        return _gen_rich_patch_meta_info_header(table, patchset)
+    elif isinstance(patchset, PatchSetBase):
+        return _gen_rich_patchset_base_info_header(table, patchset)
+    else:
+        perror(f"unknown patch set type: {type(patchset)}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+
+def _gen_rich_patchset_info(patchset: ManifestPatchEntry) -> RenderableType:
     header_table = Table(show_header=False, box=None, expand=False)
     header_table.add_column(justify="left", style="bold cyan", no_wrap=False)
     header_table.add_column(justify="left", style="orange3", no_wrap=False)
 
     header_table.add_row("uuid", f"[gold1]{patchset.entry_uuid}[/gold1]")
-    header_table.add_row("title", patchset.title)
-    header_table.add_row("author", f"{patchset.author.user} <{patchset.author.email}>")
-    header_table.add_row("release", patchset.release_name or "n/a")
-    header_table.add_row(
-        "patches", str(sum(len(meta.patches) for meta in patchset.patches_meta))
-    )
-    header_table.add_row(
-        "published", "[green]Yes[/green]" if patchset.is_published else "[red]No[/red]"
-    )
+    header_table.add_row("type", patchset.entry_type.value)
+    header_table = _gen_rich_patchset_info_header(header_table, patchset)
 
     patch_lst_table = Table(
         show_header=False,
@@ -79,12 +123,15 @@ def _gen_rich_custom_patchset_info(patchset: CustomPatchSet) -> RenderableType:
     patch_lst_table.add_column(justify="left", style="bold gold1", no_wrap=True)
     patch_lst_table.add_column(justify="left", style="white", no_wrap=False)
 
-    for entry in patchset.patches_meta:
-        for sha, title in entry.patches:
-            patch_lst_table.add_row(sha, title)
+    if isinstance(patchset, GitHubPullRequest):
+        for patch in patchset.patches:
+            patch_lst_table.add_row(patch.sha, patch.title)
+    elif isinstance(patchset, CustomPatchSet):
+        for entry in patchset.patches_meta:
+            for sha, title in entry.patches:
+                patch_lst_table.add_row(sha, title)
 
-    group = Group(header_table, patch_lst_table)
-    return group
+    return Group(header_table, patch_lst_table)
 
 
 def _gen_rich_patchset_list() -> Table:
@@ -419,11 +466,7 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
         perror(f"unable to load patch set '{patchset_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    if not isinstance(patchset, CustomPatchSet):
-        perror("only custom patch sets currently supported")
-        sys.exit(errno.EINVAL)
-
-    console.print(_gen_rich_custom_patchset_info(patchset))
+    console.print(_gen_rich_patchset_info(patchset))
 
 
 @cmd_patchset.command("add", help="Add one or more patches to a patch set.")
