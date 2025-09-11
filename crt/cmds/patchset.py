@@ -817,6 +817,65 @@ def cmd_patchset_publish(
     psuccess(f"published patch set '{patchset.entry_uuid}'")
 
 
+@cmd_patchset.command("remove", help="Remove an unpublished patch set.")
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+@click.option(
+    "-u",
+    "--patchset-uuid",
+    "patchset_uuid",
+    type=uuid.UUID,
+    required=True,
+    help="Patch set UUID.",
+)
+def cmd_patchset_remove(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None:
+    patchset_meta_path = get_patchset_meta_path(patches_repo_path, patchset_uuid)
+    if not patchset_meta_path.exists():
+        perror(f"patch set '{patchset_uuid}' does not exist")
+        sys.exit(errno.ENOENT)
+
+    try:
+        patchset = load_patchset(patches_repo_path, patchset_uuid)
+    except Exception as e:
+        perror(f"unable to load patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not isinstance(patchset, CustomPatchSet):
+        perror(f"patch set '{patchset_uuid}' is not a custom patch set")
+        sys.exit(errno.EINVAL)
+
+    if patchset.is_published:
+        perror(f"patch set '{patchset_uuid}' is already published")
+        sys.exit(errno.EINVAL)
+
+    console.print(_gen_rich_patchset_info(patchset))
+    if not click.confirm("Remove above patch set?", prompt_suffix=" "):
+        pwarn("Aborted")
+        sys.exit(0)
+
+    try:
+        patchset_meta_path.unlink()
+    except Exception as e:
+        perror(f"unable to remove patch set meta file: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"removed patch set '{patchset.entry_uuid}'")
+
+
 @cmd_patchset.group("advanced", help="Advanced patch set operations.")
 def cmd_patchset_advanced() -> None:
     pass
