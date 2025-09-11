@@ -12,7 +12,9 @@
 # GNU General Public License for more details.
 
 
+import datetime
 import uuid
+from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
@@ -26,6 +28,7 @@ from crtlib.git_utils import (
     GitEmptyPatchDiffError,
     GitError,
     GitPatchDiffError,
+    git_branch_delete,
     git_check_patches_diff,
     git_format_patch,
     git_prepare_remote,
@@ -36,7 +39,11 @@ from crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
 )
 from crtlib.models.patch import Patch, PatchMeta
-from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest, PatchSetBase
+from crtlib.models.patchset import (
+    CustomPatchSet,
+    GitHubPullRequest,
+    PatchSetBase,
+)
 from crtlib.patch import PatchError, patch_import
 
 logger = parent_logger.getChild("patchset")
@@ -310,3 +317,115 @@ def patchset_from_gh_needs_update(
         return (existing.updated_date - new.updated_date).total_seconds() < 0
 
     return True
+
+
+def fetch_custom_patchset_patches(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patchset: CustomPatchSet,
+    token: str,
+) -> None:
+    """Fetch and store a custom patch set's patches into the patches repository."""
+    if patchset.is_published:
+        raise PatchSetError(msg="cannot fetch published custom patch set")
+
+    if not patchset.patches_meta:
+        raise PatchSetError(msg="empty custom patch set")
+
+    patchset_path = (
+        patches_repo_path / "ceph" / "patches" / f"{patchset.entry_uuid}.patch"
+    )
+    if patchset_path.exists():
+        msg = f"custom patch set '{patchset.entry_uuid}' already exists"
+        logger.error(msg)
+        raise PatchSetError(msg=msg)
+    patchset_path.parent.mkdir(exist_ok=True, parents=True)
+
+    # prepare all remotes in this patch set, so we don't have to update them
+    # individually per meta entry, and obtain the patch sets' branches.
+    fetched_branches: set[str] = set()
+    seq = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+    for meta in patchset.patches_meta:
+        dst_branch = (
+            f"patchset/branch/{meta.repo.replace('/', '--')}--{meta.branch}-{seq}"
+        )
+        if dst_branch in fetched_branches:
+            continue
+
+        try:
+            remote = git_prepare_remote(
+                ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
+            )
+            _ = remote.fetch(refspec=f"{meta.branch}:{dst_branch}")
+        except Exception as e:
+            msg = (
+                f"error fetching patchset branch '{meta.branch}' "
+                + f"from '{meta.repo}': {e}"
+            )
+            logger.error(msg)
+            raise PatchSetError(msg=msg) from None
+
+        fetched_branches.add(dst_branch)
+
+    def _cleanup() -> None:
+        for branch in fetched_branches:
+            try:
+                git_branch_delete(ceph_repo_path, branch)
+            except Exception as e:
+                msg = f"unable to delete temporary branch '{branch}': {e}"
+                logger.error(msg)
+                raise PatchSetError(msg=msg) from None
+
+    patchset_formatted_patches: list[str] = []
+    for meta in patchset.patches_meta:
+        interval_str = f"[{meta.sha}, {meta.sha_end}]" if meta.sha_end else meta.sha
+        logger.debug(f"format patches '{interval_str}' from '{meta.repo}'")
+        for patch in meta.patches:
+            sha = patch[0]
+            logger.debug(f"format patch sha '{sha}' title '{patch[1]}'")
+            try:
+                formatted_patch = git_format_patch(ceph_repo_path, sha)
+            except GitError as e:
+                _cleanup()
+                msg = f"unable to obtain formatted patch for sha '{sha}': {e}"
+                logger.error(msg)
+                raise PatchSetError(msg=msg) from None
+
+            patchset_formatted_patches.append(formatted_patch)
+
+    logger.debug(f"write '{len(patchset_formatted_patches)}' patches")
+    try:
+        with patchset_path.open("w", encoding="utf-8") as f:
+            _ = f.write("\n".join(patchset_formatted_patches))
+    except Exception as e:
+        _cleanup()
+        msg = f"unable to write custom patch set '{patchset.entry_uuid}': {e}"
+        logger.error(msg)
+        raise PatchSetError(msg=msg) from None
+
+    _cleanup()
+
+
+def fetch_patchset_patches_from_repo(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patchset: PatchSetBase,
+    token: str,
+    *,
+    force: bool = False,
+) -> None:
+    if isinstance(patchset, GitHubPullRequest):
+        patchset_fetch_gh_patches(
+            ceph_repo_path,
+            patches_repo_path,
+            patchset,
+            token,
+            force=force,
+        )
+    elif isinstance(patchset, CustomPatchSet):
+        fetch_custom_patchset_patches(
+            ceph_repo_path, patches_repo_path, patchset, token
+        )
+
+    else:
+        raise PatchSetError(f"unsupported patch set type: {type(patchset)}")

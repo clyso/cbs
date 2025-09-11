@@ -26,7 +26,13 @@ import rich.box
 from crtlib.errors.patchset import (
     MalformedPatchSetError,
 )
-from crtlib.git_utils import SHA, git_get_patch_sha_title, git_patches_in_interval
+from crtlib.git_utils import (
+    SHA,
+    git_branch_delete,
+    git_get_patch_sha_title,
+    git_patches_in_interval,
+    git_prepare_remote,
+)
 from crtlib.models.common import AuthorData, ManifestPatchEntry
 from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.patch import PatchMeta
@@ -37,6 +43,7 @@ from crtlib.models.patchset import (
     PatchSetBase,
 )
 from crtlib.patchset import (
+    fetch_custom_patchset_patches,
     get_patchset_meta_path,
     load_patchset,
     write_patchset,
@@ -45,7 +52,7 @@ from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.table import Table
 
-from cmds import console, perror, pinfo, psuccess, pwarn
+from cmds import Ctx, console, pass_ctx, perror, pinfo, psuccess, pwarn
 from cmds import logger as parent_logger
 
 logger = parent_logger.getChild("patchset")
@@ -84,6 +91,8 @@ def _gen_rich_patchset_base_info_header(table: Table, patchset: PatchSetBase) ->
         table.add_row("patches", str(len(patchset.patches)))
 
     elif isinstance(patchset, CustomPatchSet):
+        desc = patchset.description_text
+        table.add_row("description", desc or "n/a")
         table.add_row("release", patchset.release_name or "n/a")
         table.add_row(
             "patches", str(sum(len(meta.patches) for meta in patchset.patches_meta))
@@ -383,7 +392,7 @@ def cmd_patchset_create(
     assert not patchset_meta_path.exists()
 
     try:
-        write_patchset(patchset_meta_path, patchset)
+        write_patchset(patches_repo_path, patchset)
     except Exception as e:
         perror(f"unable to write patch set meta file: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -513,6 +522,15 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
     metavar="OWNER/REPO",
     help="GitHub repository to obtain the patch(es) from.",
 )
+@click.option(
+    "-b",
+    "--branch",
+    "patches_branch",
+    type=str,
+    required=True,
+    metavar="NAME",
+    help="Branch on which to find patches.",
+)
 @click.argument(
     "patch_sha",
     metavar="SHA|SHA1..SHA2 [...]",
@@ -520,13 +538,20 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
     required=True,
     nargs=-1,
 )
+@pass_ctx
 def cmd_patchset_add(
+    ctx: Ctx,
     ceph_repo_path: Path,
     patches_repo_path: Path,
     patchset_uuid: uuid.UUID,
     ceph_gh_repo: str,
+    patches_branch: str,
     patch_sha: list[str],
 ) -> None:
+    if not ctx.github_token:
+        perror("github token not specified")
+        sys.exit(errno.EINVAL)
+
     try:
         patchset = load_patchset(patches_repo_path, patchset_uuid)
     except Exception as e:
@@ -543,6 +568,33 @@ def cmd_patchset_add(
 
     existing_shas = [p[0] for meta in patchset.patches_meta for p in meta.patches]
 
+    # ensure we have the specified branch in the ceph repo, so we can actually obtain
+    # the right shas
+    try:
+        remote = git_prepare_remote(
+            ceph_repo_path, f"github.com/{ceph_gh_repo}", ceph_gh_repo, ctx.github_token
+        )
+    except Exception as e:
+        perror(f"unable to update remote '{ceph_gh_repo}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    seq = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+    dst_branch = (
+        f"patchset/branch/{ceph_gh_repo.replace('/', '--')}--{patches_branch}-{seq}"
+    )
+    try:
+        _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
+    except Exception as e:
+        perror(f"unable to fetch branch '{patches_branch}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    def _cleanup() -> None:
+        try:
+            git_branch_delete(ceph_repo_path, dst_branch)
+        except Exception as e:
+            perror(f"unable to delete temporary branch '{dst_branch}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
     patches_meta_lst: list[CustomPatchMeta] = []
     skipped_patches: list[tuple[SHA, str]] = []
     for sha_entry in patch_sha:
@@ -558,20 +610,22 @@ def cmd_patchset_add(
             sha_begin = sha_entry
 
         if not _is_valid_sha(sha_begin) or (sha_end and not _is_valid_sha(sha_end)):
+            _cleanup()
             perror(f"malformed patch sha '{sha_entry}'")
             sys.exit(errno.EINVAL)
 
         patches_lst: list[tuple[SHA, str]] = []
         if sha_end:
             try:
-                for sha, title in git_patches_in_interval(
-                    ceph_repo_path, sha_begin, sha_end
+                for sha, title in reversed(
+                    git_patches_in_interval(ceph_repo_path, sha_begin, sha_end)
                 ):
                     if sha not in existing_shas:
                         patches_lst.append((sha, title))
                     else:
                         skipped_patches.append((sha, title))
             except Exception as e:
+                _cleanup()
                 perror(f"unable to obtain patches in interval '{sha_entry}': {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
         else:
@@ -582,6 +636,7 @@ def cmd_patchset_add(
                 else:
                     skipped_patches.append((sha, title))
             except Exception as e:
+                _cleanup()
                 perror(f"unable to obtain patch info for sha '{sha_entry}': {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
 
@@ -589,6 +644,7 @@ def cmd_patchset_add(
             patches_meta_lst.append(
                 CustomPatchMeta(
                     repo=ceph_gh_repo,
+                    branch=patches_branch,
                     sha=sha_begin,
                     sha_end=sha_end,
                     patches=patches_lst,
@@ -662,11 +718,103 @@ def cmd_patchset_add(
     try:
         write_patchset(patches_repo_path, patchset)
     except Exception as e:
+        _cleanup()
         perror(f"unable to write patch set meta file: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     n_patches = sum(len(meta.patches) for meta in patches_meta_lst)
     psuccess(f"wrote patch set '{patchset.entry_uuid}', {n_patches} new patches")
+    _cleanup()
+
+
+@cmd_patchset.command("publish", help="Publish a patch set to the patches repository.")
+@click.option(
+    "-c",
+    "--ceph-repo",
+    "ceph_repo_path",
+    type=click.Path(
+        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
+    ),
+    required=True,
+    help="Path to ceph git repository where operations will be performed.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=True,
+    help="Path to ces-patches git repository.",
+)
+@click.option(
+    "-u",
+    "--patchset-uuid",
+    "patchset_uuid",
+    type=uuid.UUID,
+    required=True,
+    help="Patch set UUID.",
+)
+@pass_ctx
+def cmd_patchset_publish(
+    ctx: Ctx,
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    patchset_uuid: uuid.UUID,
+) -> None:
+    if not ctx.github_token:
+        perror("missing GitHub token")
+        sys.exit(errno.EINVAL)
+
+    try:
+        patchset = load_patchset(patches_repo_path, patchset_uuid)
+    except Exception as e:
+        perror(f"unable to load patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not isinstance(patchset, CustomPatchSet):
+        perror(f"patch set '{patchset_uuid}' is not a custom patch set")
+        sys.exit(errno.EINVAL)
+
+    if patchset.is_published:
+        perror(f"patch set '{patchset_uuid}' is already published")
+        sys.exit(errno.EINVAL)
+
+    if not patchset.patches_meta or all(
+        len(meta.patches) == 0 for meta in patchset.patches_meta
+    ):
+        perror(f"patch set '{patchset_uuid}' has no patches")
+        sys.exit(errno.EINVAL)
+
+    console.print(_gen_rich_patchset_info(patchset))
+    if not click.confirm("Publish above patch set?", prompt_suffix=" "):
+        pwarn("Aborted")
+        sys.exit(0)
+
+    try:
+        fetch_custom_patchset_patches(
+            ceph_repo_path, patches_repo_path, patchset, ctx.github_token
+        )
+    except Exception as e:
+        perror(f"unable to fetch patches for patch set '{patchset_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    patchset.is_published = True
+
+    try:
+        write_patchset(patches_repo_path, patchset)
+    except Exception as e:
+        perror(f"unable to write patch set meta file: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(f"published patch set '{patchset.entry_uuid}'")
 
 
 @cmd_patchset.group("advanced", help="Advanced patch set operations.")
