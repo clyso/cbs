@@ -30,6 +30,7 @@ from crtlib.models.patch import Patch
 
 class CustomPatchMeta(pydantic.BaseModel):
     repo: str
+    branch: str
     sha: SHA
     sha_end: SHA | None = pydantic.Field(default=None)
     patches: list[tuple[SHA, str]] = pydantic.Field(default=[])
@@ -102,6 +103,23 @@ class CustomPatchSet(PatchSetBase):
         patch_title = patch_canonical_title(self.title)
         patch_prefix = self.release_name or "generic"
         return f"[{patch_prefix}]-{patch_title}"
+
+    @property
+    def description_text(self) -> str | None:
+        if not self.description:
+            return None
+
+        lines = self.description.splitlines()
+        # Drop the first line
+        lines = lines[1:]
+        # Drop lines starting with 'signed-off-by'
+        # (case-insensitive, leading spaces allowed)
+        filtered = [
+            line
+            for line in lines
+            if line and not line.lstrip().lower().startswith("signed-off-by")
+        ]
+        return "\n".join(filtered).strip() if filtered else None
 
 
 def _patchset_discriminator(v: Any) -> str:  # pyright: ignore[reportExplicitAny, reportAny]

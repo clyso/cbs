@@ -613,6 +613,16 @@ def git_checkout_ref(
     _ = repo.head.reset(index=True, working_tree=True)
 
 
+def git_branch_delete(repo_path: Path, branch: str) -> None:
+    """Delete a local branch."""
+    repo = git.Repo(repo_path)
+    if repo.active_branch.name == branch:
+        git_cleanup_repo(repo_path)
+        repo.head.reference = repo.heads["main"]
+
+    repo.git.branch(["-D", branch])  # pyright: ignore[reportAny]
+
+
 def git_push(
     repo_path: Path,
     branch: str,
@@ -707,10 +717,15 @@ def git_revparse(repo_path: Path, commitish: SHA | str) -> str:
 def git_format_patch(repo_path: Path, rev: SHA, *, base_rev: SHA | None = None) -> str:
     repo = git.Repo(repo_path)
 
-    rev_str = f"{base_rev}..{rev}" if base_rev else f"{rev}~1..{rev}"
+    args = ["--stdout"]
+    if not base_rev:
+        args.append("-1")
+
+    rev_str = f"{base_rev}..{rev}" if base_rev else rev
+    args.append(rev_str)
 
     try:
-        res = cast(str, repo.git.format_patch(["--stdout", rev_str]))  # pyright: ignore[reportAny]
+        res = cast(str, repo.git.format_patch(args))  # pyright: ignore[reportAny]
     except git.CommandError as e:
         msg = f"unable to obtain format patch for '{rev_str}': {e}"
         logger.error(msg)
