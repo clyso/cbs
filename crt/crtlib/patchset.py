@@ -44,7 +44,7 @@ from crtlib.models.patchset import (
     GitHubPullRequest,
     PatchSetBase,
 )
-from crtlib.patch import PatchError, patch_import
+from crtlib.patch import PatchError, parse_formatted_patch_info, patch_import
 
 logger = parent_logger.getChild("patchset")
 
@@ -299,6 +299,30 @@ def patchset_fetch_gh_patches(
     )
 
 
+def _formatted_patch_to_patch(repo: str, sha: str, title: str, raw_patch: str) -> Patch:
+    try:
+        patch_info = parse_formatted_patch_info(raw_patch)
+    except PatchError as e:
+        logger.error(f"unable to parse formatted patch info: {e}")
+        raise e from None
+
+    return Patch(
+        sha=sha,
+        author=patch_info.author,
+        author_date=patch_info.date,
+        commit_author=None,
+        commit_date=None,
+        title=title,
+        message=patch_info.desc,
+        cherry_picked_from=patch_info.cherry_picked_from,
+        related_to=patch_info.fixes,
+        parent="",
+        repo_url=f"https://github.com/{repo}",
+        patch_id="",
+        patchset_uuid=None,
+    )
+
+
 def patchset_from_gh_needs_update(
     existing: GitHubPullRequest, new: GitHubPullRequest
 ) -> bool:
@@ -324,7 +348,7 @@ def fetch_custom_patchset_patches(
     patches_repo_path: Path,
     patchset: CustomPatchSet,
     token: str,
-) -> None:
+) -> list[Patch]:
     """Fetch and store a custom patch set's patches into the patches repository."""
     if patchset.is_published:
         raise PatchSetError(msg="cannot fetch published custom patch set")
@@ -341,6 +365,7 @@ def fetch_custom_patchset_patches(
         raise PatchSetError(msg=msg)
     patchset_path.parent.mkdir(exist_ok=True, parents=True)
 
+    patches: list[Patch] = []
     # prepare all remotes in this patch set, so we don't have to update them
     # individually per meta entry, and obtain the patch sets' branches.
     fetched_branches: set[str] = set()
@@ -382,7 +407,8 @@ def fetch_custom_patchset_patches(
         logger.debug(f"format patches '{interval_str}' from '{meta.repo}'")
         for patch in meta.patches:
             sha = patch[0]
-            logger.debug(f"format patch sha '{sha}' title '{patch[1]}'")
+            title = patch[1]
+            logger.debug(f"format patch sha '{sha}' title '{title}'")
             try:
                 formatted_patch = git_format_patch(ceph_repo_path, sha)
             except GitError as e:
@@ -392,6 +418,13 @@ def fetch_custom_patchset_patches(
                 raise PatchSetError(msg=msg) from None
 
             patchset_formatted_patches.append(formatted_patch)
+            patch_data = _formatted_patch_to_patch(
+                meta.repo, sha, title, formatted_patch
+            )
+            patch_data.commit_author = patchset.author
+            patch_data.commit_date = patchset.creation_date
+            patch_data.patchset_uuid = patchset.entry_uuid
+            patches.append(patch_data)
 
     logger.debug(f"write '{len(patchset_formatted_patches)}' patches")
     try:
@@ -404,6 +437,7 @@ def fetch_custom_patchset_patches(
         raise PatchSetError(msg=msg) from None
 
     _cleanup()
+    return patches
 
 
 def fetch_patchset_patches_from_repo(
@@ -413,7 +447,7 @@ def fetch_patchset_patches_from_repo(
     token: str,
     *,
     force: bool = False,
-) -> None:
+) -> list[Patch]:
     if isinstance(patchset, GitHubPullRequest):
         patchset_fetch_gh_patches(
             ceph_repo_path,
@@ -422,8 +456,9 @@ def fetch_patchset_patches_from_repo(
             token,
             force=force,
         )
+        return patchset.patches
     elif isinstance(patchset, CustomPatchSet):
-        fetch_custom_patchset_patches(
+        return fetch_custom_patchset_patches(
             ceph_repo_path, patches_repo_path, patchset, token
         )
 

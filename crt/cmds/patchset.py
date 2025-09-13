@@ -799,13 +799,14 @@ def cmd_patchset_publish(
         sys.exit(0)
 
     try:
-        fetch_custom_patchset_patches(
+        patches = fetch_custom_patchset_patches(
             ceph_repo_path, patches_repo_path, patchset, ctx.github_token
         )
     except Exception as e:
         perror(f"unable to fetch patches for patch set '{patchset_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    patchset.patches = patches
     patchset.is_published = True
 
     try:
