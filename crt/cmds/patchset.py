@@ -33,7 +33,11 @@ from crtlib.git_utils import (
     git_patches_in_interval,
     git_prepare_remote,
 )
-from crtlib.models.common import AuthorData, ManifestPatchEntry
+from crtlib.models.common import (
+    AuthorData,
+    ManifestPatchEntry,
+    ManifestPatchSetEntryType,
+)
 from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.patch import PatchMeta
 from crtlib.models.patchset import (
@@ -417,8 +421,23 @@ def cmd_patchset_create(
     required=True,
     help="Path to ces-patches git repository.",
 )
-def cmd_patchset_list(patches_repo_path: Path) -> None:
+@click.option(
+    "-t",
+    "--type",
+    "patchset_types",
+    type=str,
+    multiple=True,
+    required=False,
+    metavar="TYPE",
+    help="Filter by patch set type.",
+)
+def cmd_patchset_list(patches_repo_path: Path, patchset_types: list[str]) -> None:
     meta_path = patches_repo_path / "ceph" / "patches" / "meta"
+
+    avail_types = [m.value for m in ManifestPatchSetEntryType]
+    if patchset_types and any(t not in avail_types for t in patchset_types):
+        perror(f"unknown patch set type(s), available: {', '.join(avail_types)}")
+        sys.exit(errno.EINVAL)
 
     table = _gen_rich_patchset_list()
     for patchset_path in meta_path.glob("*.json"):
@@ -434,10 +453,15 @@ def cmd_patchset_list(patches_repo_path: Path) -> None:
             perror(f"unable to load patch set '{patchset_uuid}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
 
+        if patchset_types and patchset.entry_type.value not in patchset_types:
+            continue
+
         _add_rich_patchset_entry(table, patchset)
 
-    console.print(table)
-    pass
+    if len(table.rows) > 0:
+        console.print(table)
+    else:
+        pwarn("no entries found")
 
 
 @cmd_patchset.command("info", help="Obtain info on a given patch set.")
