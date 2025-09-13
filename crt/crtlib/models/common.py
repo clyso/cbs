@@ -55,6 +55,14 @@ class ManifestPatchEntry(pydantic.BaseModel, abc.ABC):  # pyright: ignore[report
     def _get_canonical_title(self) -> str:
         pass
 
+    @property
+    def repr(self) -> str:
+        return self._get_repr()
+
+    @abc.abstractmethod
+    def _get_repr(self) -> str:
+        pass
+
 
 def patch_canonical_title(orig: str) -> str:
     r1 = re.compile(r"[\s:/\]\[\(\)]")

@@ -85,6 +85,10 @@ class GitHubPullRequest(PatchSetBase):
             f"[{self.org_name}\\{self.repo_name}#{self.pull_request_id}]-{patch_title}"
         )
 
+    @override
+    def _get_repr(self) -> str:
+        return f"pr {self.org_name}/{self.repo_name}#{self.pull_request_id}"
+
 
 class CustomPatchSet(PatchSetBase):
     """Represents a custom patch set, created by the user."""
@@ -103,6 +107,10 @@ class CustomPatchSet(PatchSetBase):
         patch_title = patch_canonical_title(self.title)
         patch_prefix = self.release_name or "generic"
         return f"[{patch_prefix}]-{patch_title}"
+
+    @override
+    def _get_repr(self) -> str:
+        return f"custom patch set uuid {self.entry_uuid}"
 
     @property
     def description_text(self) -> str | None:

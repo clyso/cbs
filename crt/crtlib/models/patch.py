@@ -68,3 +68,7 @@ class PatchMeta(ManifestPatchEntry):
     @override
     def _get_canonical_title(self) -> str:
         return patch_canonical_title(self.info.title)
+
+    @override
+    def _get_repr(self) -> str:
+        return f"single patch set uuid {self.entry_uuid} ({self.sha})"

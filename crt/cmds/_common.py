@@ -16,7 +16,7 @@ from pathlib import Path
 from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.manifest import ManifestStage
 from crtlib.models.patch import Patch
-from crtlib.models.patchset import GitHubPullRequest
+from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.rule import Rule
@@ -104,22 +104,22 @@ def _get_stage_patchset(
 
         patch_title = (
             contents.title
-            if isinstance(contents, GitHubPullRequest)
+            if isinstance(contents, GitHubPullRequest | CustomPatchSet)
             else contents.info.title
         )
         patch_author = (
             contents.author
-            if isinstance(contents, GitHubPullRequest)
+            if isinstance(contents, GitHubPullRequest | CustomPatchSet)
             else contents.info.author
         )
         patch_date = (
             contents.creation_date
-            if isinstance(contents, GitHubPullRequest)
+            if isinstance(contents, GitHubPullRequest | CustomPatchSet)
             else contents.info.date
         )
         patch_fixes = "\n".join(
             contents.related_to
-            if isinstance(contents, GitHubPullRequest)
+            if isinstance(contents, GitHubPullRequest | CustomPatchSet)
             else contents.info.fixes
         )
 
@@ -146,13 +146,16 @@ def _get_stage_patchset(
             patchset_table.add_row("target", contents.target_branch)
             patchset_table.add_row("merged", str(contents.merge_date))
 
-            if extended_info:
-                patches_table = Table(show_header=False, show_lines=False, box=None)
-                patches_table.add_column(justify="left", no_wrap=True)
-                patches_tree_rdr_lst = _do_patches_tree(contents.patches)
-                for rdr in patches_tree_rdr_lst:
-                    patches_table.add_row(rdr)
-                patchset_table.add_row("patches", Group("", patches_table))
+        elif isinstance(contents, CustomPatchSet):
+            patchset_table.add_row("release", contents.release_name or "n/a")
+
+        if isinstance(contents, GitHubPullRequest | CustomPatchSet) and extended_info:
+            patches_table = Table(show_header=False, show_lines=False, box=None)
+            patches_table.add_column(justify="left", no_wrap=True)
+            patches_tree_rdr_lst = _do_patches_tree(contents.patches)
+            for rdr in patches_tree_rdr_lst:
+                patches_table.add_row(rdr)
+            patchset_table.add_row("patches", Padding(patches_table, (1, 0, 0, 0)))
 
         _ = patchset_tree.add(Padding(patchset_table, (0, 0, 1, 0)))
         patches_tree_lst.append(patchset_tree)
