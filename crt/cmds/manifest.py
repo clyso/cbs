@@ -110,6 +110,7 @@ def cmd_manifest() -> None:
     metavar="ORG/REPO",
     default="clyso/ceph",
     help="Destination repository.",
+    show_default=True,
 )
 @click.option(
     "-p",
