@@ -18,7 +18,15 @@ from rich.logging import RichHandler
 
 from cmds import patch, stages
 
-from . import Ctx, console, manifest, pass_ctx, patchset, set_debug_logging
+from . import (
+    Ctx,
+    console,
+    manifest,
+    pass_ctx,
+    patchset,
+    set_debug_logging,
+    set_verbose_logging,
+)
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("crt")
@@ -34,6 +42,14 @@ logger = parent_logger.getChild("crt")
     help="Show debug output.",
 )
 @click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Show verbose output.",
+)
+@click.option(
     "--github-token",
     type=str,
     metavar="TOKEN",
@@ -45,8 +61,12 @@ logger = parent_logger.getChild("crt")
 def cmd_crt(
     ctx: Ctx,
     debug: bool,
+    verbose: bool,
     github_token: str | None,
 ) -> None:
+    if verbose:
+        set_verbose_logging()
+
     if debug:
         set_debug_logging()
 
