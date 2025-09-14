@@ -14,7 +14,7 @@
 import logging
 
 logger = logging.getLogger("crt")
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.INFO)
 
 
 def logger_set_handler(handler: logging.Handler) -> None:

@@ -13,10 +13,12 @@
 
 
 import click
+from crtlib.logger import logger_set_handler
+from rich.logging import RichHandler
 
 from cmds import patch, stages
 
-from . import Ctx, manifest, pass_ctx, patchset, set_debug_logging
+from . import Ctx, console, manifest, pass_ctx, patchset, set_debug_logging
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("crt")
@@ -47,6 +49,9 @@ def cmd_crt(
 ) -> None:
     if debug:
         set_debug_logging()
+
+    rich_handler = RichHandler(rich_tracebacks=True, console=console)
+    logger_set_handler(rich_handler)
 
     ctx.github_token = github_token
     logger.debug(f"has github token: {github_token is not None}")
