@@ -80,6 +80,10 @@ def set_debug_logging() -> None:
     parent_logger.setLevel(logging.DEBUG)
 
 
+def set_verbose_logging() -> None:
+    parent_logger.setLevel(logging.INFO)
+
+
 class Symbols(enum.StrEnum):
     RIGHT_ARROW = "\u276f"  # '>'
     BULLET = "\u2022"
