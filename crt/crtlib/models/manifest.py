@@ -152,6 +152,7 @@ class ReleaseManifest(pydantic.BaseModel):
         return True
 
     def gen_header(self) -> list[tuple[str, str]]:
+        is_published = all(s.is_published for s in self.stages)
         entries = [
             ("name", self.name),
             ("base release", self.base_release_name),
@@ -161,6 +162,7 @@ class ReleaseManifest(pydantic.BaseModel):
             ("creation date", str(self.creation_date)),
             ("manifest uuid", str(self.release_uuid)),
             ("stages", str(len(self.stages))),
+            ("published", "yes" if is_published else "no"),
         ]
         if self.from_name and self.from_uuid:
             entries.append(("from name", self.from_name))

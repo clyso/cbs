@@ -28,6 +28,7 @@ from crtlib.errors.manifest import (
     ManifestExistsError,
     NoSuchManifestError,
 )
+from crtlib.errors.stages import MissingStagePatchError
 from crtlib.git_utils import (
     GitError,
     GitFetchError,
@@ -46,6 +47,7 @@ from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.manifest import ReleaseManifest
 from crtlib.models.patch import Patch, PatchMeta
 from crtlib.models.patchset import GitHubPullRequest
+from crtlib.utils import parse_version, split_version_into_paths
 
 logger = parent_logger.getChild("manifest")
 
@@ -212,10 +214,94 @@ def manifest_execute(
     )
 
 
+def manifest_publish_stages(
+    patches_repo_path: Path,
+    manifest: ReleaseManifest,
+) -> int:
+    """
+    Publish all patch sets for each stage in the provided manifest.
+
+    Creates symlinks for the corresponding version, each pointing to the original
+    patch set.
+    """
+    version_paths = split_version_into_paths(manifest.name)
+    if not version_paths:
+        raise ManifestError(
+            uuid=manifest.release_uuid, name=manifest.name, msg="invalid manifest name"
+        )
+    end_path = next(iter(reversed(version_paths)))
+
+    try:
+        version_prefix, _, _, _, _ = parse_version(manifest.name)
+    except ValueError:
+        msg = f"invalid version in manifest name '{manifest.name}'"
+        logger.error(msg)
+        raise ManifestError(
+            uuid=manifest.release_uuid, name=manifest.name, msg=msg
+        ) from None
+
+    if not version_prefix:
+        version_prefix = "vanilla"
+
+    version_path = patches_repo_path / version_prefix / end_path
+
+    if version_path.exists():
+        if not version_path.is_dir():
+            msg = f"patches path '{version_path}' exists and is not a directory"
+            logger.error(msg)
+            raise ManifestExistsError(
+                uuid=manifest.release_uuid, name=manifest.name, msg=msg
+            )
+
+        if list(version_path.glob("*.patch")):
+            msg = f"patches exist at '{version_path}' for release '{manifest.name}'"
+            logger.error(msg)
+            raise ManifestError(uuid=manifest.release_uuid, name=manifest.name, msg=msg)
+
+    version_path.mkdir(parents=True, exist_ok=True)
+
+    patch_n = 0
+    for stage in manifest.stages:
+        for p in stage.patches:
+            patch = p.contents
+
+            patch_path = (
+                patches_repo_path.joinpath("ceph")
+                .joinpath("patches")
+                .joinpath(f"{patch.entry_uuid}.patch")
+            )
+            if not patch_path.exists():
+                msg = f"missing patch for uuid '{patch.entry_uuid}'"
+                logger.error(msg)
+                raise MissingStagePatchError(msg=msg)
+
+            patch_n = patch_n + 1
+            target_patch_name = f"{patch_n:04d}-{patch.canonical_title}.patch"
+            target_patch_lnk = version_path.joinpath(target_patch_name)
+
+            relative_to_root_path = patches_repo_path.relative_to(
+                version_path, walk_up=True
+            )
+            patch_path_relative_to_root = patch_path.relative_to(patches_repo_path)
+            relative_patch_path = relative_to_root_path.joinpath(
+                patch_path_relative_to_root
+            )
+
+            logger.debug(f"symlink '{target_patch_lnk}' to '{relative_patch_path}'")
+            target_patch_lnk.symlink_to(relative_patch_path)
+
+        stage.is_published = True
+
+    store_manifest(patches_repo_path, manifest)
+
+    return patch_n
+
+
 def manifest_publish_branch(
     manifest: ReleaseManifest,
     repo_path: Path,
     our_branch: str,
+    branch_prefix: str,
 ) -> ManifestPublishResult:
     """
     Publish a manifest's local branch to its remote repository.
@@ -228,7 +314,7 @@ def manifest_publish_branch(
     repository was updated, and which heads were updated or rejected.
     """
     dst_repo = manifest.dst_repo
-    dst_branch = f"{manifest.name}-{manifest.release_git_uid}"
+    dst_branch = f"{branch_prefix}-{manifest.name}"
     logger.info(
         f"publish manifest branch '{our_branch}' to "
         + f"repo '{dst_repo}' branch '{dst_branch}"
@@ -318,7 +404,7 @@ def remove_manifest(
 
 
 def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseManifest:
-    logger.info(f"load manifest uuid '{manifest_uuid}'")
+    logger.debug(f"load manifest uuid '{manifest_uuid}'")
     manifest_path = (
         patches_repo_path.joinpath("ceph")
         .joinpath("manifests")
@@ -337,10 +423,11 @@ def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseM
 
 
 def load_manifest_by_name(patches_repo_path: Path, name: str) -> ReleaseManifest:
-    logger.info(f"load manifest by name '{name}'")
+    logger.debug(f"load manifest by name '{name}'")
     manifest_path = (
         patches_repo_path.joinpath("ceph")
         .joinpath("manifests")
+        .joinpath("by_name")
         .joinpath(f"{name}.json")
     )
     if not manifest_path.exists():
@@ -357,13 +444,14 @@ def load_manifest_by_name(patches_repo_path: Path, name: str) -> ReleaseManifest
 def load_manifest_by_name_or_uuid(
     patches_repo_path: Path, what: str
 ) -> ReleaseManifest:
-    logger.info(f"load manifest by name or uuid '{what}'")
+    logger.debug(f"load manifest by name or uuid '{what}'")
     manifest_uuid: uuid.UUID | None = None
     manifest_name: str | None = None
 
     try:
         manifest_uuid = uuid.UUID(what)
-    except Exception:
+    except Exception as e:
+        logger.debug(str(e))
         manifest_name = what
 
     if manifest_uuid:
@@ -375,10 +463,10 @@ def load_manifest_by_name_or_uuid(
 
 
 def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
-    logger.info(f"store manifest uuid '{manifest.release_uuid}'")
+    logger.debug(f"store manifest uuid '{manifest.release_uuid}'")
     base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
     manifest_uuid_path = base_path.joinpath(f"{manifest.release_uuid}.json")
-    manifest_name_path = base_path.joinpath(f"{manifest.name}.json")
+    manifest_name_path = base_path.joinpath("by_name").joinpath(f"{manifest.name}.json")
     base_path.mkdir(parents=True, exist_ok=True)
 
     if manifest_name_path.exists():
@@ -403,7 +491,7 @@ def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
 
     if not manifest_name_path.exists():
         try:
-            manifest_name_path.symlink_to(manifest_uuid_path.name)
+            manifest_name_path.symlink_to(Path("..").joinpath(manifest_uuid_path.name))
         except Exception as e:
             msg = (
                 f"unable to symlink manifest name '{manifest.name}' "

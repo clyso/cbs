@@ -44,11 +44,14 @@ class ManifestError(CRTError):
 
     @property
     def what(self) -> str:
-        return (
-            f"name '{self.manifest_name}'"
-            if self.manifest_name
-            else (f"uuid '{self.manifest_uuid}" if self.manifest_uuid else "")
-        )
+        what_str = ""
+        if self.manifest_name:
+            what_str = f"name '{self.manifest_name}'"
+        if self.manifest_uuid:
+            if what_str:
+                what_str += " "
+            what_str += f"uuid '{self.manifest_uuid}'"
+        return what_str
 
 
 class NoSuchManifestError(ManifestError):

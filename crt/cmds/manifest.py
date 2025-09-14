@@ -24,12 +24,10 @@ from typing import cast
 import click
 import rich.box
 from crtlib.apply import ApplyConflictError, ApplyError, patches_apply_to_manifest
-from crtlib.db.db import ReleasesDB
 from crtlib.errors import CRTError
 from crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
-    ManifestExistsError,
     NoSuchManifestError,
 )
 from crtlib.errors.patchset import NoSuchPatchSetError, PatchSetError
@@ -42,6 +40,7 @@ from crtlib.manifest import (
     manifest_execute,
     manifest_exists,
     manifest_publish_branch,
+    manifest_publish_stages,
     manifest_release_notes,
     remove_manifest,
     store_manifest,
@@ -560,7 +559,7 @@ def _manifest_add_patchset_by_uuid(
     "--manifest",
     "manifest_name_or_uuid",
     required=True,
-    type=uuid.UUID,
+    type=str,
     metavar="NAME|UUID",
     help="Manifest name or UUID to which the patch set will be added.",
 )
@@ -740,33 +739,36 @@ def _manifest_execute(
     return (res, apply_summary_group)
 
 
-def _manifest_publish(  # pyright: ignore[reportUnusedFunction]
-    db: ReleasesDB,
+def _manifest_publish(
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
     manifest: ReleaseManifest,
-    repo_path: Path,
     our_branch: str,
+    branch_prefix: str,
     progress: Progress,
 ) -> RenderableType:
     publish_task = progress.add_task("publishing")
-    publish_manifest_task = progress.add_task("publish manifest")
+    publish_manifest_stages_task = progress.add_task("publish manifest stages")
     publish_branch_task = progress.add_task("publish branch")
 
     progress.start_task(publish_task)
 
-    progress.start_task(publish_manifest_task)
+    progress.start_task(publish_manifest_stages_task)
     try:
-        # FIXME: this no longer works with the patches repo.
-        db.publish_manifest(manifest.release_uuid)
-    except ManifestExistsError:
-        perror(f"manifest '{manifest.release_uuid}' already published")
-        pwarn("maybe run [bold bright_magenta]'db sync'[/bold bright_magenta] first?")
-        raise _ExitError(errno.EEXIST) from None
+        n_patches = manifest_publish_stages(patches_repo_path, manifest)
+    except ManifestError as e:
+        perror(f"unable to publish manifest stages: {e}")
+        raise _ExitError(errno.ENOTRECOVERABLE) from None
 
-    progress.stop_task(publish_manifest_task)
+    logger.info(f"published {n_patches} patches for manifest")
+
+    progress.stop_task(publish_manifest_stages_task)
 
     progress.start_task(publish_branch_task)
     try:
-        res = manifest_publish_branch(manifest, repo_path, our_branch)
+        res = manifest_publish_branch(
+            manifest, ceph_repo_path, our_branch, branch_prefix
+        )
     except ManifestError as e:
         perror(f"unable to publish manifest '{manifest.release_uuid}': {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from None
@@ -840,7 +842,6 @@ def cmd_manifest_validate(
 
     try:
         manifest = load_manifest(patches_repo_path, manifest_uuid)
-        # manifest = ctx.db.load_manifest(manifest_uuid)
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_uuid}'")
         sys.exit(errno.ENOENT)
@@ -889,90 +890,96 @@ def cmd_manifest_validate(
     required=True,
     help="Path to CES patches git repository.",
 )
+@click.option(
+    "--prefix",
+    "release_branch_prefix",
+    type=str,
+    metavar="PREFIX",
+    required=False,
+    default="release",
+    help="Prefix to use for published branch.",
+)
 @pass_ctx
 def cmd_manifest_publish(
     ctx: Ctx,
+    ceph_repo_path: Path,
+    patches_repo_path: Path,
+    release_branch_prefix: str,
     manifest_uuid: uuid.UUID,
-    _ceph_repo_path: Path,
-    _patches_repo_path: Path,
 ) -> None:
     """
     Publish a manifest.
 
     Will upload the manifest to S3, and push a branch to the specified repository.
     """
-    logger.info(f"commit manifest uuid '{manifest_uuid}'")
-    pwarn("this command is currently not working")
+    logger.info(f"publish manifest uuid '{manifest_uuid}'")
 
     if not ctx.github_token:
         perror("missing github token")
         sys.exit(errno.EINVAL)
 
-    # FIXME: reimplement the command. Leaving the commented code for future reference.
+    try:
+        manifest = load_manifest(patches_repo_path, manifest_uuid)
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{manifest_uuid}'")
+        sys.exit(errno.ENOENT)
+    except MalformedManifestError:
+        perror(f"malformed manifest '{manifest_uuid}'")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
-    # try:
-    #     manifest = ctx.db.load_manifest(manifest_uuid)
-    # except NoSuchManifestError:
-    #     perror(f"unable to find manifest '{manifest_uuid}'")
-    #     sys.exit(errno.ENOENT)
-    # except MalformedManifestError:
-    #     perror(f"malformed manifest '{manifest_uuid}'")
-    #     sys.exit(errno.EINVAL)
-    # except Exception as e:
-    #     perror(f"unable to load manifest '{manifest_uuid}': {e}")
-    #     sys.exit(errno.ENOTRECOVERABLE)
-    #
-    # if not manifest.committed:
-    #     perror(f"manifest '{manifest_uuid}' not committed")
-    #     pwarn("run '[bold bright_magenta]manifest stage commit[/bold bright_magenta]'")  # noqa: E501
-    #     sys.exit(errno.EBUSY)
-    #
-    # rich_handler = RichHandler(console=console)
-    # logger_set_handler(rich_handler)
-    #
-    # progress = Progress(
-    #     SpinnerColumn(),
-    #     TextColumn("[progress.description]{task.description}"),
-    #     TimeElapsedColumn(),
-    #     console=console,
-    # )
-    # progress.start()
-    #
-    # execute_res, execute_summary = _manifest_execute(
-    #     manifest,
-    #     token=ctx.github_token,
-    #     ceph_repo_path=ceph_repo_path,
-    #     patches_repo_path=patches_repo_path,
-    #     no_cleanup=True,
-    #     progress=progress,
-    # )
-    #
-    # try:
-    #     publish_summary = _manifest_publish(
-    #         ctx.db,
-    #         manifest,
-    #         ceph_repo_path,
-    #         execute_res.target_branch,
-    #         progress,
-    #     )
-    # except _ExitError as e:
-    #     progress.stop()
-    #     sys.exit(e.code)
-    #
-    # progress.stop()
-    #
-    # logger_unset_handler(rich_handler)
-    #
-    # panel = Panel(
-    #     Group(
-    #         Padding(execute_summary, (0, 0, 1, 0)),
-    #         Padding(publish_summary, (0, 0, 1, 0)),
-    #     ),
-    #     title=f"Manifest {manifest_uuid}",
-    #     box=rich.box.SQUARE,
-    # )
-    # console.print(panel)
-    pass
+    if all(s.is_published for s in manifest.stages):
+        perror(f"manifest '{manifest_uuid}' is already published")
+        sys.exit(errno.EALREADY)
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+    )
+
+    progress.start()
+
+    execute_res, execute_summary = _manifest_execute(
+        manifest,
+        token=ctx.github_token,
+        ceph_repo_path=ceph_repo_path,
+        patches_repo_path=patches_repo_path,
+        no_cleanup=True,
+        progress=progress,
+    )
+
+    try:
+        publish_summary = _manifest_publish(
+            ceph_repo_path,
+            patches_repo_path,
+            manifest,
+            execute_res.target_branch,
+            release_branch_prefix,
+            progress,
+        )
+    except _ExitError as e:
+        progress.stop()
+        sys.exit(e.code)
+
+    progress.stop()
+
+    console.print(
+        Padding(
+            Panel(
+                Group(
+                    Padding(execute_summary, (0, 0, 1, 0)),
+                    Padding(publish_summary, (0, 0, 1, 0)),
+                ),
+                title=f"Manifest {manifest_uuid}",
+                box=rich.box.SQUARE,
+            ),
+            (1, 0, 0, 0),
+        )
+    )
 
 
 @click.command("release-notes", help="Automatically generate release notes.")

@@ -42,29 +42,37 @@ def get_tags(tags_lst: list[str] | None) -> list[tuple[str, str]]:
     return tags
 
 
+def parse_version(
+    version: str,
+) -> tuple[str | None, str, str | None, str | None, str | None]:
+    v_re = re.compile(
+        r"""
+        ^(?P<prefix>.*?)(?:-)?  # optional prefix plus dash
+        v
+        (?P<major>\d{2})        # major version (required)
+        (?:\.(?P<minor>\d{1,2}))? # minor version (optional)
+        (?:\.(?P<patch>\d+))?   # patch version (optional)
+        (?:-(?P<suffix>.+))?    # dash with suffix (optional)
+        $
+        """,
+        re.VERBOSE,
+    )
+    m = v_re.match(version)
+    if not m:
+        raise ValueError(f"invalid version '{version}'")
+
+    prefix = cast(str | None, m.group("prefix"))
+    major = cast(str, m.group("major"))
+    minor = cast(str | None, m.group("minor"))
+    patch = cast(str | None, m.group("patch"))
+    suffix = cast(str | None, m.group("suffix"))
+
+    return (prefix, major, minor, patch, suffix)
+
+
 def split_version_into_paths(version: str) -> list[Path]:
     def _parse_version_hierarchy() -> list[str]:
-        v_re = re.compile(
-            r"""
-            ^(?P<prefix>.*?)(?:-)?  # optional prefix plus dash
-            v
-            (?P<major>\d{2})        # major version (required)
-            (?:\.(?P<minor>\d{2}))? # minor version (optional)
-            (?:\.(?P<patch>\d+))?   # patch version (optional)
-            (?:-(?P<suffix>.+))?    # dash with suffix (optional)
-            $
-            """,
-            re.VERBOSE,
-        )
-        m = v_re.match(version)
-        if not m:
-            raise ValueError(f"invalid version '{version}'")
-
-        prefix = cast(str | None, m.group("prefix"))
-        major = cast(str, m.group("major"))
-        minor = cast(str | None, m.group("minor"))
-        patch = cast(str | None, m.group("patch"))
-        suffix = cast(str | None, m.group("suffix"))
+        prefix, major, minor, patch, suffix = parse_version(version)
 
         levels: list[str] = []
         base = f"v{major}"
