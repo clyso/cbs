@@ -14,7 +14,6 @@
 import errno
 import re
 import sys
-import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,7 +21,7 @@ import click
 from crtlib.apply import ApplyError, patches_apply_to_manifest
 from crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
 from crtlib.git_utils import GitError, git_prepare_remote, git_revparse
-from crtlib.manifest import load_manifest, store_manifest
+from crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
 from crtlib.patch import (
     PatchError,
     patch_add,
@@ -111,11 +110,12 @@ def cmd_patch() -> None:
 )
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID for which information will be shown.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to add patch to.",
 )
 @click.argument(
     "patch_sha",
@@ -134,7 +134,7 @@ def cmd_patch_add(
     src_ceph_repo_path: Path | None,
     src_gh_repo: str,
     src_version: str | None,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
     patch_sha: list[str],
 ) -> None:
     if not ctx.github_token:
@@ -184,19 +184,21 @@ def cmd_patch_add(
         sys.exit(errno.ENOENT)
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest '{manifest_uuid}' in db")
+        perror(f"unable to find manifest '{manifest_name_or_uuid}' in db")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        perror(f"malformed manifest '{manifest_uuid}'")
+        perror(f"malformed manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        perror(f"unable to obtain manifest '{manifest_uuid}': {e}")
+        perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     if not manifest.active_stage:
-        perror(f"manifest uuid '{manifest_uuid}' has no active stage")
+        perror(f"manifest '{manifest_name_or_uuid}' has no active stage")
         pwarn(
             "please run '[bold bright_magenta]manifest stage new[/bold bright_magenta]'"
         )
@@ -241,12 +243,12 @@ def cmd_patch_add(
             perror("unexpected error adding patch to manifest !!")
             sys.exit(errno.ENOTRECOVERABLE)
 
-        psuccess(f"patch sha '{sha}' added to manifest '{manifest_uuid}'")
+        psuccess(f"patch sha '{sha}' added to manifest '{manifest_name_or_uuid}'")
 
     try:
         store_manifest(patches_repo_path, manifest)
     except Exception as e:
-        perror(f"unable to write manifest '{manifest_uuid}' to db: {e}")
+        perror(f"unable to write manifest '{manifest_name_or_uuid}' to db: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    psuccess(f"successfully added patches to manifest '{manifest_uuid}'")
+    psuccess(f"successfully added patches to manifest '{manifest_name_or_uuid}'")
