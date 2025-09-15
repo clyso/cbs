@@ -23,7 +23,7 @@ from crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crtlib.errors.stages import MalformedStageTagError, StageError
-from crtlib.manifest import load_manifest, load_manifest_by_name_or_uuid, store_manifest
+from crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
 from crtlib.models.common import AuthorData
 from crtlib.models.manifest import ManifestStage
 from crtlib.utils import get_tags
@@ -50,11 +50,12 @@ def cmd_manifest_stage() -> None:
 @cmd_manifest_stage.command("new", help="Add a new stage to a manifest.")
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to operate on.",
 )
 @click.option(
     "--author",
@@ -95,14 +96,15 @@ def cmd_manifest_stage() -> None:
 @with_patches_repo_path
 def cmd_manifest_stage_new(
     patches_repo_path: Path,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
     author_name: str,
     author_email: str,
     stage_tags: list[str],
     stage_desc: str,
 ) -> None:
     logger.debug(
-        f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
+        f"add manifest '{manifest_name_or_uuid}' stage "
+        + f"by '{author_name} <{author_email}>'"
     )
 
     try:
@@ -112,15 +114,20 @@ def cmd_manifest_stage_new(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}' in db")
+        perror(
+            f"unable to find manifest uuid '{manifest_name_or_uuid}' in "
+            + "patches repository"
+        )
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        perror(f"malformed manifest uuid '{manifest_uuid}'")
+        perror(f"malformed manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
@@ -150,11 +157,12 @@ def cmd_manifest_stage_new(
 @cmd_manifest_stage.command("info", help="Show information about a stage.")
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to operate on.",
 )
 @click.option(
     "-s",
@@ -176,26 +184,30 @@ def cmd_manifest_stage_new(
 @with_patches_repo_path
 def cmd_manifest_stage_info(
     patches_repo_path: Path,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
     stage_uuid: uuid.UUID | None,
     extended_info: bool,
 ) -> None:
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}'")
+        perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     stage_uuid_lst = [e.stage_uuid for e in manifest.stages]
     if stage_uuid and stage_uuid not in stage_uuid_lst:
-        perror(f"unknown stage uuid '{stage_uuid}' in manifest uuid '{manifest_uuid}'")
+        perror(
+            f"unknown stage uuid '{stage_uuid}' in manifest '{manifest_name_or_uuid}'"
+        )
         sys.exit(errno.ENOENT)
 
     elif not stage_uuid_lst:
-        pinfo(f"no stages available in manifest uuid '{manifest_uuid}'")
+        pinfo(f"no stages available in manifest '{manifest_name_or_uuid}'")
         return
 
     for stage in manifest.stages:
@@ -212,11 +224,12 @@ def cmd_manifest_stage_info(
 @cmd_manifest_stage.command("amend", help="Amend metada for a given stage.")
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=True,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID to operate on.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to operate on.",
 )
 @click.option(
     "-s",
@@ -256,7 +269,7 @@ def cmd_manifest_stage_info(
 @with_patches_repo_path
 def cmd_manifest_stage_amend(
     patches_repo_path: Path,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
     stage_uuid: uuid.UUID,
     author_name: str | None,
     author_email: str | None,
@@ -267,12 +280,14 @@ def cmd_manifest_stage_amend(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest uuid '{manifest_uuid}'")
+        perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except Exception as e:
-        perror(f"unable to obtain manifest uuid '{manifest_uuid}': {e}")
+        perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     stage: ManifestStage | None = None
@@ -284,7 +299,7 @@ def cmd_manifest_stage_amend(
     if not stage:
         perror(
             f"could not find stage uuid '{stage_uuid}' "
-            + f"in manifest uuid '{manifest_uuid}'"
+            + f"in manifest uuid '{manifest.release_uuid}'"
         )
         sys.exit(errno.ENOENT)
 

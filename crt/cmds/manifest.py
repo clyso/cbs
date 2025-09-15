@@ -35,7 +35,6 @@ from crtlib.github import gh_get_pr
 from crtlib.manifest import (
     ManifestExecuteResult,
     list_manifests,
-    load_manifest,
     load_manifest_by_name_or_uuid,
     manifest_execute,
     manifest_exists,
@@ -270,7 +269,7 @@ def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
     psuccess(f"removed manifest name '{rm_name}' uuid '{rm_uuid}'")
 
 
-@cmd_manifest.command("list", help="List existing release manifest.")
+@cmd_manifest.command("list", help="List existing release manifests.")
 @with_patches_repo_path
 def cmd_manifest_list(patches_repo_path: Path) -> None:
     try:
@@ -293,11 +292,12 @@ def cmd_manifest_list(patches_repo_path: Path) -> None:
 @cmd_manifest.command("info", help="Show information about release manifests.")
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=False,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID for which information will be shown.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID for which information will be shown.",
 )
 @click.option(
     "-e",
@@ -310,19 +310,28 @@ def cmd_manifest_list(patches_repo_path: Path) -> None:
 @with_patches_repo_path
 def cmd_manifest_info(
     patches_repo_path: Path,
-    manifest_uuid: uuid.UUID | None,
+    manifest_name_or_uuid: str | None,
     extended_info: bool,
 ) -> None:
-    try:
-        manifest_lst = list_manifests(patches_repo_path)
-    except ManifestError as e:
-        perror(f"unable to obtain manifest list: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+    manifest_lst: list[ReleaseManifest] = []
+
+    if manifest_name_or_uuid:
+        try:
+            manifest_lst.append(
+                load_manifest_by_name_or_uuid(patches_repo_path, manifest_name_or_uuid)
+            )
+        except Exception as e:
+            perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+    else:
+        try:
+            manifest_lst = list_manifests(patches_repo_path)
+        except ManifestError as e:
+            perror(f"unable to obtain manifest list: {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
 
     for manifest in manifest_lst:
-        if manifest_uuid and manifest.release_uuid != manifest_uuid:
-            continue
-
         table = _gen_rich_manifest_table(manifest)
 
         stages_renderables: list[RenderableType] = []
@@ -754,7 +763,7 @@ def _manifest_publish(
 
 
 @cmd_manifest.command("validate", help="Validate locally a release manifest.")
-@click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
+@click.argument("manifest_name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
     "-c",
     "--ceph-repo",
@@ -779,25 +788,27 @@ def cmd_manifest_validate(
     ctx: Ctx,
     patches_repo_path: Path,
     ceph_repo_path: Path,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
     no_cleanup: bool,
 ) -> None:
-    logger.info(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_repo_path}'")
+    logger.info(f"apply manifest '{manifest_name_or_uuid}' to repo '{ceph_repo_path}'")
 
     if not ctx.github_token:
         perror("missing github token")
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest '{manifest_uuid}'")
+        perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        perror(f"malformed manifest '{manifest_uuid}'")
+        perror(f"malformed manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     (_, apply_summary) = _manifest_execute(
@@ -817,7 +828,7 @@ def cmd_manifest_validate(
 
 
 @cmd_manifest.command("publish")
-@click.argument("manifest_uuid", type=uuid.UUID, required=True, metavar="UUID")
+@click.argument("manifest_name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
     "-c",
     "--ceph-repo",
@@ -845,33 +856,35 @@ def cmd_manifest_publish(
     patches_repo_path: Path,
     ceph_repo_path: Path,
     release_branch_prefix: str,
-    manifest_uuid: uuid.UUID,
+    manifest_name_or_uuid: str,
 ) -> None:
     """
     Publish a manifest.
 
     Will upload the manifest to S3, and push a branch to the specified repository.
     """
-    logger.info(f"publish manifest uuid '{manifest_uuid}'")
+    logger.info(f"publish manifest '{manifest_name_or_uuid}'")
 
     if not ctx.github_token:
         perror("missing github token")
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except NoSuchManifestError:
-        perror(f"unable to find manifest '{manifest_uuid}'")
+        perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
-        perror(f"malformed manifest '{manifest_uuid}'")
+        perror(f"malformed manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.EINVAL)
     except Exception as e:
-        perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     if all(s.is_published for s in manifest.stages):
-        perror(f"manifest '{manifest_uuid}' is already published")
+        perror(f"manifest '{manifest_name_or_uuid}' is already published")
         sys.exit(errno.EALREADY)
 
     progress = Progress(
@@ -914,7 +927,7 @@ def cmd_manifest_publish(
                     Padding(execute_summary, (0, 0, 1, 0)),
                     Padding(publish_summary, (0, 0, 1, 0)),
                 ),
-                title=f"Manifest {manifest_uuid}",
+                title=f"Manifest {manifest.release_uuid}",
                 box=rich.box.SQUARE,
             ),
             (1, 0, 0, 0),
@@ -996,26 +1009,29 @@ def cmd_manifest_advanced() -> None:
 )
 @click.option(
     "-m",
-    "--manifest-uuid",
+    "--manifest",
+    "manifest_name_or_uuid",
     required=False,
-    type=uuid.UUID,
-    metavar="UUID",
-    help="Manifest UUID for which information will be shown.",
+    type=str,
+    metavar="NAME|UUID",
+    help="Manifest name or UUID to update.",
 )
 @with_patches_repo_path
-def cmd_manifest_update(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> None:
-    pwarn(f"updating on-disk representation of manifest '{manifest_uuid}'")
+def cmd_manifest_update(patches_repo_path: Path, manifest_name_or_uuid: str) -> None:
+    pwarn(f"updating on-disk representation of manifest '{manifest_name_or_uuid}'")
 
     try:
-        manifest = load_manifest(patches_repo_path, manifest_uuid)
+        manifest = load_manifest_by_name_or_uuid(
+            patches_repo_path, manifest_name_or_uuid
+        )
     except Exception as e:
-        perror(f"unable to load manifest '{manifest_uuid}': {e}")
+        perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         store_manifest(patches_repo_path, manifest)
     except Exception as e:
-        perror(f"unable to store manifest '{manifest_uuid}': {e}")
+        perror(f"unable to store manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    psuccess(f"updated manifest '{manifest_uuid}' on-disk representation")
+    psuccess(f"updated manifest '{manifest_name_or_uuid}' on-disk representation")
