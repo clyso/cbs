@@ -56,7 +56,16 @@ from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.table import Table
 
-from cmds import Ctx, console, pass_ctx, perror, pinfo, psuccess, pwarn
+from cmds import (
+    Ctx,
+    console,
+    pass_ctx,
+    perror,
+    pinfo,
+    psuccess,
+    pwarn,
+    with_patches_repo_path,
+)
 from cmds import logger as parent_logger
 
 logger = parent_logger.getChild("patchset")
@@ -279,22 +288,6 @@ def cmd_patchset() -> None:
 
 @cmd_patchset.command("create", help="Create a patch set from individual patches.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
-@click.option(
     "--author",
     "author_name",
     required=True,
@@ -338,6 +331,7 @@ def cmd_patchset() -> None:
     metavar="NAME",
     help="Release associated with this patch set.",
 )
+@with_patches_repo_path
 def cmd_patchset_create(
     patches_repo_path: Path,
     author_name: str,
@@ -406,22 +400,6 @@ def cmd_patchset_create(
 
 @cmd_patchset.command("list", help="List patch sets in the patches repository.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
-@click.option(
     "-t",
     "--type",
     "patchset_types",
@@ -431,6 +409,7 @@ def cmd_patchset_create(
     metavar="TYPE",
     help="Filter by patch set type.",
 )
+@with_patches_repo_path
 def cmd_patchset_list(patches_repo_path: Path, patchset_types: list[str]) -> None:
     meta_path = patches_repo_path / "ceph" / "patches" / "meta"
 
@@ -466,22 +445,6 @@ def cmd_patchset_list(patches_repo_path: Path, patchset_types: list[str]) -> Non
 
 @cmd_patchset.command("info", help="Obtain info on a given patch set.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
-@click.option(
     "-u",
     "--patchset-uuid",
     "patchset_uuid",
@@ -489,6 +452,7 @@ def cmd_patchset_list(patches_repo_path: Path, patchset_types: list[str]) -> Non
     required=True,
     help="Patch set UUID.",
 )
+@with_patches_repo_path
 def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None:
     try:
         patchset = load_patchset(patches_repo_path, patchset_uuid)
@@ -511,23 +475,8 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
     required=True,
+    envvar="CRT_CEPH_REPO_PATH",
     help="Path to ceph git repository where operations will be performed.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
 )
 @click.option(
     "-u",
@@ -562,11 +511,12 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
     required=True,
     nargs=-1,
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_patchset_add(
     ctx: Ctx,
-    ceph_repo_path: Path,
     patches_repo_path: Path,
+    ceph_repo_path: Path,
     patchset_uuid: uuid.UUID,
     ceph_gh_repo: str,
     patches_branch: str,
@@ -759,24 +709,9 @@ def cmd_patchset_add(
     type=click.Path(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
+    envvar="CRT_CEPH_REPO_PATH",
     required=True,
     help="Path to ceph git repository where operations will be performed.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
 )
 @click.option(
     "-u",
@@ -786,11 +721,12 @@ def cmd_patchset_add(
     required=True,
     help="Patch set UUID.",
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_patchset_publish(
     ctx: Ctx,
-    ceph_repo_path: Path,
     patches_repo_path: Path,
+    ceph_repo_path: Path,
     patchset_uuid: uuid.UUID,
 ) -> None:
     if not ctx.github_token:
@@ -844,22 +780,6 @@ def cmd_patchset_publish(
 
 @cmd_patchset.command("remove", help="Remove an unpublished patch set.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
-@click.option(
     "-u",
     "--patchset-uuid",
     "patchset_uuid",
@@ -867,6 +787,7 @@ def cmd_patchset_publish(
     required=True,
     help="Patch set UUID.",
 )
+@with_patches_repo_path
 def cmd_patchset_remove(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None:
     patchset_meta_path = get_patchset_meta_path(patches_repo_path, patchset_uuid)
     if not patchset_meta_path.exists():
@@ -909,22 +830,7 @@ def cmd_patchset_advanced() -> None:
 @cmd_patchset_advanced.command(
     "migrate-store-format", help="Migrate patch sets' store format"
 )
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
+@with_patches_repo_path
 def cmd_patchset_migrate_store_format(patches_repo_path: Path) -> None:
     if not patches_repo_path.exists():
         perror(f"patches repository does not exist at '{patches_repo_path}'")
@@ -1039,22 +945,7 @@ def cmd_patchset_migrate_store_format(patches_repo_path: Path) -> None:
 
 
 @cmd_patchset_advanced.command("migrate-single-patches", help="Migrate single patches.")
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
+@with_patches_repo_path
 def cmd_patchset_migrate_single_patches(patches_repo_path: Path) -> None:
     meta_path = patches_repo_path / "ceph" / "patches" / "meta"
 

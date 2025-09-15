@@ -28,7 +28,7 @@ from crtlib.patch import (
     patch_add,
 )
 
-from cmds import Ctx, pass_ctx, perror, psuccess, pwarn
+from cmds import Ctx, pass_ctx, perror, psuccess, pwarn, with_patches_repo_path
 from cmds import logger as parent_logger
 
 logger = parent_logger.getChild("patches")
@@ -48,7 +48,7 @@ def _cmd_validate_version_wrapper(
 
         match_re = with_ces_re if allow_ces else with_ceph_re
         if not re.match(match_re, value):
-            raise click.BadParameter("malformed version", ctx, param)  # noqa: TRY003
+            raise click.BadParameter("malformed version", ctx, param)
         return value
 
     return _cmd_validate_version
@@ -59,7 +59,7 @@ def _cmd_validate_sha(
 ) -> list[str]:
     for entry in value:
         if not re.match(r"^[\da-f]{4}[\da-f]{0,36}$", entry):
-            raise click.BadParameter("malformed SHA", ctx, param)  # noqa: TRY003
+            raise click.BadParameter("malformed SHA", ctx, param)
     return value
 
 
@@ -76,18 +76,9 @@ def cmd_patch() -> None:
     type=click.Path(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
+    envvar="CRT_CEPH_REPO_PATH",
     required=True,
     help="Path to ceph git repository.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
 )
 @click.option(
     "--src-ceph-repo",
@@ -134,11 +125,12 @@ def cmd_patch() -> None:
     nargs=-1,
     callback=_cmd_validate_sha,
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_patch_add(
     ctx: Ctx,
-    ceph_repo_path: Path,
     patches_repo_path: Path,
+    ceph_repo_path: Path,
     src_ceph_repo_path: Path | None,
     src_gh_repo: str,
     src_version: str | None,
