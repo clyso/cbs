@@ -12,8 +12,13 @@
 # GNU General Public License for more details.
 
 import enum
+import errno
 import logging
+import sys
+from collections.abc import Callable
+from functools import update_wrapper
 from pathlib import Path
+from typing import Concatenate, ParamSpec, TypeVar
 
 import click
 from crtlib.logger import logger as parent_logger
@@ -26,14 +31,36 @@ logger = parent_logger.getChild("cmds")
 
 class Ctx:
     github_token: str | None
-    ceph_git_path: Path | None
+    patches_repo_path: Path | None
 
     def __init__(self) -> None:
         self.github_token = None
-        self.ceph_git_path = None
+        self.patches_repo_path = None
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
+
+
+_R = TypeVar("_R")
+_T = TypeVar("_T")
+_P = ParamSpec("_P")
+
+
+def with_patches_repo_path(f: Callable[Concatenate[Path, _P], _R]) -> Callable[_P, _R]:
+    """Pass the CES patches repo path from the context to the function."""
+
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        curr_ctx = click.get_current_context()
+        ctx = curr_ctx.find_object(Ctx)
+        if not ctx:
+            perror(f"missing context for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        if not ctx.patches_repo_path:
+            perror("CES patches repo path not provided")
+            sys.exit(errno.EINVAL)
+        return f(ctx.patches_repo_path, *args, **kwargs)
+
+    return update_wrapper(inner, f)
 
 
 class _CRTHighlighter(RegexHighlighter):

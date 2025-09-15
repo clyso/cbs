@@ -63,7 +63,17 @@ from rich.table import Table
 
 from cmds._common import get_stage_rdr
 
-from . import Ctx, Symbols, console, pass_ctx, perror, pinfo, psuccess, pwarn
+from . import (
+    Ctx,
+    Symbols,
+    console,
+    pass_ctx,
+    perror,
+    pinfo,
+    psuccess,
+    pwarn,
+    with_patches_repo_path,
+)
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("manifest")
@@ -111,24 +121,13 @@ def cmd_manifest() -> None:
     help="Destination repository.",
     show_default=True,
 )
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-@pass_ctx
+@with_patches_repo_path
 def cmd_manifest_new(
-    _ctx: Ctx,
+    patches_repo_path: Path,
     name: str,
     base_release: str,
     base_ref: str,
     dst_repo: str,
-    patches_repo_path: Path,
 ) -> None:
     m = re.match(r"(?:(.+)@)?([\w\d_.-]+)", base_ref)
     if not m:
@@ -195,17 +194,8 @@ def cmd_manifest_new(
     metavar="NAME",
     help="Name of the new release.",
 )
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> None:
+@with_patches_repo_path
+def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> None:
     if manifest_exists(patches_repo_path, manifest_name=name):
         perror(f"manifest name '{name}' already exists")
         sys.exit(errno.EEXIST)
@@ -256,7 +246,8 @@ def cmd_manifest_from(name_or_uuid: str, name: str, patches_repo_path: Path) -> 
     help="Path to CES patches git repository.",
 )
 @click.confirmation_option(prompt="Really remove manifest?")
-def cmd_manifest_remove(name_or_uuid: str, patches_repo_path: Path) -> None:
+@with_patches_repo_path
+def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
     manifest_uuid: uuid.UUID | None = None
     manifest_name: str | None = None
 
@@ -280,18 +271,8 @@ def cmd_manifest_remove(name_or_uuid: str, patches_repo_path: Path) -> None:
 
 
 @cmd_manifest.command("list", help="List existing release manifest.")
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-@pass_ctx
-def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
+@with_patches_repo_path
+def cmd_manifest_list(patches_repo_path: Path) -> None:
     try:
         manifest_lst = list_manifests(patches_repo_path)
     except ManifestError as e:
@@ -319,16 +300,6 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
     help="Manifest UUID for which information will be shown.",
 )
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-@click.option(
     "-e",
     "--extended",
     "extended_info",
@@ -336,11 +307,10 @@ def cmd_manifest_list(_ctx: Ctx, patches_repo_path: Path) -> None:
     default=False,
     help="Show stage extended information.",
 )
-@pass_ctx
+@with_patches_repo_path
 def cmd_manifest_info(
-    _ctx: Ctx,
-    manifest_uuid: uuid.UUID | None,
     patches_repo_path: Path,
+    manifest_uuid: uuid.UUID | None,
     extended_info: bool,
 ) -> None:
     try:
@@ -498,22 +468,6 @@ def _manifest_add_patchset_by_uuid(
 
 @cmd_manifest.command("add", help="Add a patch set to a release.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    help="Path to ces-patches git repository.",
-)
-@click.option(
     "-c",
     "--ceph-repo",
     "ceph_repo_path",
@@ -526,6 +480,7 @@ def _manifest_add_patchset_by_uuid(
         resolve_path=True,
         path_type=Path,
     ),
+    envvar="CRT_CEPH_REPO_PATH",
     required=True,
     help="Path to the staging ceph git repository.",
 )
@@ -563,6 +518,7 @@ def _manifest_add_patchset_by_uuid(
     metavar="NAME|UUID",
     help="Manifest name or UUID to which the patch set will be added.",
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_manifest_add_patchset(
     ctx: Ctx,
@@ -806,18 +762,9 @@ def _manifest_publish(
     type=click.Path(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
+    envvar="CRT_CEPH_REPO_PATH",
     required=True,
     help="Path to ceph git repository.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
 )
 @click.option(
     "--no-cleanup",
@@ -826,12 +773,13 @@ def _manifest_publish(
     show_default=True,
     help="Whether to clean up after validation.",
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_manifest_validate(
     ctx: Ctx,
-    manifest_uuid: uuid.UUID,
-    ceph_repo_path: Path,
     patches_repo_path: Path,
+    ceph_repo_path: Path,
+    manifest_uuid: uuid.UUID,
     no_cleanup: bool,
 ) -> None:
     logger.info(f"apply manifest uuid '{manifest_uuid}' to repo '{ceph_repo_path}'")
@@ -878,17 +826,8 @@ def cmd_manifest_validate(
         exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
     ),
     required=True,
+    envvar="CRT_CEPH_REPO_PATH",
     help="Path to ceph git repository.",
-)
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
 )
 @click.option(
     "--prefix",
@@ -899,11 +838,12 @@ def cmd_manifest_validate(
     default="release",
     help="Prefix to use for published branch.",
 )
+@with_patches_repo_path
 @pass_ctx
 def cmd_manifest_publish(
     ctx: Ctx,
-    ceph_repo_path: Path,
     patches_repo_path: Path,
+    ceph_repo_path: Path,
     release_branch_prefix: str,
     manifest_uuid: uuid.UUID,
 ) -> None:
@@ -985,16 +925,6 @@ def cmd_manifest_publish(
 @click.command("release-notes", help="Automatically generate release notes.")
 @click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-@click.option(
     "--cephadm-loc",
     "cephadm_loc",
     type=str,
@@ -1015,9 +945,10 @@ def cmd_manifest_publish(
     default=False,
     help="Only print release notes to stdout.",
 )
+@with_patches_repo_path
 def cmd_manifest_release_notes(
-    name_or_uuid: str,
     patches_repo_path: Path,
+    name_or_uuid: str,
     cephadm_loc: str | None,
     image_loc: str | None,
     to_stdout: bool,
@@ -1071,17 +1002,8 @@ def cmd_manifest_advanced() -> None:
     metavar="UUID",
     help="Manifest UUID for which information will be shown.",
 )
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
-def cmd_manifest_update(manifest_uuid: uuid.UUID, patches_repo_path: Path) -> None:
+@with_patches_repo_path
+def cmd_manifest_update(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> None:
     pwarn(f"updating on-disk representation of manifest '{manifest_uuid}'")
 
     try:

@@ -12,9 +12,13 @@
 # GNU General Public License for more details.
 
 
+from pathlib import Path
+
 import click
 from crtlib.logger import logger_set_handler
 from rich.logging import RichHandler
+from rich.padding import Padding
+from rich.table import Table
 
 from cmds import patch, stages
 
@@ -53,9 +57,26 @@ logger = parent_logger.getChild("crt")
     "--github-token",
     type=str,
     metavar="TOKEN",
-    envvar="GITHUB_TOKEN",
+    envvar="CRT_GITHUB_TOKEN",
     required=False,
     help="Specify GitHub Token to use.",
+)
+@click.option(
+    "-p",
+    "--patches-repo",
+    "patches_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    envvar="CRT_PATCHES_REPO_PATH",
+    required=True,
+    help="Path to CES patches git repository.",
 )
 @pass_ctx
 def cmd_crt(
@@ -63,6 +84,7 @@ def cmd_crt(
     debug: bool,
     verbose: bool,
     github_token: str | None,
+    patches_repo_path: Path,
 ) -> None:
     if verbose:
         set_verbose_logging()
@@ -74,7 +96,15 @@ def cmd_crt(
     logger_set_handler(rich_handler)
 
     ctx.github_token = github_token
-    logger.debug(f"has github token: {github_token is not None}")
+    ctx.patches_repo_path = patches_repo_path
+
+    if debug or verbose:
+        table = Table(show_header=False, show_lines=False, box=None)
+        table.add_column(justify="right", style="cyan", no_wrap=True)
+        table.add_column(justify="left", style="magenta", no_wrap=False)
+        table.add_row("github token", ctx.github_token or "[not set]")
+        table.add_row("patches repo", str(ctx.patches_repo_path))
+        console.print(Padding(table, (1, 0, 1, 0)))
 
 
 # release manifest commands

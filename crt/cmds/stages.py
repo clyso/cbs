@@ -31,7 +31,7 @@ from rich.padding import Padding
 
 from cmds._common import get_stage_rdr, get_stage_summary_rdr
 
-from . import Ctx, console, pass_ctx, perror, pinfo, psuccess
+from . import console, perror, pinfo, psuccess, with_patches_repo_path
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("stages")
@@ -92,25 +92,14 @@ def cmd_manifest_stage() -> None:
     metavar="TEXT",
     help="Short description of this stage.",
 )
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
-)
-@pass_ctx
+@with_patches_repo_path
 def cmd_manifest_stage_new(
-    _ctx: Ctx,
+    patches_repo_path: Path,
     manifest_uuid: uuid.UUID,
     author_name: str,
     author_email: str,
     stage_tags: list[str],
     stage_desc: str,
-    patches_repo_path: Path,
 ) -> None:
     logger.debug(
         f"add manifest '{manifest_uuid}' stage by '{author_name} <{author_email}>'"
@@ -168,16 +157,6 @@ def cmd_manifest_stage_new(
     help="Manifest UUID to operate on.",
 )
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
-)
-@click.option(
     "-s",
     "--stage",
     "stage_uuid",
@@ -194,9 +173,10 @@ def cmd_manifest_stage_new(
     default=False,
     help="Show extended patch information.",
 )
+@with_patches_repo_path
 def cmd_manifest_stage_info(
-    manifest_uuid: uuid.UUID,
     patches_repo_path: Path,
+    manifest_uuid: uuid.UUID,
     stage_uuid: uuid.UUID | None,
     extended_info: bool,
 ) -> None:
@@ -239,16 +219,6 @@ def cmd_manifest_stage_info(
     help="Manifest UUID to operate on.",
 )
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to patches git repository",
-)
-@click.option(
     "-s",
     "--stage",
     "stage_uuid",
@@ -283,9 +253,10 @@ def cmd_manifest_stage_info(
     multiple=True,
     help="Tag type for this stage",
 )
+@with_patches_repo_path
 def cmd_manifest_stage_amend(
-    manifest_uuid: uuid.UUID,
     patches_repo_path: Path,
+    manifest_uuid: uuid.UUID,
     stage_uuid: uuid.UUID,
     author_name: str | None,
     author_email: str | None,
@@ -343,16 +314,6 @@ def cmd_manifest_stage_amend(
 
 @cmd_manifest_stage.command("remove", help="Remove a stage from a manifest.")
 @click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    required=True,
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    help="Path to patches git repository",
-)
-@click.option(
     "-m",
     "--manifest",
     "manifest_name_or_uuid",
@@ -370,6 +331,7 @@ def cmd_manifest_stage_amend(
     metavar="UUID",
     help="Stage UUID to show information on.",
 )
+@with_patches_repo_path
 def cmd_manifest_stage_remove(
     patches_repo_path: Path, manifest_name_or_uuid: str, stage_uuid: uuid.UUID
 ) -> None:
