@@ -394,7 +394,7 @@ def _get_remote_ref_name(
     return None
 
 
-def _get_remote_ref(
+def git_get_remote_ref(
     repo_path: Path, ref_name: str, remote_name: str
 ) -> git.RemoteReference | None:
     repo = git.Repo(repo_path)
@@ -417,7 +417,7 @@ def git_pull_ref(repo_path: Path, from_ref: str, to_ref: str, remote_name: str) 
     if repo.active_branch.name != to_ref:
         return False
 
-    if not _get_remote_ref(repo_path, from_ref, remote_name):
+    if not git_get_remote_ref(repo_path, from_ref, remote_name):
         logger.warning(f"ref '{from_ref}' not found in remote '{remote_name}'")
         return False
 
@@ -449,6 +449,45 @@ def git_get_local_head(repo_path: Path, name: str) -> git.Head | None:
     return None
 
 
+def git_reset_head(repo_path: Path, new_head: str) -> None:
+    """Reset current checked out head to `new_head`."""
+    repo = git.Repo(repo_path)
+
+    head = git_get_local_head(repo_path, new_head)
+    if not head:
+        msg = f"unexpected missing local head '{new_head}'"
+        logger.error(msg)
+        raise GitError(msg)
+
+    repo.head.reference = head
+    _ = repo.head.reset(index=True, working_tree=True)
+
+
+def git_branch_from(repo_path: Path, src_ref: str, dst_branch: str) -> None:
+    """Create a new branch `dst_branch` from `src_ref`."""
+    logger.debug(f"create branch '{dst_branch}' from '{src_ref}'")
+
+    repo = git.Repo(repo_path)
+    logger.debug(f"repo active branch: {repo.active_branch}")
+
+    if git_get_local_head(repo_path, dst_branch):
+        msg = f"unable to create branch '{dst_branch}', already exists"
+        logger.error(msg)
+        raise GitCreateHeadExistsError(dst_branch)
+
+    if _get_tag(repo_path, src_ref):
+        logger.debug(f"source ref '{src_ref}' is a tag")
+        src_ref = f"refs/tags/{src_ref}"
+
+    try:
+        _ = repo.git.branch([dst_branch, src_ref])  # pyright: ignore[reportAny]
+    except git.CommandError as e:
+        msg = f"unable to create branch '{dst_branch}' from '{src_ref}': {e}"
+        logger.error(msg)
+        logger.error(e.stderr)
+        raise GitError(msg) from None
+
+
 def git_fetch_ref(
     repo_path: Path, from_ref: str, to_ref: str, remote_name: str
 ) -> bool:
@@ -464,8 +503,7 @@ def git_fetch_ref(
     logger.debug(f"fetch from '{remote_name}' ref '{from_ref}' to '{to_ref}'")
 
     repo = git.Repo(repo_path)
-
-    logger.debug(f"repo active: {repo.active_branch}")
+    logger.debug(f"repo active branch: {repo.active_branch}")
 
     if repo.active_branch.name == to_ref:
         logger.warning(f"checked out branch is '{to_ref}', pull instead.")
@@ -477,7 +515,7 @@ def git_fetch_ref(
         raise GitIsTagError(from_ref)
 
     # check whether 'from_ref' is a remote head
-    if not _get_remote_ref(repo_path, from_ref, remote_name):
+    if not git_get_remote_ref(repo_path, from_ref, remote_name):
         logger.warning(f"unable to find ref '{from_ref}' in remote '{remote_name}'")
         raise GitFetchHeadNotFoundError(remote_name, from_ref)
 
@@ -603,14 +641,8 @@ def git_checkout_ref(
             raise GitError(msg) from None
         return
 
-    head = git_get_local_head(repo_path, target_branch)
-    if not head:
-        msg = f"unexpected missing local head '{target_branch}'"
-        logger.error(msg)
-        raise GitError(msg)
-
-    repo.head.reference = head
-    _ = repo.head.reset(index=True, working_tree=True)
+    # propagate exceptions
+    git_reset_head(repo_path, target_branch)
 
 
 def git_branch_delete(repo_path: Path, branch: str) -> None:
@@ -672,6 +704,34 @@ def git_push(
             updated.append(remote_ref_name)
 
     return (failed, updated, rejected)
+
+
+def git_tag(
+    repo_path: Path,
+    tag_name: str,
+    ref: str,
+    *,
+    msg: str | None = None,
+    push_to: str | None = None,
+) -> None:
+    repo = git.Repo(repo_path)
+
+    logger.debug(f"create tag '{tag_name}' at ref '{ref}'")
+    try:
+        _ = repo.create_tag(tag_name, ref, msg)
+    except Exception as e:
+        msg = f"unable to create tag '{tag_name}' at ref '{ref}': {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+    if push_to:
+        logger.debug(f"push tag '{tag_name}' to remote '{push_to}'")
+        try:
+            repo.git.push([push_to, "tag", tag_name])  # pyright: ignore[reportAny]
+        except Exception as e:
+            msg = f"unable to push tag '{tag_name}' to remote '{push_to}': {e}"
+            logger.error(msg)
+            raise GitError(msg=msg) from None
 
 
 def git_patch_id(repo_path: Path, sha: SHA) -> str:

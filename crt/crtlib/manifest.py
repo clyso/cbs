@@ -314,7 +314,7 @@ def manifest_publish_branch(
     repository was updated, and which heads were updated or rejected.
     """
     dst_repo = manifest.dst_repo
-    dst_branch = f"{branch_prefix}-{manifest.name}"
+    dst_branch = f"{branch_prefix}/{manifest.name}"
     logger.info(
         f"publish manifest branch '{our_branch}' to "
         + f"repo '{dst_repo}' branch '{dst_branch}"

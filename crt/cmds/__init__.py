@@ -63,6 +63,23 @@ def with_patches_repo_path(f: Callable[Concatenate[Path, _P], _R]) -> Callable[_
     return update_wrapper(inner, f)
 
 
+def with_gh_token(f: Callable[Concatenate[str, _P], _R]) -> Callable[_P, _R]:
+    """Pass the GitHub token from the context to the function."""
+
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        curr_ctx = click.get_current_context()
+        ctx = curr_ctx.find_object(Ctx)
+        if not ctx:
+            perror(f"missing context for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        if not ctx.github_token:
+            perror("GitHub token not provided")
+            sys.exit(errno.EINVAL)
+        return f(ctx.github_token, *args, **kwargs)
+
+    return update_wrapper(inner, f)
+
+
 class _CRTHighlighter(RegexHighlighter):
     base_style: str = "crt."
     highlights: list[str] = [  # noqa: RUF012

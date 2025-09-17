@@ -20,7 +20,7 @@ from rich.logging import RichHandler
 from rich.padding import Padding
 from rich.table import Table
 
-from cmds import patch, stages
+from cmds import patch, release, stages
 
 from . import (
     Ctx,
@@ -121,3 +121,4 @@ cmd_crt.add_command(manifest.cmd_manifest)
 cmd_crt.add_command(patchset.cmd_patchset)
 cmd_crt.add_command(patch.cmd_patch)
 cmd_crt.add_command(stages.cmd_manifest_stage)
+cmd_crt.add_command(release.cmd_release)
