@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import cast
 
 import click
+import rich.box
 from crtlib.git_utils import (
     GitFetchHeadNotFoundError,
     GitIsTagError,
@@ -39,6 +40,7 @@ from rich.table import Table
 from . import (
     console,
     perror,
+    pwarn,
     with_gh_token,
     with_patches_repo_path,
 )
@@ -296,3 +298,83 @@ def cmd_release_start(
 
     console.print(Padding(summary_table, (1, 0, 1, 0)))
 
+
+@cmd_release.command("list", help="List existing releases.")
+@click.option(
+    "-c",
+    "--ceph-repo",
+    "ceph_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    envvar="CRT_CEPH_REPO_PATH",
+    required=True,
+    help="Path to the staging ceph git repository.",
+)
+@click.option(
+    "-r",
+    "--repo",
+    "repo",
+    type=str,
+    required=False,
+    metavar="OWNER/REPO",
+    default="clyso/ceph",
+    help="Destination repository.",
+    show_default=True,
+)
+@with_gh_token
+def cmd_release_list(gh_token: str, ceph_repo_path: Path, repo: str) -> None:
+    try:
+        remote = git_prepare_remote(
+            ceph_repo_path, f"github.com/{repo}", repo, gh_token
+        )
+    except GitError as e:
+        perror(f"unable to prepare remote repository '{repo}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    remote_releases: list[str] = []
+    remote_base_releases: list[str] = []
+
+    for r in remote.refs:
+        ref_name = r.name[len(repo) + 1 :]
+        m = re.match(r"(release|release-base)/((?:ces|ccs)-.+)", ref_name)
+        if not m:
+            continue
+
+        if len(m.groups()) != 2:
+            pwarn(f"unexpected release: {m.groups()}")
+            continue
+
+        rel_type = cast(str, m.group(1))
+        rel_name = cast(str, m.group(2))
+
+        if rel_type == "release":
+            remote_releases.append(rel_name)
+        elif rel_type == "release-base":
+            remote_base_releases.append(rel_name)
+        else:
+            perror(f"unknown release type '{rel_type}'")
+            continue
+
+    not_released: list[str] = []
+    for r in remote_base_releases:
+        if r not in remote_releases:
+            not_released.append(r)
+
+    table = Table(show_header=False, show_lines=True, box=rich.box.HORIZONTALS)
+    table.add_column("Release Name", justify="left", style="bold cyan", no_wrap=True)
+    table.add_column("Status", justify="left", no_wrap=True)
+
+    for r in remote_releases:
+        table.add_row(r, "[green]released[/green]")
+
+    for r in not_released:
+        table.add_row(r, "[yellow]not released[/yellow]")
+
+    console.print(Padding(table, (1, 0, 1, 0)))
