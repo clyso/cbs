@@ -234,16 +234,6 @@ def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> 
 
 @cmd_manifest.command("remove", help="Remove a manifest.")
 @click.argument("name_or_uuid", type=str, required=True, metavar="NAME|UUID")
-@click.option(
-    "-p",
-    "--patches-repo",
-    "patches_repo_path",
-    type=click.Path(
-        exists=True, file_okay=False, dir_okay=True, resolve_path=True, path_type=Path
-    ),
-    required=True,
-    help="Path to CES patches git repository.",
-)
 @click.confirmation_option(prompt="Really remove manifest?")
 @with_patches_repo_path
 def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
