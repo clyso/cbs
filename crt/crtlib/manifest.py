@@ -98,7 +98,7 @@ def _prepare_repo(
         raise ManifestError(uuid=manifest_uuid, msg=msg) from None
     except GitFetchHeadNotFoundError:
         # does not exist in the provided remote.
-        logger.info(
+        logger.debug(
             f"branch '{target_branch}' does not exist in remote '{push_remote_name}'"
         )
     except GitFetchError as e:
