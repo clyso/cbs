@@ -393,7 +393,7 @@ def remove_manifest(
         except Exception as e:
             raise e from None
 
-    manifest_name_path = base_path.joinpath(f"{manifest.name}.json")
+    manifest_name_path = base_path / "by_name" / f"{manifest.name}.json"
     if manifest_name_path.exists():
         manifest_name_path.unlink()
 
