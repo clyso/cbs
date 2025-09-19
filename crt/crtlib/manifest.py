@@ -301,7 +301,7 @@ def manifest_publish_branch(
     manifest: ReleaseManifest,
     repo_path: Path,
     our_branch: str,
-    branch_prefix: str,
+    dst_branch: str,
 ) -> ManifestPublishResult:
     """
     Publish a manifest's local branch to its remote repository.
@@ -314,7 +314,6 @@ def manifest_publish_branch(
     repository was updated, and which heads were updated or rejected.
     """
     dst_repo = manifest.dst_repo
-    dst_branch = f"{branch_prefix}/{manifest.name}"
     logger.info(
         f"publish manifest branch '{our_branch}' to "
         + f"repo '{dst_repo}' branch '{dst_branch}"

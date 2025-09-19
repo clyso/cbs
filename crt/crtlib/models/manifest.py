@@ -58,6 +58,7 @@ class ReleaseManifest(pydantic.BaseModel):
     base_ref_repo: str
     base_ref: str
     dst_repo: str
+    dst_branch: str | None = pydantic.Field(default=None)
 
     stages: list[ManifestStage] = pydantic.Field(default=[])
 
@@ -159,6 +160,7 @@ class ReleaseManifest(pydantic.BaseModel):
             ("base repository", f"{self.base_ref_org}/{self.base_ref_repo}"),
             ("base ref", self.base_ref),
             ("dest repository", self.dst_repo),
+            ("dest branch", self.dst_branch or "n/a"),
             ("creation date", str(self.creation_date)),
             ("manifest uuid", str(self.release_uuid)),
             ("stages", str(len(self.stages))),
