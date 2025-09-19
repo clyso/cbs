@@ -727,12 +727,24 @@ def _manifest_publish(
     progress.stop_task(publish_manifest_stages_task)
 
     progress.start_task(publish_branch_task)
+    dst_branch = f"{branch_prefix}/{manifest.name}"
     try:
         res = manifest_publish_branch(
-            manifest, ceph_repo_path, our_branch, branch_prefix
+            manifest,
+            ceph_repo_path,
+            our_branch,
+            dst_branch,
         )
     except ManifestError as e:
         perror(f"unable to publish manifest '{manifest.release_uuid}': {e}")
+        raise _ExitError(errno.ENOTRECOVERABLE) from None
+
+    logger.debug(f"set manifest '{manifest.name}' dest branch to '{dst_branch}'")
+    manifest.dst_branch = dst_branch
+    try:
+        store_manifest(patches_repo_path, manifest)
+    except ManifestError as e:
+        perror(f"unable to store manifest after publishing: {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from None
 
     progress.stop_task(publish_branch_task)
