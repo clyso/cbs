@@ -31,6 +31,7 @@ from crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crtlib.errors.patchset import NoSuchPatchSetError, PatchSetError
+from crtlib.errors.release import NoSuchReleaseError
 from crtlib.github import gh_get_pr
 from crtlib.manifest import (
     ManifestExecuteResult,
@@ -54,6 +55,8 @@ from crtlib.patchset import (
     patchset_from_gh_needs_update,
     patchset_get_gh,
 )
+from crtlib.release import load_release
+from crtlib.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel
@@ -107,58 +110,62 @@ def cmd_manifest() -> None:
 
 
 @cmd_manifest.command("new", help="Create a new release manifest.")
-@click.argument("name", type=str, required=True, metavar="NAME")
-@click.argument("base_release", type=str, required=True, metavar="BASE_RELEASE")
-@click.argument("base_ref", type=str, required=True, metavar="[REPO@]REF")
 @click.option(
     "-r",
-    "--dst-repo",
+    "--release",
+    "release_name",
     type=str,
-    required=False,
-    metavar="ORG/REPO",
-    default="clyso/ceph",
-    help="Destination repository.",
-    show_default=True,
+    required=True,
+    metavar="RELEASE",
+    help="Release to create a manifest for.",
 )
+@click.argument("name", type=str, required=True, metavar="NAME")
 @with_patches_repo_path
 def cmd_manifest_new(
     patches_repo_path: Path,
     name: str,
-    base_release: str,
-    base_ref: str,
-    dst_repo: str,
+    release_name: str,
 ) -> None:
-    m = re.match(r"(?:(.+)@)?([\w\d_.-]+)", base_ref)
-    if not m:
-        perror("malformed BASE_REF")
+    # strict check on release manifest name:
+    # required prefix - ces or ccs
+    # required major, minor, patch
+    # required suffix - must be a development version
+    try:
+        v_prefix, _, v_minor, v_patch, v_suffix = parse_version(name)
+    except ValueError:
+        perror(f"malformed manifest name '{name}'")
         sys.exit(errno.EINVAL)
 
-    base_repo_str = cast(str | None, m.group(1))
-    base_ref_str = cast(str, m.group(2))
-    if not base_repo_str:
-        base_repo_str = "clyso/ceph"
+    if v_prefix not in ("ces", "ccs"):
+        perror(f"manifest name '{name}' must start with 'ces' or 'ccs'")
+        sys.exit(errno.EINVAL)
+
+    if not v_minor or not v_patch or not v_suffix:
+        perror("must specify major, minor, patch and suffix in manifest name")
+        sys.exit(errno.EINVAL)
+
+    try:
+        release = load_release(patches_repo_path, release_name)
+    except NoSuchReleaseError:
+        perror(f"unable to find release '{release_name}'")
+        sys.exit(errno.ENOENT)
 
     repo_re = re.compile(r"([\w\d_.-]+)/([\w\d_.-]+)")
+    base_repo_m = re.match(repo_re, release.release_repo)
+    if not base_repo_m:
+        perror(f"unexpected malformed release base repository '{release.release_repo}'")
+        sys.exit(errno.ENOTRECOVERABLE)
 
-    m = re.match(repo_re, base_repo_str)
-    if not m:
-        perror("malformed base reference REPO")
-        sys.exit(errno.EINVAL)
-
-    base_repo_org = cast(str, m.group(1))
-    base_repo = cast(str, m.group(2))
-
-    if not re.match(repo_re, dst_repo):
-        perror("malformed destination repository, use 'ORG/REPO'")
-        sys.exit(errno.EINVAL)
+    base_repo_owner = cast(str, base_repo_m.group(1))
+    base_repo_repo = cast(str, base_repo_m.group(2))
 
     manifest = ReleaseManifest(
         name=name,
-        base_release_name=base_release,
-        base_ref_org=base_repo_org,
-        base_ref_repo=base_repo,
-        base_ref=base_ref_str,
-        dst_repo=dst_repo,
+        base_release_name=release.base_release_name,
+        base_ref_org=base_repo_owner,
+        base_ref_repo=base_repo_repo,
+        base_ref=release.release_base_branch,
+        dst_repo=release.release_repo,
     )
 
     try:
@@ -836,7 +843,7 @@ def cmd_manifest_validate(
     type=str,
     metavar="PREFIX",
     required=False,
-    default="release",
+    default="release-dev",
     help="Prefix to use for published branch.",
 )
 @with_patches_repo_path
