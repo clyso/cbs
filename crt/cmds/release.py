@@ -19,6 +19,7 @@ from typing import cast
 
 import click
 import rich.box
+from crtlib.errors.release import NoSuchReleaseError
 from crtlib.git_utils import (
     GitFetchHeadNotFoundError,
     GitIsTagError,
@@ -32,6 +33,8 @@ from crtlib.git_utils import (
     git_tag,
 )
 from crtlib.manifest import load_manifest_by_name_or_uuid
+from crtlib.models.release import Release
+from crtlib.release import load_release
 from crtlib.utils import parse_version
 from git import GitError
 from rich.padding import Padding
@@ -136,6 +139,14 @@ def cmd_release():
     help="Reference to start from.",
 )
 @click.option(
+    "--ref-rel-name",
+    "from_ref_rel_name",
+    type=str,
+    required=False,
+    metavar="RELEASE",
+    help="Release name for the --ref argument (e.g., 'reef', 'squid').",
+)
+@click.option(
     "-r",
     "--repo",
     "dst_repo",
@@ -179,6 +190,7 @@ def cmd_release_start(
     ceph_repo_path: Path,
     from_manifest: str | None,
     from_ref: str | None,
+    from_ref_rel_name: str | None,
     dst_repo: str,
     allow_dev: bool,
     release_name: str,
@@ -188,6 +200,9 @@ def cmd_release_start(
         sys.exit(errno.EINVAL)
     elif not from_manifest and not from_ref:
         perror("Either --from or --ref must be provided.")
+        sys.exit(errno.EINVAL)
+    elif from_ref and not from_ref_rel_name:
+        perror("--ref requires --ref-rel-name to be set.")
         sys.exit(errno.EINVAL)
 
     # enforce strict naming criteria
@@ -212,6 +227,7 @@ def cmd_release_start(
         )
         sys.exit(errno.EINVAL)
 
+    base_ref_rel_name: str
     base_ref: str
     base_ref_repo: str
     if from_manifest:
@@ -221,21 +237,29 @@ def cmd_release_start(
             perror(f"Failed to load manifest '{from_manifest}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
 
+        base_ref_rel_name = manifest.base_release_name
         base_ref = f"release/{manifest.name}"
         base_ref_repo = manifest.dst_repo
 
     else:
         assert from_ref
+        assert from_ref_rel_name
         m = re.match(r"(?:(?P<repo>.+)@)?(?P<ref>[\w\d_.-]+)", from_ref)
         if not m:
             perror("malformed '--ref' argument, expected format: [REPO@]REF")
             sys.exit(errno.EINVAL)
 
+        base_ref_rel_name = from_ref_rel_name
         base_ref = cast(str, m.group("ref"))
         base_ref_repo = cast(str, m.group("repo") or "ceph/ceph")
 
     release_base_branch = f"release-base/{release_name}"
     release_base_tag = f"release-base-{release_name}"
+
+    release_meta_path = patches_repo_path / "ceph" / "releases" / f"{release_name}.json"
+    if release_meta_path.exists():
+        perror(f"release metadata '{release_meta_path}' already exists")
+        sys.exit(errno.EEXIST)
 
     try:
         _prepare_release_repo(
@@ -285,6 +309,24 @@ def cmd_release_start(
         perror(f"failed to create and push tag '{release_base_tag}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    release_meta_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ = release_meta_path.write_text(
+            Release(
+                name=release_name,
+                base_release_name=base_ref_rel_name,
+                base_release_ref=base_ref,
+                base_repo=base_ref_repo,
+                release_repo=dst_repo,
+                release_base_branch=release_base_branch,
+                release_base_tag=release_base_tag,
+                release_branch=f"release/{release_name}",
+            ).model_dump_json(indent=2)
+        )
+    except Exception as e:
+        perror(f"failed to write release metadata to '{release_meta_path}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     summary_table = Table(show_header=False, show_lines=False, box=None)
     summary_table.add_column(justify="right", style="bold cyan", no_wrap=True)
     summary_table.add_column(justify="left", style="magenta", no_wrap=False)
@@ -318,9 +360,9 @@ def cmd_release_start(
     help="Path to the staging ceph git repository.",
 )
 @click.option(
-    "-r",
-    "--repo",
-    "repo",
+    "-d",
+    "--dst-repo",
+    "dst_repo",
     type=str,
     required=False,
     metavar="OWNER/REPO",
@@ -328,21 +370,25 @@ def cmd_release_start(
     help="Destination repository.",
     show_default=True,
 )
+@with_patches_repo_path
 @with_gh_token
-def cmd_release_list(gh_token: str, ceph_repo_path: Path, repo: str) -> None:
+def cmd_release_list(
+    gh_token: str, patches_repo_path: Path, ceph_repo_path: Path, dst_repo: str
+) -> None:
     try:
         remote = git_prepare_remote(
-            ceph_repo_path, f"github.com/{repo}", repo, gh_token
+            ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
         )
     except GitError as e:
-        perror(f"unable to prepare remote repository '{repo}': {e}")
+        perror(f"unable to prepare remote repository '{dst_repo}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     remote_releases: list[str] = []
     remote_base_releases: list[str] = []
+    releases_meta: dict[str, Release | None] = {}
 
     for r in remote.refs:
-        ref_name = r.name[len(repo) + 1 :]
+        ref_name = r.name[len(dst_repo) + 1 :]
         m = re.match(r"(release|release-base)/((?:ces|ccs)-.+)", ref_name)
         if not m:
             continue
@@ -354,27 +400,104 @@ def cmd_release_list(gh_token: str, ceph_repo_path: Path, repo: str) -> None:
         rel_type = cast(str, m.group(1))
         rel_name = cast(str, m.group(2))
 
+        if rel_type not in ["release", "release-base"]:
+            perror(f"unknown release type '{rel_type}'")
+            continue
+
+        rel_meta: Release | None = None
+        try:
+            rel_meta = load_release(patches_repo_path, rel_name)
+        except NoSuchReleaseError:
+            pwarn(f"release '{rel_name}' missing metadata")
+        except Exception as e:
+            perror(f"failed to load release '{rel_name}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+        releases_meta[rel_name] = rel_meta
+
         if rel_type == "release":
             remote_releases.append(rel_name)
         elif rel_type == "release-base":
             remote_base_releases.append(rel_name)
-        else:
-            perror(f"unknown release type '{rel_type}'")
-            continue
 
     not_released: list[str] = []
     for r in remote_base_releases:
         if r not in remote_releases:
             not_released.append(r)
 
-    table = Table(show_header=False, show_lines=True, box=rich.box.HORIZONTALS)
-    table.add_column("Release Name", justify="left", style="bold cyan", no_wrap=True)
+    table = Table(show_header=True, show_lines=True, box=rich.box.HORIZONTALS)
+    table.add_column("Name", justify="left", style="bold cyan", no_wrap=True)
+    table.add_column("Base", justify="left", style="magenta", no_wrap=True)
     table.add_column("Status", justify="left", no_wrap=True)
 
     for r in remote_releases:
-        table.add_row(r, "[green]released[/green]")
+        rel = releases_meta.get(r)
+        table.add_row(
+            r, rel.base_release_name if rel else "n/a", "[green]released[/green]"
+        )
 
     for r in not_released:
-        table.add_row(r, "[yellow]not released[/yellow]")
+        rel = releases_meta.get(r)
+        table.add_row(
+            r, rel.base_release_name if rel else "n/a", "[yellow]not released[/yellow]"
+        )
+
+    console.print(Padding(table, (1, 0, 1, 0)))
+
+
+@cmd_release.command("info", help="Show information about a release.")
+@click.option(
+    "-r",
+    "--release",
+    "release_name",
+    type=str,
+    required=False,
+    help="Release name to show information for.",
+)
+@with_patches_repo_path
+def cmd_release_info(patches_repo_path: Path, release_name: str | None) -> None:
+    releases_path = patches_repo_path / "ceph" / "releases"
+    if not releases_path.exists():
+        pwarn(f"releases directory '{releases_path}' does not exist")
+        sys.exit(errno.ENOENT)
+
+    table = Table(show_header=False, show_lines=True, box=rich.box.HORIZONTALS)
+    table.add_column("name", justify="left", style="bold cyan", no_wrap=True)
+    table.add_column("info", justify="left", no_wrap=False)
+
+    def _add_info_row(release: Release) -> None:
+        info_table = Table(
+            show_header=False,
+            show_lines=False,
+            box=None,
+        )
+        info_table.add_column("key", justify="right", style="magenta", no_wrap=True)
+        info_table.add_column("value", justify="left", style="white", no_wrap=False)
+
+        info_table.add_row("created", str(release.creation_date))
+        info_table.add_row("base release", release.base_release_name)
+        info_table.add_row("base ref", release.base_release_ref)
+        info_table.add_row("base repo", release.base_repo)
+        info_table.add_row("release repo", release.release_repo)
+        info_table.add_row("release base branch", release.release_base_branch)
+        info_table.add_row("release base tag", release.release_base_tag)
+        info_table.add_row("release branch", release.release_branch)
+
+        table.add_row(release.name, info_table)
+
+    for r in releases_path.glob("*.json"):
+        if release_name and r.stem != release_name:
+            continue
+
+        try:
+            release = load_release(patches_repo_path, r.stem)
+        except NoSuchReleaseError:
+            perror(f"unexpected error loading release '{r.stem}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        except Exception as e:
+            perror(f"failed to load release '{r.stem}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+        _add_info_row(release)
 
     console.print(Padding(table, (1, 0, 1, 0)))
