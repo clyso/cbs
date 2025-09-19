@@ -19,6 +19,7 @@ from typing import cast
 
 import click
 import rich.box
+from crtlib.errors.manifest import NoSuchManifestError
 from crtlib.errors.release import NoSuchReleaseError
 from crtlib.git_utils import (
     GitFetchHeadNotFoundError,
@@ -34,7 +35,7 @@ from crtlib.git_utils import (
 )
 from crtlib.manifest import load_manifest_by_name_or_uuid
 from crtlib.models.release import Release
-from crtlib.release import load_release
+from crtlib.release import load_release, release_exists, store_release
 from crtlib.utils import parse_version
 from git import GitError
 from rich.padding import Padding
@@ -43,6 +44,7 @@ from rich.table import Table
 from . import (
     console,
     perror,
+    psuccess,
     pwarn,
     with_gh_token,
     with_patches_repo_path,
@@ -256,9 +258,8 @@ def cmd_release_start(
     release_base_branch = f"release-base/{release_name}"
     release_base_tag = f"release-base-{release_name}"
 
-    release_meta_path = patches_repo_path / "ceph" / "releases" / f"{release_name}.json"
-    if release_meta_path.exists():
-        perror(f"release metadata '{release_meta_path}' already exists")
+    if release_exists(patches_repo_path, release_name):
+        perror(f"release metadata for '{release_name}' already exists")
         sys.exit(errno.EEXIST)
 
     try:
@@ -309,9 +310,9 @@ def cmd_release_start(
         perror(f"failed to create and push tag '{release_base_tag}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    release_meta_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        _ = release_meta_path.write_text(
+        store_release(
+            patches_repo_path,
             Release(
                 name=release_name,
                 base_release_name=base_ref_rel_name,
@@ -321,10 +322,10 @@ def cmd_release_start(
                 release_base_branch=release_base_branch,
                 release_base_tag=release_base_tag,
                 release_branch=f"release/{release_name}",
-            ).model_dump_json(indent=2)
+            ),
         )
     except Exception as e:
-        perror(f"failed to write release metadata to '{release_meta_path}': {e}")
+        perror(f"failed to write release metadata for '{release_name}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     summary_table = Table(show_header=False, show_lines=False, box=None)
@@ -501,3 +502,145 @@ def cmd_release_info(patches_repo_path: Path, release_name: str | None) -> None:
         _add_info_row(release)
 
     console.print(Padding(table, (1, 0, 1, 0)))
+
+
+@cmd_release.command("finish", help="Finish a release.")
+@click.option(
+    "-c",
+    "--ceph-repo",
+    "ceph_repo_path",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        writable=True,
+        readable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    envvar="CRT_CEPH_REPO_PATH",
+    required=True,
+    help="Path to the staging ceph git repository.",
+)
+@click.option(
+    "-m",
+    "--manifest",
+    "from_manifest",
+    type=str,
+    required=True,
+    metavar="NAME|UUID",
+    help="Manifest to finish the release from.",
+)
+@click.argument("release_name", type=str, required=True, metavar="NAME")
+@with_patches_repo_path
+@with_gh_token
+def cmd_release_finish(
+    gh_token: str,
+    patches_repo_path: Path,
+    ceph_repo_path: Path,
+    from_manifest: str,
+    release_name: str,
+) -> None:
+    try:
+        release = load_release(patches_repo_path, release_name)
+    except NoSuchReleaseError:
+        perror(f"release '{release_name}' does not exist")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"failed to load release '{release_name}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if release.is_published:
+        perror(f"release '{release_name}' is already published")
+        sys.exit(errno.EEXIST)
+
+    try:
+        manifest = load_manifest_by_name_or_uuid(patches_repo_path, from_manifest)
+    except NoSuchManifestError:
+        perror(f"manifest '{from_manifest}' does not exist")
+        sys.exit(errno.ENOENT)
+    except Exception as e:
+        perror(f"Failed to load manifest '{from_manifest}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not manifest.is_published:
+        perror(f"manifest '{from_manifest}' is not published")
+        sys.exit(errno.EINVAL)
+    elif not manifest.dst_branch:
+        perror(
+            f"manifest '{from_manifest}' has no destination branch "
+            + "-- most likely not published!"
+        )
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    # 1. grab the manifest branch from its repository
+    # 2. push the manifest branch to the release branch, in the release repository
+    # 3. tag the release branch with the release name
+    # 4. push the tag to the release repository
+    # 5. mark the release as published and write it out
+
+    logger.debug(
+        f"prepare release repos, src: {manifest.dst_repo}, dst: {release.release_repo}"
+    )
+    try:
+        _prepare_release_repo(
+            ceph_repo_path, manifest.dst_repo, release.release_repo, gh_token
+        )
+    except Exception as e:
+        perror(f"failed to prepare release repositories: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    logger.debug(
+        f"fetch manifest branch '{manifest.dst_branch}' to '{release.release_branch}'"
+    )
+    try:
+        _ = git_fetch_ref(
+            ceph_repo_path,
+            manifest.dst_branch,
+            release.release_branch,
+            manifest.dst_repo,
+        )
+    except GitError as e:
+        perror(f"failed to fetch manifest branch '{manifest.dst_branch}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    logger.debug(
+        f"push release branch '{release.release_branch}' to '{release.release_repo}'"
+    )
+    try:
+        _ = git_push(ceph_repo_path, release.release_branch, release.release_repo)
+    except GitError as e:
+        perror(f"failed to push release branch '{release.release_branch}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+    except Exception as e:
+        perror(
+            f"unexpected error pushing release branch '{release.release_branch}': {e}"
+        )
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    logger.debug(
+        f"tagging release branch '{release.release_branch}' with '{release.name}'"
+    )
+    try:
+        git_tag(
+            ceph_repo_path,
+            release.name,
+            release.release_branch,
+            msg=f"Release '{release.name}'",
+            push_to=release.release_repo,
+        )
+    except GitError as e:
+        perror(f"failed to create and push tag '{release.name}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    release.is_published = True
+    try:
+        store_release(patches_repo_path, release)
+    except Exception as e:
+        perror(f"failed to write release metadata for '{release_name}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    psuccess(
+        f"release '{release_name}' successfully published to '{release.release_repo}' "
+        + f"branch '{release.release_branch}'"
+    )
