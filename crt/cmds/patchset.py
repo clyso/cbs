@@ -67,6 +67,7 @@ from cmds import (
     with_patches_repo_path,
 )
 from cmds import logger as parent_logger
+from cmds._common import CRTProgress
 
 logger = parent_logger.getChild("patchset")
 
@@ -488,7 +489,7 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
 )
 @click.option(
     "--gh-repo",
-    "ceph_gh_repo",
+    "gh_repo",
     type=str,
     required=False,
     default="ceph/ceph",
@@ -518,7 +519,7 @@ def cmd_patchset_add(
     patches_repo_path: Path,
     ceph_repo_path: Path,
     patchset_uuid: uuid.UUID,
-    ceph_gh_repo: str,
+    gh_repo: str,
     patches_branch: str,
     patch_sha: list[str],
 ) -> None:
@@ -542,23 +543,31 @@ def cmd_patchset_add(
 
     existing_shas = [p[0] for meta in patchset.patches_meta for p in meta.patches]
 
+    progress = CRTProgress(console)
+    progress.start()
+    progress.new_task(f"add patches from '{gh_repo}' branch '{patches_branch}'")
+
     # ensure we have the specified branch in the ceph repo, so we can actually obtain
     # the right shas
+    progress.new_task("prepare remote")
     try:
         remote = git_prepare_remote(
-            ceph_repo_path, f"github.com/{ceph_gh_repo}", ceph_gh_repo, ctx.github_token
+            ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
         )
     except Exception as e:
-        perror(f"unable to update remote '{ceph_gh_repo}': {e}")
+        progress.stop_error()
+        perror(f"unable to update remote '{gh_repo}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    progress.done_task()
+    progress.new_task("fetch patches")
+
     seq = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
-    dst_branch = (
-        f"patchset/branch/{ceph_gh_repo.replace('/', '--')}--{patches_branch}-{seq}"
-    )
+    dst_branch = f"patchset/branch/{gh_repo.replace('/', '--')}--{patches_branch}-{seq}"
     try:
         _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
     except Exception as e:
+        progress.stop_error()
         perror(f"unable to fetch branch '{patches_branch}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
@@ -566,6 +575,7 @@ def cmd_patchset_add(
         try:
             git_branch_delete(ceph_repo_path, dst_branch)
         except Exception as e:
+            progress.stop_error()
             perror(f"unable to delete temporary branch '{dst_branch}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
 
@@ -585,6 +595,7 @@ def cmd_patchset_add(
 
         if not _is_valid_sha(sha_begin) or (sha_end and not _is_valid_sha(sha_end)):
             _cleanup()
+            progress.stop_error()
             perror(f"malformed patch sha '{sha_entry}'")
             sys.exit(errno.EINVAL)
 
@@ -600,6 +611,7 @@ def cmd_patchset_add(
                         skipped_patches.append((sha, title))
             except Exception as e:
                 _cleanup()
+                progress.stop_error()
                 perror(f"unable to obtain patches in interval '{sha_entry}': {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
         else:
@@ -611,19 +623,24 @@ def cmd_patchset_add(
                     skipped_patches.append((sha, title))
             except Exception as e:
                 _cleanup()
+                progress.stop_error()
                 perror(f"unable to obtain patch info for sha '{sha_entry}': {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
 
         if patches_lst:
             patches_meta_lst.append(
                 CustomPatchMeta(
-                    repo=ceph_gh_repo,
+                    repo=gh_repo,
                     branch=patches_branch,
                     sha=sha_begin,
                     sha_end=sha_end,
                     patches=patches_lst,
                 )
             )
+
+    progress.done_task()
+    progress.done_task()
+    progress.stop()
 
     if patchset.patches_meta:
         existing_patches_table = Table(
@@ -758,13 +775,20 @@ def cmd_patchset_publish(
         pwarn("Aborted")
         sys.exit(0)
 
+    progress = CRTProgress(console)
+    progress.start()
+    progress.new_task("fetch patches")
+
     try:
         patches = fetch_custom_patchset_patches(
             ceph_repo_path, patches_repo_path, patchset, ctx.github_token
         )
     except Exception as e:
+        progress.stop_error()
         perror(f"unable to fetch patches for patch set '{patchset_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.done_task()
 
     patchset.patches = patches
     patchset.is_published = True

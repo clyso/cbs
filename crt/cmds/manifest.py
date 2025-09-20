@@ -60,10 +60,9 @@ from crtlib.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from cmds._common import get_stage_rdr
+from cmds._common import CRTExitError, CRTProgress, get_stage_rdr
 
 from . import (
     Ctx,
@@ -80,13 +79,7 @@ from . import logger as parent_logger
 
 logger = parent_logger.getChild("manifest")
 
-
-class _ExitError(Exception):
-    code: int
-
-    def __init__(self, ec: int) -> None:
-        super().__init__()
-        self.code = ec
+_ExitError = CRTExitError
 
 
 def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
@@ -102,6 +95,21 @@ def _gen_rich_manifest_table(manifest: ReleaseManifest) -> Table:
         table.add_row(*row)
 
     return table
+
+
+def _gen_rich_manifest_creation_summary(manifest: ReleaseManifest) -> Panel:
+    table = _gen_rich_manifest_table(manifest)
+    return Panel(
+        Group(
+            table,
+            Padding(
+                "[bold]You can now modify this release using its UUID", (1, 0, 1, 2)
+            ),
+        ),
+        box=rich.box.SQUARE,
+        title="Manifest Created",
+        expand=False,
+    )
 
 
 @click.group("manifest", help="Operations on manifests.")
@@ -174,18 +182,7 @@ def cmd_manifest_new(
         perror(f"unable to create manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    table = _gen_rich_manifest_table(manifest)
-    panel = Panel(
-        Group(
-            table,
-            Padding(
-                "[bold]You can now modify this release using its UUID", (1, 0, 1, 2)
-            ),
-        ),
-        box=rich.box.SQUARE,
-        title="Manifest Created",
-    )
-    console.print(panel)
+    console.print(_gen_rich_manifest_creation_summary(manifest))
 
 
 @cmd_manifest.command(
@@ -232,6 +229,8 @@ def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> 
     except ManifestError as e:
         perror(f"unable to create new manifest '{name}' from '{name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    console.print(_gen_rich_manifest_creation_summary(new_manifest))
 
     psuccess(
         f"created manifest name '{name}' uuid '{new_manifest.release_uuid}'\n"
@@ -361,6 +360,7 @@ def _manifest_add_gh_pr(
     from_gh: str,
     from_gh_repo: str,
     token: str,
+    progress: CRTProgress,
 ) -> GitHubPullRequest:
     def _get_gh_pr_data() -> tuple[int, str, str]:
         if m := re.match(r"^(\d+)$|^https://.*/pull/(\d+).*$", from_gh):
@@ -374,16 +374,22 @@ def _manifest_add_gh_pr(
             gh_repo = cast(str, m.group(2))
         else:
             perror("malformed GitHub repository name")
-            sys.exit(errno.EINVAL)
+            raise _ExitError(errno.EINVAL)
 
         if from_gh and not from_gh_repo:
             perror("missing GitHub repository to obtain patch set from")
-            sys.exit(errno.EINVAL)
+            raise _ExitError(errno.EINVAL)
 
         return (pr_id, gh_owner, gh_repo)
 
     gh_pr_id, gh_repo_owner, gh_repo = _get_gh_pr_data()
     logger.debug(f"obtain gh pr {gh_repo_owner}/{gh_repo}#{gh_pr_id}")
+
+    task_gh_pr_str = f"{gh_repo_owner}/{gh_repo}#{gh_pr_id}"
+
+    progress.new_task(
+        f"obtaining pull request info from {task_gh_pr_str}",
+    )
 
     needs_patchset = False
     update_from_gh = False
@@ -399,10 +405,10 @@ def _manifest_add_gh_pr(
         needs_patchset = True
     except PatchSetError as e:
         perror(f"unable to obtain patch set: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
     except Exception as e:
         perror(f"error found: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     if existing_patchset:
         if not existing_patchset.merged:
@@ -417,7 +423,7 @@ def _manifest_add_gh_pr(
             patchset = gh_get_pr(gh_repo_owner, gh_repo, gh_pr_id, token=token)
         except CRTError as e:
             perror(f"unable to obtain pull request info from github: {e}")
-            sys.exit(e.ec if e.ec else errno.ENOTRECOVERABLE)
+            raise _ExitError(e.ec if e.ec else errno.ENOTRECOVERABLE) from e
 
     assert patchset
 
@@ -438,6 +444,9 @@ def _manifest_add_gh_pr(
             # obtain.
             patchset = existing_patchset
 
+    progress.done_task()
+    progress.new_task(f"fetch patch set for {task_gh_pr_str}")
+
     if needs_patchset:
         try:
             patchset_fetch_gh_patches(
@@ -449,11 +458,12 @@ def _manifest_add_gh_pr(
             )
         except PatchSetError as e:
             perror(f"unable to obtain patch set: {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
+            raise _ExitError(errno.ENOTRECOVERABLE) from e
         except Exception as e:
             perror(f"unexpected error: {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
+            raise _ExitError(errno.ENOTRECOVERABLE) from e
 
+    progress.done_task()
     return patchset
 
 
@@ -464,10 +474,10 @@ def _manifest_add_patchset_by_uuid(
         patchset = load_patchset(patches_repo_path, patchset_uuid)
     except NoSuchPatchSetError:
         perror(f"patch set uuid '{patchset_uuid}' not found")
-        sys.exit(errno.ENOENT)
+        raise _ExitError(errno.ENOENT) from None
     except Exception as e:
         perror(f"unable to load patch set '{patchset_uuid}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     return patchset
 
@@ -570,6 +580,9 @@ def cmd_manifest_add_patchset(
         pwarn("please run '[bold bright_magenta]stage new[/bold bright_magenta]'")
         sys.exit(errno.ENOENT)
 
+    progress = CRTProgress(console)
+    progress.start()
+
     patchset: ManifestPatchEntry
     if from_gh:
         if not from_gh_repo:
@@ -580,29 +593,63 @@ def cmd_manifest_add_patchset(
             perror("cannot specify both --from-gh and --patchset-uuid")
             sys.exit(errno.EINVAL)
 
-        patchset = _manifest_add_gh_pr(
-            ceph_repo_path, patches_repo_path, from_gh, from_gh_repo, ctx.github_token
-        )
+        progress.new_task("adding from github pull request")
+
+        try:
+            patchset = _manifest_add_gh_pr(
+                ceph_repo_path,
+                patches_repo_path,
+                from_gh,
+                from_gh_repo,
+                ctx.github_token,
+                progress,
+            )
+        except _ExitError as e:
+            progress.stop_error()
+            sys.exit(e.code)
+        except Exception as e:
+            perror(f"unable to add patch set from github: {e}")
+            progress.stop_error()
+            sys.exit(errno.ENOTRECOVERABLE)
+
+        progress.done_task()
 
     elif patchset_uuid:
-        patchset = _manifest_add_patchset_by_uuid(patches_repo_path, patchset_uuid)
+        progress.new_task(f"adding from patch set '{patchset_uuid}'")
+        try:
+            patchset = _manifest_add_patchset_by_uuid(patches_repo_path, patchset_uuid)
+        except _ExitError as e:
+            progress.stop_error()
+            sys.exit(e.code)
+        except Exception as e:
+            progress.stop_error()
+            perror(f"unable to add patch set '{patchset_uuid}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+        progress.done_task()
 
     else:
         perror("either --from-gh or --patchset-uuid must be specified")
+        progress.stop()
         sys.exit(errno.EINVAL)
 
     if manifest.contains_patchset(patchset):
+        progress.stop()
         pinfo(f"manifest '{manifest_name_or_uuid}' already contains {patchset.repr}")
         return
 
     pinfo("apply patch set to manifest's repository")
+    progress.new_task("applying patch set to manifest")
     try:
         _, added, skipped = patches_apply_to_manifest(
             manifest, patchset, ceph_repo_path, patches_repo_path, ctx.github_token
         )
     except (ApplyError, Exception) as e:
         perror(f"unable to apply to manifest: {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.done_task()
 
     logger.debug(f"added: {added}")
     logger.debug(f"skipped: {skipped}")
@@ -610,13 +657,17 @@ def cmd_manifest_add_patchset(
 
     if not manifest.add_patches(patchset):
         perror("unexpected error adding patch set to manifest !!")
+        progress.stop()
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         store_manifest(patches_repo_path, manifest)
     except Exception as e:
         perror(f"unable to write manifest '{manifest_name_or_uuid}' to db: {e}")
+        progress.stop()
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.stop()
 
     psuccess(f"patch set {patchset.repr} added to manifest '{manifest_name_or_uuid}'")
 
@@ -628,31 +679,21 @@ def _manifest_execute(
     ceph_repo_path: Path,
     patches_repo_path: Path,
     no_cleanup: bool = True,
-    progress: Progress | None = None,
+    progress: CRTProgress,
 ) -> tuple[ManifestExecuteResult, RenderableType]:
     """
     Execute a manifest and return a renderable for the console.
 
     This function is shared between 'validate' and 'publish'.
     """
-    has_progress = progress is not None
-    if not has_progress:
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            console=console,
-        )
-        progress.start()
-
-    progress_task = progress.add_task("executing manifest")
-    progress.start_task(progress_task)
+    progress.new_task("executing manifest")
 
     try:
         res = manifest_execute(
             manifest, ceph_repo_path, patches_repo_path, token, no_cleanup=no_cleanup
         )
     except ApplyConflictError as e:
+        progress.stop_error()
         perror(f"{len(e.conflict_files)} file conflicts found applying manifest")
         pinfo(f"[bold]on sha '{e.sha}':[/bold]")
         for file in e.conflict_files:
@@ -663,9 +704,7 @@ def _manifest_execute(
         perror(f"unable to apply manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    progress.stop_task(progress_task)
-    if not has_progress:
-        progress.stop()
+    progress.done_task()
 
     def _gen_patches_table(patches: list[Patch]) -> Table:
         table = Table(show_header=False, show_lines=False, box=None)
@@ -707,26 +746,23 @@ def _manifest_publish(
     manifest: ReleaseManifest,
     our_branch: str,
     branch_prefix: str,
-    progress: Progress,
+    progress: CRTProgress,
 ) -> RenderableType:
-    publish_task = progress.add_task("publishing")
-    publish_manifest_stages_task = progress.add_task("publish manifest stages")
-    publish_branch_task = progress.add_task("publish branch")
+    progress.new_task("publishing")
 
-    progress.start_task(publish_task)
-
-    progress.start_task(publish_manifest_stages_task)
+    progress.new_task("publishing manifest stages")
     try:
         n_patches = manifest_publish_stages(patches_repo_path, manifest)
     except ManifestError as e:
+        progress.error_task()
         perror(f"unable to publish manifest stages: {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from None
 
     logger.info(f"published {n_patches} patches for manifest")
 
-    progress.stop_task(publish_manifest_stages_task)
+    progress.done_task()
 
-    progress.start_task(publish_branch_task)
+    progress.new_task("publish branch")
     dst_branch = f"{branch_prefix}/{manifest.name}"
     try:
         res = manifest_publish_branch(
@@ -736,6 +772,7 @@ def _manifest_publish(
             dst_branch,
         )
     except ManifestError as e:
+        progress.error_task()
         perror(f"unable to publish manifest '{manifest.release_uuid}': {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from None
 
@@ -744,11 +781,12 @@ def _manifest_publish(
     try:
         store_manifest(patches_repo_path, manifest)
     except ManifestError as e:
+        progress.error_task()
         perror(f"unable to store manifest after publishing: {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from None
 
-    progress.stop_task(publish_branch_task)
-    progress.stop_task(publish_task)
+    progress.done_task()
+    progress.done_task()
 
     push_summary_table = Table(show_header=False, show_lines=False, box=None)
     push_summary_table.add_column(justify="right", style="cyan", no_wrap=True)
@@ -820,13 +858,17 @@ def cmd_manifest_validate(
         perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    progress = CRTProgress(console)
+    progress.start()
     (_, apply_summary) = _manifest_execute(
         manifest,
         token=ctx.github_token,
         ceph_repo_path=ceph_repo_path,
         patches_repo_path=patches_repo_path,
         no_cleanup=no_cleanup,
+        progress=progress,
     )
+    progress.stop()
 
     panel = Panel(
         apply_summary,
@@ -896,13 +938,7 @@ def cmd_manifest_publish(
         perror(f"manifest '{manifest_name_or_uuid}' is already published")
         sys.exit(errno.EALREADY)
 
-    progress = Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-    )
-
+    progress = CRTProgress(console)
     progress.start()
 
     execute_res, execute_summary = _manifest_execute(
@@ -924,7 +960,7 @@ def cmd_manifest_publish(
             progress,
         )
     except _ExitError as e:
-        progress.stop()
+        progress.stop_error()
         sys.exit(e.code)
 
     progress.stop()

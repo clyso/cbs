@@ -17,10 +17,18 @@ from crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crtlib.models.manifest import ManifestStage
 from crtlib.models.patch import Patch
 from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest
-from rich.console import Group, RenderableType
+from rich.console import Console, Group, RenderableType
 from rich.padding import Padding
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.rule import Rule
 from rich.table import Table
+from rich.text import Text
 from rich.tree import Tree
 
 from cmds import Symbols, perror
@@ -184,3 +192,57 @@ def get_stage_rdr(
             (0, 0, 0, 2),
         ),
     )
+
+
+class CRTProgress(Progress):
+    _tasks_stack: list[TaskID]
+
+    def __init__(self, console: Console) -> None:
+        super().__init__(
+            SpinnerColumn(finished_text=f"[green]{Symbols.CHECK_MARK}[/green]"),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+        )
+        self._tasks_stack = []
+
+    def new_task(self, description: str) -> None:
+        """Start a new task, pushing the current one (if any) onto a stack."""
+        task = self.add_task(description=description, start=True)
+        self._tasks_stack.append(task)
+
+    def done_task(self) -> None:
+        """Finish the current task and pop the previous one (if any) from the stack."""
+        if not self._tasks_stack:
+            return
+
+        current_task = self._tasks_stack.pop()
+        self.update(current_task, completed=100)
+        self.stop_task(current_task)
+
+    def error_task(self) -> None:
+        """Mark the current task as failed."""
+        if not self._tasks_stack:
+            return
+
+        spinner = self.columns[0]
+        assert isinstance(spinner, SpinnerColumn)
+        spinner.finished_text = Text(Symbols.CROSS_MARK, style="red")
+
+        current_task = self._tasks_stack.pop()
+        self.update(current_task, completed=100)
+        self.stop_task(current_task)
+
+    def stop_error(self) -> None:
+        """Stop all tasks and mark the current one as failed."""
+        while self._tasks_stack:
+            self.error_task()
+        self.stop()
+
+
+class CRTExitError(Exception):
+    code: int
+
+    def __init__(self, ec: int) -> None:
+        super().__init__()
+        self.code = ec

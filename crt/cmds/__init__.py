@@ -133,3 +133,5 @@ class Symbols(enum.StrEnum):
     BULLET = "\u2022"
     SMALL_RIGHT_ARROW = "\u203a"
     DOWN_ARROW = "\u2304"
+    CHECK_MARK = "\u2713"
+    CROSS_MARK = "\u2717"
