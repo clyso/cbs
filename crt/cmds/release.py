@@ -41,6 +41,8 @@ from git import GitError
 from rich.padding import Padding
 from rich.table import Table
 
+from cmds._common import CRTExitError, CRTProgress
+
 from . import (
     console,
     perror,
@@ -55,6 +57,8 @@ from . import (
 
 logger = parent_logger.getChild("release")
 
+_ExitError = CRTExitError
+
 
 def _prepare_release_repo(
     ceph_repo_path: Path,
@@ -67,7 +71,7 @@ def _prepare_release_repo(
         git_reset_head(ceph_repo_path, "main")
     except GitError as e:
         perror(f"failed to cleanup ceph repo at '{ceph_repo_path}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     try:
         _ = git_prepare_remote(
@@ -79,7 +83,7 @@ def _prepare_release_repo(
             )
     except GitError as e:
         perror(f"failed to prepare git remotes: {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
 
 def _prepare_release_branches(
@@ -95,7 +99,7 @@ def _prepare_release_branches(
             sys.exit(errno.EEXIST)
     except GitError as e:
         perror(f"failed to check for existing branch '{dst_branch}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     is_tag = False
     try:
@@ -105,17 +109,17 @@ def _prepare_release_branches(
         is_tag = True
     except GitFetchHeadNotFoundError:
         perror(f"source ref '{src_ref}' not found in '{src_repo}'")
-        sys.exit(errno.ENOENT)
+        raise _ExitError(errno.ENOENT) from None
     except GitError as e:
         perror(f"failed to fetch source ref '{src_ref}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+        raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     if is_tag:
         try:
             git_branch_from(ceph_repo_path, src_ref, dst_branch)
         except GitError as e:
             perror(f"failed to create branch '{dst_branch}' from tag '{src_ref}': {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
+            raise _ExitError(errno.ENOTRECOVERABLE) from e
 
 
 @click.group("release", help="Release operations.")
@@ -262,6 +266,10 @@ def cmd_release_start(
         perror(f"release metadata for '{release_name}' already exists")
         sys.exit(errno.EEXIST)
 
+    progress = CRTProgress(console)
+    progress.start()
+
+    progress.new_task("prepare repositories")
     try:
         _prepare_release_repo(
             ceph_repo_path,
@@ -269,11 +277,19 @@ def cmd_release_start(
             dst_repo,
             gh_token,
         )
+    except _ExitError as e:
+        progress.stop_error()
+        sys.exit(e.code)
     except Exception as e:
+        progress.stop_error()
         perror(f"failed to prepare release repositories: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    progress.done_task()
+
+    progress.new_task("prepare release branches")
     if git_get_remote_ref(ceph_repo_path, f"release/{release_name}", dst_repo):
+        progress.stop_error()
         perror(f"release '{release_name}' already marked released in '{dst_repo}'")
         sys.exit(errno.EEXIST)
 
@@ -285,16 +301,22 @@ def cmd_release_start(
             dst_repo,
             release_base_branch,
         )
+    except _ExitError as e:
+        progress.stop_error()
+        sys.exit(e.code)
     except Exception as e:
+        progress.stop_error()
         perror(f"failed to prepare release branches: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         _ = git_push(ceph_repo_path, release_base_branch, dst_repo)
     except GitError as e:
+        progress.stop_error()
         perror(f"failed to push release branch '{release_base_branch}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
     except Exception as e:
+        progress.stop_error()
         perror(f"unexpected error pushing release branch '{release_base_branch}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
@@ -307,8 +329,12 @@ def cmd_release_start(
             push_to=dst_repo,
         )
     except GitError as e:
+        progress.stop_error()
         perror(f"failed to create and push tag '{release_base_tag}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.done_task()
+    progress.stop()
 
     try:
         store_release(
@@ -376,13 +402,22 @@ def cmd_release_start(
 def cmd_release_list(
     gh_token: str, patches_repo_path: Path, ceph_repo_path: Path, dst_repo: str
 ) -> None:
+    progress = CRTProgress(console)
+    progress.start()
+
+    progress.new_task("prepare remote")
+
     try:
         remote = git_prepare_remote(
             ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
         )
     except GitError as e:
         perror(f"unable to prepare remote repository '{dst_repo}': {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.done_task()
+    progress.stop()
 
     remote_releases: list[str] = []
     remote_base_releases: list[str] = []
@@ -573,12 +608,16 @@ def cmd_release_finish(
         )
         sys.exit(errno.ENOTRECOVERABLE)
 
+    progress = CRTProgress(console)
+    progress.start()
+
     # 1. grab the manifest branch from its repository
     # 2. push the manifest branch to the release branch, in the release repository
     # 3. tag the release branch with the release name
     # 4. push the tag to the release repository
     # 5. mark the release as published and write it out
 
+    progress.new_task("prepare repositories")
     logger.debug(
         f"prepare release repos, src: {manifest.dst_repo}, dst: {release.release_repo}"
     )
@@ -586,10 +625,16 @@ def cmd_release_finish(
         _prepare_release_repo(
             ceph_repo_path, manifest.dst_repo, release.release_repo, gh_token
         )
+    except _ExitError as e:
+        progress.stop_error()
+        sys.exit(e.code)
     except Exception as e:
         perror(f"failed to prepare release repositories: {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
 
+    progress.done_task()
+    progress.new_task("publish release")
     logger.debug(
         f"fetch manifest branch '{manifest.dst_branch}' to '{release.release_branch}'"
     )
@@ -602,6 +647,7 @@ def cmd_release_finish(
         )
     except GitError as e:
         perror(f"failed to fetch manifest branch '{manifest.dst_branch}': {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
 
     logger.debug(
@@ -611,11 +657,13 @@ def cmd_release_finish(
         _ = git_push(ceph_repo_path, release.release_branch, release.release_repo)
     except GitError as e:
         perror(f"failed to push release branch '{release.release_branch}': {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
     except Exception as e:
         perror(
             f"unexpected error pushing release branch '{release.release_branch}': {e}"
         )
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
 
     logger.debug(
@@ -631,6 +679,7 @@ def cmd_release_finish(
         )
     except GitError as e:
         perror(f"failed to create and push tag '{release.name}': {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
 
     release.is_published = True
@@ -638,7 +687,11 @@ def cmd_release_finish(
         store_release(patches_repo_path, release)
     except Exception as e:
         perror(f"failed to write release metadata for '{release_name}': {e}")
+        progress.stop_error()
         sys.exit(errno.ENOTRECOVERABLE)
+
+    progress.done_task()
+    progress.stop()
 
     psuccess(
         f"release '{release_name}' successfully published to '{release.release_repo}' "
