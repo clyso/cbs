@@ -70,7 +70,9 @@ def parse_version(
     return (prefix, major, minor, patch, suffix)
 
 
-def split_version_into_paths(version: str) -> list[Path]:
+def split_version_into_paths(
+    version: str, with_patch_and_suffix: bool = True
+) -> list[Path]:
     def _parse_version_hierarchy() -> list[str]:
         prefix, major, minor, patch, suffix = parse_version(version)
 
@@ -82,11 +84,13 @@ def split_version_into_paths(version: str) -> list[Path]:
             levels.append(base)
         if patch:
             base = f"{base}.{patch}"
+            if with_patch_and_suffix and suffix:
+                base = f"{base}.{patch}-{suffix}"
             levels.append(base)
 
         if prefix:
             levels = [f"{prefix}-{lvl}" for lvl in levels]
-        if suffix:
+        if suffix and not with_patch_and_suffix:
             last = next(reversed(levels))
             levels.append(f"{last}-{suffix}")
 
