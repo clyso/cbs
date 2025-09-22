@@ -81,7 +81,7 @@ class ReleaseManifest(pydantic.BaseModel):
 
     @property
     def is_published(self) -> bool:
-        return all(s.is_published for s in self.stages)
+        return len(self.stages) > 0 and all(s.is_published for s in self.stages)
 
     @property
     def latest_stage(self) -> ManifestStage:
