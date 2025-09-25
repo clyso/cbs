@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+/local
+cbc-config.json
+.go
+node_modules
+package.json
+yarn.lock
