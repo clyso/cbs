@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-/local
+/_local
 cbc-config.json
 .go
 node_modules
