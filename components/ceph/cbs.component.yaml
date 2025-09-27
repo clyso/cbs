@@ -1,0 +1,15 @@
+name: ceph
+repo: https://github.com/clyso/ceph
+
+build:
+  rpm:
+    build: scripts/build_rpms.sh
+    release-rpm: scripts/get_release_rpm.sh
+
+  get-version: scripts/get_version.sh
+  deps: scripts/install_deps.sh
+
+versions:
+  - v17: containers/v17.2/
+  - v18: containers/v18.2/
+  - v19: containers/v19.2/
