@@ -28,7 +28,7 @@ from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.builds.tracker import get_builds_tracker
 from cbslib.config.server import config_init
-from cbslib.logger import log as parent_logger
+from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds
 from cbslib.worker.monitor import monitor
@@ -36,33 +36,33 @@ from ceslib.errors import CESError
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
-log = parent_logger.getChild("server")
+logger = parent_logger.getChild("server")
 
 
 # fastapi application
 #
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
-    log.info("Preparing server init")
+    logger.info("Preparing server init")
 
     try:
         await auth_users_init()
     except (CESError, Exception):
-        log.exception("error initializing users db")
+        logger.exception("error initializing users db")
         sys.exit(1)
 
     try:
         oauth_init()
     except (CESError, Exception):
-        log.exception("error initiating server")
+        logger.exception("error initiating server")
         sys.exit(1)
 
     thread = threading.Thread(target=monitor, args=(get_builds_tracker(),))
     thread.start()
 
-    log.info("Starting ces build server")
+    logger.info("Starting ces build server")
     yield
-    log.info("Shutting down ces build server")
+    logger.info("Shutting down ces build server")
     thread.join()
 
 
@@ -85,10 +85,10 @@ def factory() -> FastAPI:
     setup_logging()
 
     try:
-        log.debug("init config")
+        logger.debug("init config")
         config = config_init()
     except Exception:
-        log.exception("error setting up config state")
+        logger.exception("error setting up config state")
         sys.exit(1)
 
     api.add_middleware(

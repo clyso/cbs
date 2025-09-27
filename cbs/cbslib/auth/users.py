@@ -17,13 +17,13 @@ from typing import Annotated, override
 
 import pydantic
 from cbslib.auth import AuthError, AuthNoSuchUserError
-from cbslib.auth import log as parent_logger
+from cbslib.auth import logger as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
 from cbslib.config.server import get_config
 from ceslib.errors import CESError
 from fastapi import Depends, HTTPException, status
 
-log = parent_logger.getChild("users")
+logger = parent_logger.getChild("users")
 
 
 class AuthUsersDBMissingError(AuthError):
@@ -56,13 +56,13 @@ class Users:
         self._tokens_db = {}
 
     async def create(self, email: str, name: str) -> CBSToken:
-        log.info(f"create user '{email}' name '{name}'")
+        logger.info(f"create user '{email}' name '{name}'")
         if email in self._users_db:
-            log.debug(f"user '{email}' already exists, return")
+            logger.debug(f"user '{email}' already exists, return")
             return await self.get_user_token(email)
 
         token = token_create(email)
-        log.debug(f"created token for user '{email}': {token}")
+        logger.debug(f"created token for user '{email}': {token}")
 
         self._tokens_db[token.token] = token
         self._users_db[email] = User(email=email, name=name, token=token)
@@ -91,10 +91,10 @@ class Users:
                     self._tokens_db[user.token.token] = user.token
         except Exception as e:
             msg = f"error loading users from db '{self._db_path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise UsersDBError(msg) from e
 
-        log.info(f"loaded {len(self._users_db)} users from database")
+        logger.info(f"loaded {len(self._users_db)} users from database")
 
     async def save(self) -> None:
         try:
@@ -104,7 +104,7 @@ class Users:
                 db["users"] = users_json
         except Exception as e:
             msg = f"error saving users to db '{self._db_path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise UsersDBError(msg) from e
 
 

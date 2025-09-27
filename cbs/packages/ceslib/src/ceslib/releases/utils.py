@@ -14,11 +14,11 @@
 from pathlib import Path
 
 from ceslib.releases import ReleaseError
-from ceslib.releases import log as parent_logger
+from ceslib.releases import logger as parent_logger
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.paths import get_component_scripts_path, get_script_path
 
-log = parent_logger.getChild("utils")
+logger = parent_logger.getChild("utils")
 
 
 async def get_component_release_rpm(
@@ -28,7 +28,7 @@ async def get_component_release_rpm(
 ) -> str | None:
     scripts_path = get_component_scripts_path(components_path, component_name)
     if not scripts_path:
-        log.warning(
+        logger.warning(
             f"unable to find component release RPM for '{component_name}': "
             + f"no scripts path at '{components_path}"
         )
@@ -36,7 +36,7 @@ async def get_component_release_rpm(
 
     release_rpm_script = get_script_path(scripts_path, "get_release_rpm.*")
     if not release_rpm_script:
-        log.warning(
+        logger.warning(
             f"unable to find component release RPM for '{component_name}': "
             + "no script available"
         )
@@ -51,16 +51,16 @@ async def get_component_release_rpm(
         rc, stdout, stderr = await async_run_cmd(cmd)
     except CommandError as e:
         msg = f"error running release RPM script for '{component_name}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
     except Exception as e:
         msg = f"unknown error running release RPM script for '{component_name}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
 
     if rc != 0:
         msg = f"error running release RPM script for '{component_name}': {stderr}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg)
 
     return stdout.strip()

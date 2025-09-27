@@ -23,13 +23,13 @@ import click
 from ceslib.errors import CESError
 from ceslib.images.desc import get_image_desc
 from ceslib.images.sync import sync_image
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.utils.vault import VaultError
 
 ourdir = os.path.dirname(os.path.realpath(__file__))
 
-log = root_logger.getChild("images-tool")
+logger = root_logger.getChild("images-tool")
 
 
 async def _sync(
@@ -49,11 +49,11 @@ async def _sync(
         sys.exit(1)
 
     if dry_run:
-        log.info("perform dry run")
+        logger.info("perform dry run")
     if force:
-        log.info("force sync")
+        logger.info("force sync")
 
-    log.debug(f"desc: {desc}")
+    logger.debug(f"desc: {desc}")
 
     try:
         secrets = SecretsVaultMgr(
@@ -64,24 +64,24 @@ async def _sync(
             vault_transit=vault_transit,
         )
     except VaultError:
-        log.exception("error initializing secrets")
+        logger.exception("error initializing secrets")
         sys.exit(1)
     except Exception:
-        log.exception("unknown error")
+        logger.exception("unknown error")
         sys.exit(1)
 
     for image in desc.images:
-        log.info(f"copying '{image.src}' to '{image.dst}")
+        logger.info(f"copying '{image.src}' to '{image.dst}")
         try:
             sync_image(image.src, image.dst, secrets, force=force, dry_run=dry_run)
         except CESError:
-            log.exception("error copying images")
+            logger.exception("error copying images")
             sys.exit(1)
         except Exception:
-            log.exception("unknown error")
+            logger.exception("unknown error")
             sys.exit(1)
 
-        log.info(f"copied image from '{image.src}' to '{image.dst}'")
+        logger.info(f"copied image from '{image.src}' to '{image.dst}'")
     pass
 
 

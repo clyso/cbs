@@ -15,7 +15,7 @@ import asyncio
 from typing import Any, ParamSpec, cast, override
 
 from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
-from cbslib.worker.celery import celery_app, log
+from cbslib.worker.celery import celery_app, logger
 from celery import Task
 from celery.worker.request import Request
 from ceslib.versions.desc import VersionDescriptor
@@ -34,7 +34,7 @@ class BuilderRequest(Request):
         pool: Any,  # pyright: ignore[reportExplicitAny,reportAny]
         signal: int | None = None,
     ) -> None:
-        log.info(f"request terminated: {self.task_id}, signal: {signal}")
+        logger.info(f"request terminated: {self.task_id}, signal: {signal}")
         super().terminate(pool, signal)  # pyright: ignore[reportAny]
         task = cast("BuilderTask[None]", self.task)
         task.on_termination(self.task_id)
@@ -50,19 +50,19 @@ class BuilderTask(Task[_P, None]):
         self.builder = WorkerBuilder()
 
     def on_termination(self, task_id: str) -> None:
-        log.info(f"revoked {task_id}")
+        logger.info(f"revoked {task_id}")
         loop = asyncio.new_event_loop()
         loop.run_until_complete(self.builder.kill())
 
 
 @celery_app.task(pydantic=True, base=BuilderTask, bind=True, track_started=True)
 def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
-    log.info(f"build version: {version_desc}")
+    logger.info(f"build version: {version_desc}")
 
     loop = asyncio.new_event_loop()
     try:
         # loop.run_until_complete(asyncio.sleep(120))
         loop.run_until_complete(self.builder.build(version_desc))
     except (WorkerBuilderError, Exception) as e:
-        log.exception("error running build")
+        logger.exception("error running build")
         raise e  # noqa: TRY201

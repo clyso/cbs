@@ -15,11 +15,11 @@ import os
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.images import log as parent_logger
+from ceslib.images import logger as parent_logger
 from ceslib.utils import CmdArgs, CommandError, PasswordArg, async_run_cmd, run_cmd
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
-log = parent_logger.getChild("sign")
+logger = parent_logger.getChild("sign")
 
 
 class SigningError(CESError):
@@ -32,7 +32,7 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
     try:
         _, username, password = secrets.harbor_creds()
     except SecretsVaultError as e:
-        log.exception("error obtaining harbor credentials")
+        logger.exception("error obtaining harbor credentials")
         raise e  # noqa: TRY201
 
     cmd: CmdArgs = [
@@ -65,13 +65,13 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
 
 async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
     def _out(s: str) -> None:
-        log.debug(s)
+        logger.debug(s)
 
     try:
         _, username, password = secrets.harbor_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining harbor credentials: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise SigningError(msg) from e
 
     cmd: CmdArgs = [
@@ -88,7 +88,7 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
     vault_transit = secrets.vault.transit
     if not vault_transit:
         msg = "vault transit unset, can't sign"
-        log.error(msg)
+        logger.error(msg)
         raise SigningError(msg)
 
     with secrets.vault.client() as client:
@@ -104,10 +104,10 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
         rc, _, stderr = await async_run_cmd(cmd, outcb=_out, extra_env=env)
     except (CommandError, Exception) as e:
         msg = f"error signing image '{img}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise SigningError(msg) from e
 
     if rc != 0:
         msg = f"error signing image '{img}': {stderr}"
-        log.error(msg)
+        logger.error(msg)
         raise SigningError(msg)

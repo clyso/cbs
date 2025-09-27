@@ -19,15 +19,16 @@
 import re
 
 import pydantic
+
 from ceslib.errors import CESError, UnknownRepositoryError
 from ceslib.images import get_image_name
-from ceslib.images import log as parent_logger
+from ceslib.images import logger as parent_logger
 from ceslib.images.errors import SkopeoError
 from ceslib.images.signing import sign
 from ceslib.utils import CmdArgs, Password, run_cmd
 from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
-log = parent_logger.getChild("skopeo")
+logger = parent_logger.getChild("skopeo")
 
 
 class SkopeoTagListResult(pydantic.BaseModel):
@@ -45,7 +46,7 @@ def skopeo_get_tags(img: str) -> SkopeoTagListResult:
     try:
         retcode, raw_out, err = skopeo(["list-tags", f"docker://{img_base}"])
     except CESError as e:
-        log.exception(f"error obtaining image tags for {img_base}")
+        logger.exception(f"error obtaining image tags for {img_base}")
         raise e  # noqa: TRY201
 
     if retcode != 0:
@@ -57,17 +58,17 @@ def skopeo_get_tags(img: str) -> SkopeoTagListResult:
     try:
         return SkopeoTagListResult.model_validate_json(raw_out)
     except pydantic.ValidationError:
-        log.exception("unable to parse resulting images list")
+        logger.exception("unable to parse resulting images list")
         raise SkopeoError() from None
 
 
 def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
-    log.info(f"copy '{src}' to '{dst}'")
+    logger.info(f"copy '{src}' to '{dst}'")
 
     try:
         _, user, passwd = secrets.harbor_creds()
     except SecretsVaultError as e:
-        log.exception("error obtaining harbor credentials")
+        logger.exception("error obtaining harbor credentials")
         raise e  # noqa: TRY201
 
     try:
@@ -81,23 +82,23 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
             ]
         )
     except SkopeoError as e:
-        log.exception("error copying images")
+        logger.exception("error copying images")
         raise e  # noqa: TRY201
 
     if retcode != 0:
-        log.error(f"error copying images: {err}")
+        logger.error(f"error copying images: {err}")
         raise SkopeoError()
 
-    log.info(f"copied '{src}' to '{dst}'")
+    logger.info(f"copied '{src}' to '{dst}'")
 
     try:
         retcode, out, err = sign(dst, secrets)
     except SkopeoError as e:
-        log.exception(f"error signing image '{dst}'")
+        logger.exception(f"error signing image '{dst}'")
         raise e  # noqa: TRY201
 
     if retcode != 0:
-        log.error(f"error signing image '{dst}': {err}")
+        logger.error(f"error signing image '{dst}': {err}")
         raise SkopeoError()
 
-    log.info(f"signed image '{dst}': {out}")
+    logger.info(f"signed image '{dst}': {out}")

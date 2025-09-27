@@ -11,9 +11,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 
-log = root_logger.getChild("images")
+logger = root_logger.getChild("images")
 
 
 def get_image_name(img: str) -> str:

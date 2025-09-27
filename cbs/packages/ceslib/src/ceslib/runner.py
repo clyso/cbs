@@ -18,12 +18,12 @@ from pathlib import Path
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 from ceslib.utils.podman import PodmanError, podman_run, podman_stop
 from ceslib.versions.desc import VersionDescriptor
 from ceslib.versions.errors import NoSuchVersionDescriptorError
 
-log = root_logger.getChild("runner")
+logger = root_logger.getChild("runner")
 
 
 class RunnerError(CESError):
@@ -56,7 +56,7 @@ async def runner(
     skip_build: bool = False,
     force: bool = False,
 ) -> None:
-    log.info(f"""run the runner:
+    logger.info(f"""run the runner:
     desc file path:          {desc_file_path}
     tools path:              {tools_path}
     secrets file path:       {secrets_file_path}
@@ -72,14 +72,14 @@ async def runner(
 """)
 
     if not desc_file_path.exists():
-        log.error(f"version descriptor does not exist at '{desc_file_path}'")
+        logger.error(f"version descriptor does not exist at '{desc_file_path}'")
         raise NoSuchVersionDescriptorError(desc_file_path)
 
     try:
         desc = VersionDescriptor.read(desc_file_path)
     except CESError as e:
         msg = f"error loading version descriptor: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise RunnerError(msg) from e
 
     desc_mount_loc = f"/runner/{desc_file_path.name}"
@@ -120,7 +120,9 @@ async def runner(
                 "VAULT_ROLE_ID": vault_role_id,
                 "VAULT_SECRET_ID": vault_secret_id,
                 "VAULT_TRANSIT": vault_transit,
-                "CBS_DEBUG": "1" if log.getEffectiveLevel() == logging.DEBUG else "0",
+                "CBS_DEBUG": "1"
+                if logger.getEffectiveLevel() == logging.DEBUG
+                else "0",
             },
             args=podman_args,
             volumes=podman_volumes,
@@ -134,16 +136,16 @@ async def runner(
         )
     except PodmanError as e:
         msg = f"error running build: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise RunnerError(msg) from e
     except Exception as e:
         msg = f"unknown error running build: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise RunnerError(msg) from e
 
     if rc != 0:
         msg = f"error running build (rc={rc}): {stderr}"
-        log.error(msg)
+        logger.error(msg)
         raise RunnerError(msg)
 
 

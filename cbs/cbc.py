@@ -29,7 +29,7 @@ from cbslib.builds.types import BuildEntry
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from ceslib.errors import CESError
-from ceslib.logger import log as parent_logger
+from ceslib.logger import logger as parent_logger
 from ceslib.versions.create import create
 from ceslib.versions.desc import VersionDescriptor
 from ceslib.versions.errors import VersionError
@@ -38,7 +38,7 @@ from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
 
-log = parent_logger.getChild("cbc")
+logger = parent_logger.getChild("cbc")
 
 
 class CBCError(CESError):
@@ -78,11 +78,11 @@ def update_ctx(
         curr_ctx = click.get_current_context()
         parent_ctx = curr_ctx.find_object(Ctx)
         if not parent_ctx:
-            log.debug(f"no parent context found for '{f.__name__}'")
+            logger.debug(f"no parent context found for '{f.__name__}'")
         else:
             new_ctx = copy(parent_ctx)
             if not parent_ctx.logger:
-                new_ctx.logger = log.getChild(f.__name__)
+                new_ctx.logger = logger.getChild(f.__name__)
             else:
                 new_ctx.logger = parent_ctx.logger.getChild(f.__name__)
             curr_ctx.obj = new_ctx
@@ -98,11 +98,11 @@ def pass_config(f: Callable[Concatenate[CBSUserConfig, P], R]) -> Callable[P, R]
         curr_ctx = click.get_current_context()
         ctx = curr_ctx.find_object(Ctx)
         if not ctx:
-            log.error(f"missing context for '{f.__name__}'")
+            logger.error(f"missing context for '{f.__name__}'")
             sys.exit(1)
         config = ctx.config
         if not config:
-            log.error(f"missing config for '{f.__name__}'")
+            logger.error(f"missing config for '{f.__name__}'")
             sys.exit(1)
         return f(config, *args, **kwargs)
         # return curr_ctx.invoke(f, config, *args, **kwargs)
@@ -117,13 +117,13 @@ def pass_logger(f: Callable[Concatenate[logging.Logger, P], R]) -> Callable[P, R
         curr_ctx = click.get_current_context()
         ctx = curr_ctx.find_object(Ctx)
         if not ctx:
-            log.error(f"missing context for '{f.__name__}'")
+            logger.error(f"missing context for '{f.__name__}'")
             sys.exit(1)
-        logger = ctx.logger
-        if not logger:
-            log.error(f"missing logger for '{f.__name__}'")
+        our_logger = ctx.logger
+        if not our_logger:
+            logger.error(f"missing logger for '{f.__name__}'")
             sys.exit(1)
-        return f(logger, *args, **kwargs)
+        return f(our_logger, *args, **kwargs)
         # return curr_ctx.invoke(f, config, *args, **kwargs)
 
     return update_wrapper(inner, f)
@@ -369,7 +369,7 @@ def main(ctx: Ctx, debug: bool, config_path: Path | None) -> None:
 
     logging.getLogger("httpx").setLevel(logging.DEBUG if debug else logging.CRITICAL)
 
-    log.info(f"config path: {config_path}")
+    logger.info(f"config path: {config_path}")
     user_config_path: Path = _DEFAULT_CONFIG_PATH
     if config_path:
         user_config_path = config_path

@@ -18,12 +18,12 @@ from datetime import datetime as dt
 from pathlib import Path
 
 from ceslib.builder import BuilderError
-from ceslib.builder import log as parent_logger
+from ceslib.builder import logger as parent_logger
 from ceslib.builder.prepare import BuildComponentInfo
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.paths import get_component_scripts_path, get_script_path
 
-log = parent_logger.getChild("rpmbuild")
+logger = parent_logger.getChild("rpmbuild")
 
 
 class ComponentBuild:
@@ -40,7 +40,7 @@ def _get_component_build_script(
 ) -> Path | None:
     build_script_path = get_script_path(component_scripts_path, "build_rpms.*")
     if not build_script_path:
-        log.error(f"unable to find build script for component '{component_name}'")
+        logger.error(f"unable to find build script for component '{component_name}'")
         return None
 
     return build_script_path
@@ -81,7 +81,7 @@ async def _build_component(
     Returns the number of seconds the script took to execute, and a `Path` to
     `rpmbuild`'s topdir, where the RPMs will be located.
     """
-    mlog = log.getChild(f"comp[{comp_name}]")
+    mlog = logger.getChild(f"comp[{comp_name}]")
     mlog.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
     def _outcb(s: str) -> None:
@@ -142,15 +142,15 @@ async def _install_deps(
     for name, comp in components.items():
         comp_scripts_path = get_component_scripts_path(components_path, comp.name)
         if not comp_scripts_path:
-            log.warning(f"scripts for component '{comp.name}' not found, continue")
+            logger.warning(f"scripts for component '{comp.name}' not found, continue")
             continue
 
         install_deps_script = get_script_path(comp_scripts_path, "install_deps.*")
         if not install_deps_script:
-            log.info(f"no dependencies to install for component '{comp.name}'")
+            logger.info(f"no dependencies to install for component '{comp.name}'")
             continue
 
-        clog = log.getChild(f"comp[{name}]")
+        clog = logger.getChild(f"comp[{name}]")
 
         def _comp_out(s: str) -> None:
             clog.debug(s)  # noqa: B023
@@ -207,7 +207,7 @@ async def build_rpms(
         await _install_deps(components_path, components)
     except BuilderError as e:
         msg = f"error installing components' dependencies: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     class _ToBuildComponent:
@@ -222,7 +222,7 @@ async def build_rpms(
     for comp_name, comp_info in components.items():
         comp_path = components_path.joinpath(comp_name)
         if not comp_path.exists():
-            log.warning(
+            logger.warning(
                 f"component path for '{comp_name}' "
                 + f"not found in '{components_path}'"
             )
@@ -230,7 +230,7 @@ async def build_rpms(
 
         comp_scripts_path = get_component_scripts_path(components_path, comp_name)
         if not comp_scripts_path:
-            log.warning(
+            logger.warning(
                 f"component scripts path for '{comp_name}' "
                 + f"not found in '{comp_path}'"
             )
@@ -238,7 +238,7 @@ async def build_rpms(
 
         build_script_path = _get_component_build_script(comp_name, comp_scripts_path)
         if not build_script_path:
-            log.warning(f"build script not found for '{comp_name}'")
+            logger.warning(f"build script not found for '{comp_name}'")
             continue
 
         to_build[comp_name] = _ToBuildComponent(
@@ -265,20 +265,20 @@ async def build_rpms(
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error building component RPMs:")  # noqa: TRY400
+            logger.error("error building component RPMs:")
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         else:
-            log.error(f"unexpected error building component RPMs: {e}")  # noqa: TRY400
+            logger.error(f"unexpected error building component RPMs: {e}")
             for exc in e.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
 
         raise BuilderError(msg="error building component RPMs") from e
 
     comps_rpms_paths: dict[str, ComponentBuild] = {}
     for name, task in tasks.items():
         time_spent, comp_rpms_path = task.result()
-        log.info(f"built component '{name}' in {time_spent} seconds")
+        logger.info(f"built component '{name}' in {time_spent} seconds")
         comps_rpms_paths[name] = ComponentBuild(to_build[name].version, comp_rpms_path)
 
     return comps_rpms_paths

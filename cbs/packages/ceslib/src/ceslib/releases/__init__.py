@@ -14,9 +14,9 @@
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.logger import log as parent_logger
+from ceslib.logger import logger as parent_logger
 
-log = parent_logger.getChild("releases")
+logger = parent_logger.getChild("releases")
 
 
 class ReleaseError(CESError):

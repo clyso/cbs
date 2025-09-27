@@ -24,11 +24,12 @@ from typing import Any, cast, override
 
 import aiohttp
 import pydantic
+
 from ceslib.containers import ContainerError, find_path_relative_to
-from ceslib.containers import log as parent_logger
+from ceslib.containers import logger as parent_logger
 from ceslib.utils.buildah import BuildahContainer, BuildahError
 
-log = parent_logger.getChild("repos")
+logger = parent_logger.getChild("repos")
 
 
 def repo_discriminator(v: dict[str, Any]) -> str:  # pyright: ignore[reportExplicitAny]
@@ -69,14 +70,14 @@ class ContainerRepository(pydantic.BaseModel, abc.ABC):
         async with self.get_source_path(hint, root) as src:
             if not src:
                 msg = f"unexpected missing source path for '{self.source}'"
-                log.error(msg)
+                logger.error(msg)
                 raise ContainerError(msg)
 
             try:
                 await container.copy(src, dst)
             except (BuildahError, Exception) as e:
                 msg = f"unable to copy repository from '{src}' to '{dst}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise ContainerError(msg) from e
 
 
@@ -97,21 +98,21 @@ class ContainerFileRepository(ContainerRepository):
         m = re.match(r"^file://(.+)", self.source)
         if not m:
             msg = f"empty 'file://' or wrong source type for '{self.source}'"
-            log.error(msg)
+            logger.error(msg)
             raise ContainerError(msg)
 
         try:
             _ = hint.relative_to(root)
         except ValueError:
             msg = f"hint path '{hint}' not relative to root '{root}'"
-            log.exception(msg)
+            logger.exception(msg)
             raise ContainerError(msg) from None
 
         name: str = m.group(1)
         p = find_path_relative_to(name, hint, root)
         if not p:
             msg = f"error finding '{name}' between '{root}' and '{hint}'"
-            log.error(msg)
+            logger.error(msg)
             raise ContainerError(msg)
 
         yield p
@@ -133,7 +134,7 @@ class ContainerURLRepository(ContainerRepository):
     ) -> AsyncGenerator[Path | None]:
         if not (re.match(r"^https?://.+", self.source)):
             msg = f"wrong source for URL: '{self.source}'"
-            log.error(msg)
+            logger.error(msg)
             raise ContainerError(msg)
 
         tmp_fd, tmp_source = tempfile.mkstemp()
@@ -162,7 +163,7 @@ class ContainerCOPRRepository(ContainerRepository):
         m = re.match(r"^copr://(.+)", self.source)
         if not m:
             msg = f"empty 'copr://' or wrong source type for '{self.source}'"
-            log.error(msg)
+            logger.error(msg)
             raise ContainerError(msg)
 
         copr_source: str = m.group(1)
@@ -172,7 +173,7 @@ class ContainerCOPRRepository(ContainerRepository):
             await container.run(cmd)
         except (BuildahError, Exception) as e:
             msg = f"error enabling COPR repository '{copr_source}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ContainerError(msg) from e
 
     @override

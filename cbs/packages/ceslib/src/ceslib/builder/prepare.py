@@ -18,15 +18,16 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
+
 from ceslib.builder import BuilderError
-from ceslib.builder import log as parent_logger
+from ceslib.builder import logger as parent_logger
 from ceslib.builder.utils import get_component_version
 from ceslib.utils import CommandError, async_run_cmd, git
 from ceslib.utils.secrets import SecretsVaultMgr
 from ceslib.versions.desc import VersionComponent
 from ceslib.versions.utils import get_major_version, get_minor_version
 
-log = parent_logger.getChild("prepare")
+logger = parent_logger.getChild("prepare")
 
 
 class BuildComponentInfo(pydantic.BaseModel):
@@ -42,12 +43,12 @@ class BuildComponentInfo(pydantic.BaseModel):
 
 async def prepare_builder() -> None:
     def _cb(s: str) -> None:
-        log.debug(s)
+        logger.debug(s)
 
     try:
         rc, _, stderr = await async_run_cmd(["dnf", "update", "-y"], outcb=_cb)
         if rc != 0:
-            log.error(f"error updating builder: {stderr}")
+            logger.error(f"error updating builder: {stderr}")
             raise BuilderError(msg="error updating 'dnf'")
 
         rc, _, stderr = await async_run_cmd(
@@ -55,7 +56,7 @@ async def prepare_builder() -> None:
             outcb=_cb,
         )
         if rc != 0:
-            log.error(f"error installing 'epel-release': {stderr}")
+            logger.error(f"error installing 'epel-release': {stderr}")
             raise BuilderError(msg="error installing 'epel-release'")
 
         rc, _, stderr = await async_run_cmd(
@@ -63,7 +64,7 @@ async def prepare_builder() -> None:
             outcb=_cb,
         )
         if rc != 0:
-            log.error(f"error enabling CRB: {stderr}")
+            logger.error(f"error enabling CRB: {stderr}")
             raise BuilderError(msg="error enabling CRB repository")
 
         rc, _, stderr = await async_run_cmd(
@@ -71,7 +72,7 @@ async def prepare_builder() -> None:
             outcb=_cb,
         )
         if rc != 0:
-            log.error(f"error updating builder: {stderr}")
+            logger.error(f"error updating builder: {stderr}")
             raise BuilderError(msg="error running 'dnf update'")
 
         rc, _, stderr = await async_run_cmd(
@@ -95,7 +96,7 @@ async def prepare_builder() -> None:
             outcb=_cb,
         )
         if rc != 0:
-            log.error(f"error installing builder packages: {stderr}")
+            logger.error(f"error installing builder packages: {stderr}")
             raise BuilderError(msg="unable to install dependencies")
 
         # install cosign rpm
@@ -110,10 +111,10 @@ async def prepare_builder() -> None:
         )
         if rc != 0:
             msg = f"error installing cosign package: {stderr}"
-            log.error(msg)
+            logger.error(msg)
             raise BuilderError(msg)
     except CommandError as e:
-        log.exception("unable to run 'dnf'")
+        logger.exception("unable to run 'dnf'")
         raise BuilderError(msg=f"error running 'dnf': {e}") from e
 
 
@@ -121,7 +122,7 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
     patches_pattern = re.compile(r"(\d+)-.*\.patch")
     patches_dict: dict[int, list[tuple[int, Path]]] = {}
 
-    log.debug(f"get patch list for version '{version}'")
+    logger.debug(f"get patch list for version '{version}'")
 
     def _get_patches_by_prio(path: Path, cur_prio: int, filter_version: str) -> None:
         if cur_prio not in patches_dict:
@@ -129,23 +130,23 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
 
         if cur_prio > 0:
             if path.name == filter_version:
-                log.debug(f"{filter_version} matches path at {path.name}")
+                logger.debug(f"{filter_version} matches path at {path.name}")
                 pass
             elif path.name == get_minor_version(filter_version):
-                log.debug(f"{filter_version} matches minor for path at {path.name}")
+                logger.debug(f"{filter_version} matches minor for path at {path.name}")
                 pass
             elif path.name == get_major_version(filter_version):
-                log.debug(f"{filter_version} matches major for path at {path.name}")
+                logger.debug(f"{filter_version} matches major for path at {path.name}")
                 pass
             else:
-                log.debug(f"{path.name} does not match {filter_version}")
+                logger.debug(f"{path.name} does not match {filter_version}")
                 return
 
         for entry in path.iterdir():
             if entry.suffix == ".patch":
                 m = re.match(patches_pattern, entry.name)
                 if m is None:
-                    log.warning(f"patch name '{entry.name}' malformed, continue.")
+                    logger.warning(f"patch name '{entry.name}' malformed, continue.")
                     continue
                 patches_dict[cur_prio].append((int(m.group(1)), entry))
 
@@ -194,7 +195,7 @@ async def prepare_components(
         original repository `URL`, the `Path` to which it has been cloned, alongside
         the `version` being cloned, and the `SHA1` of said version.
         """
-        log.debug(
+        logger.debug(
             f"clone repo '{comp.repo}' to '{scratch_path}', "
             + f"name: '{comp.name}', ref: '{comp.ref}'"
         )
@@ -210,41 +211,41 @@ async def prepare_components(
                     clean_if_exists=True,
                 )
         except git.GitError as e:
-            log.exception(
+            logger.exception(
                 f"error cloning '{comp.repo}' to '{scratch_path}', ref: {comp.ref}"
             )
             raise BuilderError(msg=f"error cloning '{comp.repo}': {e}") from e
         except Exception as e:
-            log.exception(f"unknown exception cloning '{comp.repo}'")
+            logger.exception(f"unknown exception cloning '{comp.repo}'")
             raise BuilderError(msg=f"error cloning '{comp.repo}': {e}") from e
 
         delta = dt.now(tz=datetime.UTC) - start
-        log.info(f"component '{comp.name}' cloned in {delta.seconds}")
+        logger.info(f"component '{comp.name}' cloned in {delta.seconds}")
 
         return cloned_path
 
     async def _apply_patches(comp: VersionComponent, repo: Path) -> None:
         """Apply required patches to component's repository."""
-        log.info(f"apply patches to '{comp.name}' at '{repo}'")
+        logger.info(f"apply patches to '{comp.name}' at '{repo}'")
 
         comp_path = components_path.joinpath(comp.name)
         if not comp_path.exists():
-            log.warning(f"component '{comp.name}' not found in {components_path}")
+            logger.warning(f"component '{comp.name}' not found in {components_path}")
             return
 
         comp_patches_path = comp_path.joinpath("patches")
         if not comp_patches_path.exists():
-            log.info(f"no patches to apply to '{comp.name}'")
+            logger.info(f"no patches to apply to '{comp.name}'")
             return
 
         patches_to_apply = _get_patch_list(comp_patches_path, version)
         for patch_path in patches_to_apply:
-            log.info(f"applying patch from '{patch_path}'")
+            logger.info(f"applying patch from '{patch_path}'")
             try:
                 await git.git_apply(repo, patch_path)
             except git.GitError as e:
                 msg = f"unable to apply patch from '{patch_path}' to '{repo}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise BuilderError(msg) from e
 
         patches_lst: list[tuple[int, Path]] = []
@@ -254,7 +255,9 @@ async def prepare_components(
                 patch_path = path.joinpath(patch_file)
                 m = re.match(patch_pattern, patch_file)
                 if m is None:
-                    log.warning(f"file at '{patch_path}' does not match patch format")
+                    logger.warning(
+                        f"file at '{patch_path}' does not match patch format"
+                    )
                     continue
                 patches_lst.append((int(m.group(1)), patch_path))
 
@@ -273,7 +276,7 @@ async def prepare_components(
             sha1 = await git.git_get_sha1(repo_path)
         except (git.GitError, Exception) as e:
             msg = f"error obtaining SHA1 for repository '{repo_path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
 
         try:
@@ -284,7 +287,7 @@ async def prepare_components(
             )
         except (BuilderError, Exception) as e:
             msg = f"error obtaining version for component '{comp.name}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
 
         return BuildComponentInfo(
@@ -306,23 +309,23 @@ async def prepare_components(
         try:
             repo_path = await _clone_repo(comp)
         except BuilderError as e:
-            log.exception(f"error cloning component '{comp.name}'")
+            logger.exception(f"error cloning component '{comp.name}'")
             raise e  # noqa: TRY201
 
         try:
             await _apply_patches(comp, repo_path)
         except BuilderError as e:
-            log.exception("error applying component patches")
+            logger.exception("error applying component patches")
             raise e  # noqa: TRY201
         except Exception as e:
-            log.exception("error applying component patches")
+            logger.exception("error applying component patches")
             raise e  # noqa: TRY201
 
         try:
             info = await _get_component_info(comp, repo_path)
         except (BuilderError, Exception) as e:
             msg = f"error obtaining version for component '{comp.name}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
 
         return info
@@ -333,11 +336,11 @@ async def prepare_components(
                 comp.name: tg.create_task(_do_component(comp)) for comp in components
             }
     except ExceptionGroup as e:
-        log.error("error preparing components:")  # noqa: TRY400
+        logger.error("error preparing components:")
         excs = e.subgroup(BuilderError)
         if excs is not None:
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         raise BuilderError(msg="error preparing components") from e
 
     return {name: task.result() for name, task in task_dict.items()}

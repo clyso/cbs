@@ -16,7 +16,7 @@ import datetime
 from datetime import datetime as dt
 from typing import Annotated, override
 
-from cbslib.builds import log as parent_logger
+from cbslib.builds import logger as parent_logger
 from cbslib.builds.types import BuildEntry, EntryState
 from cbslib.worker import tasks
 from celery.result import AsyncResult as CeleryTaskResult
@@ -24,7 +24,7 @@ from ceslib.errors import CESError
 from ceslib.versions.desc import VersionDescriptor
 from fastapi import Depends
 
-log = parent_logger.getChild("tracker")
+logger = parent_logger.getChild("tracker")
 
 
 class TrackerError(CESError):
@@ -160,7 +160,7 @@ class BuildsTracker:
         try:
             entry = self._builds.get(task_id)
             if not entry:
-                log.error(
+                logger.error(
                     f"unexpected missing task '{task_id}', "
                     + f"can't mark {state.name}!!"
                 )
@@ -176,24 +176,24 @@ class BuildsTracker:
             self._lock.release()
 
     async def mark_started(self, task_id: str, ts: dt) -> None:
-        log.info(f"task {task_id} started, ts = {ts}")
+        logger.info(f"task {task_id} started, ts = {ts}")
         await self._mark_task_state(task_id, EntryState.started, started=ts)
 
     async def mark_succeeded(self, task_id: str, ts: dt) -> None:
-        log.info(f"task {task_id} failed, ts = {ts}")
+        logger.info(f"task {task_id} failed, ts = {ts}")
         await self._mark_task_state(task_id, EntryState.success, finished=ts)
 
     async def mark_failed(self, task_id: str, ts: dt) -> None:
-        log.info(f"task {task_id} failed, ts = {ts}")
+        logger.info(f"task {task_id} failed, ts = {ts}")
         await self._mark_task_state(task_id, EntryState.failure, finished=ts)
 
     async def mark_rejected(self, task_id: str) -> None:
-        log.info(f"task {task_id} rejected")
+        logger.info(f"task {task_id} rejected")
         now = dt.now(tz=datetime.UTC)
         await self._mark_task_state(task_id, EntryState.rejected, finished=now)
 
     async def mark_revoked(self, task_id: str) -> None:
-        log.info(f"task {task_id} revoked")
+        logger.info(f"task {task_id} revoked")
         now = dt.now(tz=datetime.UTC)
         await self._mark_task_state(task_id, EntryState.revoked, finished=now)
 

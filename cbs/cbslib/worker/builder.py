@@ -20,11 +20,11 @@ from typing import override
 import pydantic
 from cbslib.config.server import Config, get_config
 from cbslib.worker import WorkerError
-from cbslib.worker.celery import log as parent_logger
+from cbslib.worker.celery import logger as parent_logger
 from ceslib.runner import gen_run_name, runner, stop
 from ceslib.versions.desc import VersionDescriptor
 
-log = parent_logger.getChild("builder")
+logger = parent_logger.getChild("builder")
 
 
 class WorkerBuilderError(WorkerError):
@@ -53,13 +53,13 @@ class WorkerBuilder:
         self._config = get_config()
         self._build = None
         self._name = gen_run_name("cbs_worker_")
-        log.info(f"init builder, name: {self._name}")
+        logger.info(f"init builder, name: {self._name}")
 
     async def pretend_build(self) -> None:
         await asyncio.sleep(300)
 
     async def pretend_kill(self) -> None:
-        log.info(f"kill builder {self._name}")
+        logger.info(f"kill builder {self._name}")
 
     async def build(self, version_desc: VersionDescriptor) -> None:
         if self._build:
@@ -93,17 +93,17 @@ class WorkerBuilder:
             pass
         except Exception as e:
             msg = f"error building '{version_desc.version}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise WorkerBuilderError(msg) from e
         finally:
-            log.info("no longer building")
+            logger.info("no longer building")
             desc_file_path.unlink()
 
     async def kill(self) -> None:
         try:
             await stop(name=self._name)
-            log.info(f"killed container '{self._name}'")
+            logger.info(f"killed container '{self._name}'")
         except Exception as e:
             msg = f"error stopping '{self._name}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise WorkerBuilderError(msg) from e

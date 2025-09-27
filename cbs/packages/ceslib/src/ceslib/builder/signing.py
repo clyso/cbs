@@ -18,16 +18,16 @@ from datetime import datetime as dt
 from pathlib import Path
 
 from ceslib.builder import BuilderError
-from ceslib.builder import log as parent_logger
+from ceslib.builder import logger as parent_logger
 from ceslib.builder.rpmbuild import ComponentBuild
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.secrets import SecretsVaultMgr
 
-log = parent_logger.getChild("signing")
+logger = parent_logger.getChild("signing")
 
 
 async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) -> None:
-    log.debug(f"sign rpm '{rpm_path}'")
+    logger.debug(f"sign rpm '{rpm_path}'")
 
     cmd: CmdArgs = [
         "rpm",
@@ -45,26 +45,26 @@ async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) 
         rc, _, stderr = await async_run_cmd(cmd)
     except CommandError as e:
         msg = f"error signing rpm '{rpm_path}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
     except Exception as e:
         msg = f"unknown error signing rpm '{rpm_path}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     if rc != 0:
         msg = f"unable to sign rpm '{rpm_path}': {stderr}"
-        log.error(msg)
+        logger.error(msg)
         raise BuilderError(msg)
 
-    log.debug(f"signed {rpm_path}")
+    logger.debug(f"signed {rpm_path}")
     pass
 
 
 async def _sign_component_rpms(
     path: Path, keyring: Path, passphrase: str, email: str
 ) -> tuple[int, int]:
-    log.info(f"sign component RPMs at '{path}'")
+    logger.info(f"sign component RPMs at '{path}'")
 
     rpms_to_sign: list[Path] = []
 
@@ -81,11 +81,11 @@ async def _sign_component_rpms(
             await _sign_rpm(rpm_path, keyring, passphrase, email)
         except BuilderError as e:
             msg = f"unable to sign rpms in '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error signing rpms in '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
 
     time_spent = (dt.now(tz=datetime.UTC) - start).seconds
@@ -95,14 +95,14 @@ async def _sign_component_rpms(
 async def sign_rpms(
     secrets: SecretsVaultMgr, components_rpms_paths: dict[str, ComponentBuild]
 ) -> None:
-    log.info(f"sign rpms for {components_rpms_paths.keys()}")
+    logger.info(f"sign rpms for {components_rpms_paths.keys()}")
     try:
         with secrets.gpg_private_keyring() as keyring:
             keyring_path = keyring[0]
             passphrase = keyring[1]
             email = keyring[2]
 
-            log.debug(f"sign with keyring at '{keyring_path}', email '{email}'")
+            logger.debug(f"sign with keyring at '{keyring_path}', email '{email}'")
 
             async with asyncio.TaskGroup() as tg:
                 tasks = {
@@ -116,22 +116,22 @@ async def sign_rpms(
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error signing components RPMs:")  # noqa: TRY400
+            logger.error("error signing components RPMs:")
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         else:
-            log.error(f"unexpected error signing component RPMs: {e}")  # noqa: TRY400
+            logger.error(f"unexpected error signing component RPMs: {e}")
 
         raise BuilderError(msg=f"error signing component RPMs: {e}") from e
 
     except Exception as e:
         msg = f"unexpected error signing RPMs: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     for name, task in tasks.items():
         time_spent, num_signs = task.result()
-        log.info(
+        logger.info(
             f"signed component '{name}' in {time_spent} seconds ({num_signs} signed)"
         )
 

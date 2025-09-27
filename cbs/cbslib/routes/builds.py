@@ -21,7 +21,7 @@ from cbslib.builds.tracker import (
     UnauthorizedTrackerError,
 )
 from cbslib.builds.types import BuildEntry
-from cbslib.routes import log as parent_logger
+from cbslib.routes import logger as parent_logger
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from cbslib.worker.celery import celery_app
 from celery.result import AsyncResult
@@ -29,7 +29,7 @@ from ceslib.versions.desc import VersionDescriptor
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
-log = parent_logger.getChild("builds")
+logger = parent_logger.getChild("builds")
 
 router = APIRouter(prefix="/builds")
 
@@ -65,11 +65,11 @@ async def builds_new(
     tracker: CBSBuildsTracker,
     descriptor: VersionDescriptor,
 ) -> NewBuildResponse:
-    log.debug(f"build new version: {descriptor}, user: {user}")
+    logger.debug(f"build new version: {descriptor}, user: {user}")
 
     user_info = descriptor.signed_off_by
     if user_info.email != user.email or user_info.user != user.name:
-        log.error(f"unexpected user/email combination: {user_info}")
+        logger.error(f"unexpected user/email combination: {user_info}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="issuing user does not match token's user",
@@ -78,12 +78,12 @@ async def builds_new(
     try:
         task_id, task_state = await tracker.new(descriptor)
     except BuildExistsError as e:
-        log.exception("build exists")
+        logger.exception("build exists")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Build already exists"
         ) from e
     except Exception as e:
-        log.exception("unexpected error")
+        logger.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
@@ -99,13 +99,13 @@ async def get_builds_status(
     all: bool,
     from_backend: bool = False,
 ) -> list[BuildEntry]:
-    log.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
+    logger.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
 
     owner = user.email if not all else None
     try:
         return await tracker.list(owner=owner, from_backend=from_backend)
     except Exception as e:
-        log.exception("unexpected error")
+        logger.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
@@ -119,17 +119,17 @@ async def delete_build_id(
     build_id: str,
     force: bool = False,
 ) -> bool:
-    log.debug(f"abort task '{build_id}'")
+    logger.debug(f"abort task '{build_id}'")
 
     try:
         await tracker.abort_build(build_id, user.email, force)
     except UnauthorizedTrackerError as e:
-        log.exception(f"unable to abort build '{build_id}'")
+        logger.exception(f"unable to abort build '{build_id}'")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
         ) from e
     except Exception as e:
-        log.exception("unexpected error")
+        logger.exception("unexpected error")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",

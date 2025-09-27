@@ -13,7 +13,7 @@
 
 from typing import override
 
-from cbslib.logger import log as parent_logger
+from cbslib.logger import logger as parent_logger
 from ceslib.errors import CESError
 
 
@@ -32,4 +32,4 @@ class AuthNoSuchUserError(AuthError):
         super().__init__(f"no such user '{user}'")
 
 
-log = parent_logger.getChild("auth")
+logger = parent_logger.getChild("auth")

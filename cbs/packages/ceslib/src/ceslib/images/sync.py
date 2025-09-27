@@ -13,11 +13,11 @@
 
 from ceslib.errors import CESError, UnknownRepositoryError
 from ceslib.images import get_image_tag, skopeo
-from ceslib.images import log as parent_logger
+from ceslib.images import logger as parent_logger
 from ceslib.images.errors import MissingTagError
 from ceslib.utils.secrets import SecretsVaultMgr
 
-log = parent_logger.getChild("sync")
+logger = parent_logger.getChild("sync")
 
 
 def sync_image(
@@ -28,24 +28,24 @@ def sync_image(
     force: bool = False,
     dry_run: bool = False,
 ) -> None:
-    log.debug(f"sync image from '{src}' to '{dst}'")
+    logger.debug(f"sync image from '{src}' to '{dst}'")
     src_tag = get_image_tag(src)
     dst_tag = get_image_tag(dst)
 
     if src_tag is None:
-        log.error(f"missing tag for source image '{src}'")
+        logger.error(f"missing tag for source image '{src}'")
         raise MissingTagError(for_what=src)
     if dst_tag is None:
-        log.debug(f"missing tag for dest image '{dst}', assume '{src_tag}'")
+        logger.debug(f"missing tag for dest image '{dst}', assume '{src_tag}'")
         dst_tag = src_tag
 
     try:
         res_src = skopeo.skopeo_get_tags(src)
     except UnknownRepositoryError as e:
-        log.exception("unable to obtain information for source repository")
+        logger.exception("unable to obtain information for source repository")
         raise e  # noqa: TRY201
     except Exception as e:
-        log.exception("unknown error")
+        logger.exception("unknown error")
         raise e  # noqa: TRY201
 
     missing_dst_repo = False
@@ -55,31 +55,31 @@ def sync_image(
     except UnknownRepositoryError:
         missing_dst_repo = True
     except Exception as e:
-        log.exception("unknown error")
+        logger.exception("unknown error")
         raise e  # noqa: TRY201
 
     if src_tag not in res_src.tags:
-        log.error(f"error: missing source tag '{src_tag}' for '{src}'")
+        logger.error(f"error: missing source tag '{src_tag}' for '{src}'")
         raise MissingTagError(tag=src_tag, for_what=src)
 
     if not missing_dst_repo and not force:
         assert res_dst is not None
         if dst_tag in res_dst.tags:
-            log.debug(f"nothing to do for tag '{dst_tag}' for '{dst}'")
+            logger.debug(f"nothing to do for tag '{dst_tag}' for '{dst}'")
             return
 
-    log.debug(f"copying '{src}' to '{dst}")
+    logger.debug(f"copying '{src}' to '{dst}")
     try:
         if not dry_run:
-            log.debug(f"copy '{src}' to '{dst}'")
+            logger.debug(f"copy '{src}' to '{dst}'")
             skopeo.skopeo_copy(src, dst, secrets)
         else:
-            log.debug("not copying, dry run specified")
+            logger.debug("not copying, dry run specified")
     except CESError as e:
-        log.exception(f"error copying image '{src}' to '{dst}'")
+        logger.exception(f"error copying image '{src}' to '{dst}'")
         raise e  # noqa: TRY201
     except Exception as e:
-        log.exception("unknown error")
+        logger.exception("unknown error")
         raise e  # noqa: TRY201
 
-    log.debug(f"copied image from '{src}' to '{dst}'")
+    logger.debug(f"copied image from '{src}' to '{dst}'")

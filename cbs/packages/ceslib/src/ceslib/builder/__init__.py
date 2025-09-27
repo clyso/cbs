@@ -14,9 +14,9 @@
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 
-log = root_logger.getChild("builder")
+logger = root_logger.getChild("builder")
 
 
 class BuilderError(CESError):

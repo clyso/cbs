@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ceslib.containers import ContainerError, find_path_relative_to
-from ceslib.containers import log as parent_logger
+from ceslib.containers import logger as parent_logger
 from ceslib.containers.desc import ContainerDescriptor
 from ceslib.utils.buildah import BuildahContainer, BuildahError
 from ceslib.versions.utils import (
@@ -26,7 +26,7 @@ from ceslib.versions.utils import (
     normalize_version,
 )
 
-log = parent_logger.getChild("component")
+logger = parent_logger.getChild("component")
 
 
 def _get_container_desc(
@@ -37,10 +37,10 @@ def _get_container_desc(
 ) -> tuple[Path, ContainerDescriptor]:
     def _find_container_yaml() -> Path | None:
         ver = normalize_version(version)
-        log.debug(f"find container.yaml for '{ver}'")
+        logger.debug(f"find container.yaml for '{ver}'")
 
         candidates = list(component_path.rglob("container.yaml"))
-        log.debug(f"candidates: {candidates}")
+        logger.debug(f"candidates: {candidates}")
 
         for c in reversed(candidates):
             p = c.parent
@@ -59,10 +59,10 @@ def _get_container_desc(
             f"unable to find container.yaml in '{component_path}' "
             + f"for version '{version}'"
         )
-        log.error(msg)
+        logger.error(msg)
         raise ContainerError(msg)
 
-    log.debug(
+    logger.debug(
         f"found container.yaml for '{component_path}' "
         + f"version '{version}' at '{container_yaml}'"
     )
@@ -71,7 +71,7 @@ def _get_container_desc(
         return (container_yaml, ContainerDescriptor.load(container_yaml, vars=vars))
     except ContainerError as e:
         msg = f"error loading container.yaml from '{container_yaml}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ContainerError(msg) from e
 
 
@@ -106,7 +106,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error importing key '{key}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise ContainerError(msg) from e
 
         # install required packages
@@ -133,7 +133,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing PRE packages: {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise ContainerError(msg) from e
 
         # then install packages from URLs
@@ -144,7 +144,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing RPM package '{package}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise ContainerError(msg) from e
 
         # install repositories, if any
@@ -157,7 +157,7 @@ class ComponentContainer:
                     )
                 except (ContainerError, Exception) as e:
                     msg = f"error installing repository '{repo.name}': {e}"
-                    log.exception(msg)
+                    logger.exception(msg)
                     raise ContainerError(msg) from e
         pass
 
@@ -165,7 +165,7 @@ class ComponentContainer:
         packages: list[str] = []
         for package_section in self.desc.packages.required:
             lst = package_section.packages
-            log.debug(
+            logger.debug(
                 f"get {len(lst)} packages from section '{package_section.section}'"
             )
             packages.extend(lst)
@@ -174,7 +174,7 @@ class ComponentContainer:
             # TODO: ignore optional for now
             pass
 
-        log.debug(f"got {len(packages)} packages")
+        logger.debug(f"got {len(packages)} packages")
         return packages
 
     async def apply_post(self, container: BuildahContainer) -> None:
@@ -183,10 +183,10 @@ class ComponentContainer:
                 entry.run, self.raw_container_path, self.component_path
             )
             if not p:
-                log.warning(f"unable to find script for '{entry.name}'")
+                logger.warning(f"unable to find script for '{entry.name}'")
                 continue
 
-            log.debug(f"run script '{entry.name}' from '{p}")
+            logger.debug(f"run script '{entry.name}' from '{p}")
             dest = f"/{p.name}"
 
             try:
@@ -195,14 +195,14 @@ class ComponentContainer:
                 await container.run(["rm", "-f", dest])
             except (BuildahError, Exception) as e:
                 msg = f"error running script '{entry.name}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise ContainerError(msg) from e
 
         pass
 
     async def apply_config(self, container: BuildahContainer) -> None:
         if not self.desc.config:
-            log.debug("no config to apply")
+            logger.debug("no config to apply")
             return
 
         env: dict[str, str] | None = None
@@ -217,7 +217,7 @@ class ComponentContainer:
             annotations = self.desc.config.annotations
 
         if not env and not labels and not annotations:
-            log.debug("empty config section")
+            logger.debug("empty config section")
             return
 
         await container.set_config(
