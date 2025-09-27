@@ -15,17 +15,18 @@ import re
 from pathlib import Path
 
 import pydantic
+
 from ceslib.errors import (
     MalformedVersionError,
     NoSuchVersionError,
 )
-from ceslib.images import log as parent_logger
+from ceslib.images import logger as parent_logger
 from ceslib.images.errors import (
     ImageDescriptorError,
 )
 from ceslib.utils.git import get_git_repo_root
 
-log = parent_logger.getChild("descriptors")
+logger = parent_logger.getChild("descriptors")
 
 
 class ImageLocations(pydantic.BaseModel):
@@ -53,14 +54,14 @@ async def get_image_desc(version: str) -> ImageDescriptor:
 
     desc_path = (await get_git_repo_root()).joinpath("desc")
     if not desc_path.exists():
-        log.error(f"descriptor directory not found at '{desc_path}'")
+        logger.error(f"descriptor directory not found at '{desc_path}'")
         raise NoSuchVersionError()
 
     for cur_path, dirs, file_lst in desc_path.walk(top_down=True):
-        log.debug(f"path: {cur_path}, dirs: {dirs}, files: {file_lst}")
+        logger.debug(f"path: {cur_path}, dirs: {dirs}, files: {file_lst}")
         candidates.extend(_gen_candidates(cur_path, file_lst))
 
-    log.debug(f"candidates: {candidates}")
+    logger.debug(f"candidates: {candidates}")
 
     desc: ImageDescriptor | None = None
     found_at: Path | None = None
@@ -69,19 +70,19 @@ async def get_image_desc(version: str) -> ImageDescriptor:
             desc_raw = candidate.read_text()
             desc = ImageDescriptor.model_validate_json(desc_raw)
         except Exception as e:
-            log.debug(f"error loading desc file: {e}")
+            logger.debug(f"error loading desc file: {e}")
             raise e  # noqa: TRY201
 
         if version in desc.releases:
             if found_at is not None:
-                log.error(
+                logger.error(
                     f"error: potential conflict for version {version} "
                     + f"between {found_at} and {candidate}"
                 )
                 raise ImageDescriptorError()
             found_at = candidate
             desc = desc
-            log.debug(f"found candidate at {found_at}")
+            logger.debug(f"found candidate at {found_at}")
 
     if found_at is not None:
         assert desc is not None

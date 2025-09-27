@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Annotated
 
 import pydantic
-from cbslib.logger import log as parent_logger
+from cbslib.logger import logger as parent_logger
 from ceslib.errors import CESError
 from fastapi import Depends
 
-log = parent_logger.getChild("config")
+logger = parent_logger.getChild("config")
 
 
 # google oauth2 client secrets config

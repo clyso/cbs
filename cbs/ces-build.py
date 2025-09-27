@@ -21,11 +21,11 @@ from pathlib import Path
 import click
 from ceslib.builder.builder import Builder
 from ceslib.errors import CESError
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 from ceslib.runner import RunnerError, runner
 from ceslib.versions.desc import VersionDescriptor
 
-log = root_logger.getChild("ces-build")
+logger = root_logger.getChild("ces-build")
 
 
 @click.group()
@@ -211,7 +211,7 @@ def build(
             )
         )
     except (RunnerError, Exception):
-        log.exception(f"error building '{desc_path}'")
+        logger.exception(f"error building '{desc_path}'")
         sys.exit(1)
 
 
@@ -352,22 +352,22 @@ def runner_build(
     skip_build: bool,
     force: bool,
 ) -> None:
-    log.debug(f"desc: {desc_path}")
-    log.debug(f"vault addr: {vault_addr}")
-    log.debug(f"vault role id: {vault_role_id}")
-    log.debug(f"vault transit: {vault_transit}")
-    log.debug(f"scratch dir: {scratch_dir}")
-    log.debug(f"secrets path: {secrets_path}")
-    log.debug(f"upload: {upload}")
-    log.debug(f"force: {force}")
+    logger.debug(f"desc: {desc_path}")
+    logger.debug(f"vault addr: {vault_addr}")
+    logger.debug(f"vault role id: {vault_role_id}")
+    logger.debug(f"vault transit: {vault_transit}")
+    logger.debug(f"scratch dir: {scratch_dir}")
+    logger.debug(f"secrets path: {secrets_path}")
+    logger.debug(f"upload: {upload}")
+    logger.debug(f"force: {force}")
 
     if not desc_path.exists():
-        log.error(f"build descriptor does not exist at '{desc_path}'")
+        logger.error(f"build descriptor does not exist at '{desc_path}'")
 
     try:
         desc = VersionDescriptor.read(desc_path)
     except CESError:
-        log.exception("unable to read descriptor")
+        logger.exception("unable to read descriptor")
         sys.exit(1)
 
     builder = Builder(
@@ -390,7 +390,7 @@ def runner_build(
         loop = asyncio.new_event_loop()
         loop.run_until_complete(builder.run())
     except Exception:
-        log.exception("unable to run build")
+        logger.exception("unable to run build")
         sys.exit(1)
 
 

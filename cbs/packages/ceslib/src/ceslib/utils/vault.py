@@ -21,10 +21,11 @@ from typing import override
 
 import hvac
 import hvac.exceptions
-from ceslib.errors import CESError
-from ceslib.utils import log as parent_logger
 
-log = parent_logger.getChild("vault")
+from ceslib.errors import CESError
+from ceslib.utils import logger as parent_logger
+
+logger = parent_logger.getChild("vault")
 
 
 class VaultError(CESError):
@@ -62,7 +63,7 @@ class Vault:
                 secret_id=self.secret_id,
                 use_token=True,
             )
-            log.debug("logged in to vault")
+            logger.debug("logged in to vault")
         except hvac.exceptions.Forbidden:
             raise VaultError(msg="permission denied logging in to vault") from None
         except Exception:
@@ -78,7 +79,7 @@ class Vault:
                     mount_point="ces-kv",
                     raise_on_deleted_version=False,
                 )
-                log.debug(f"obtained secret '{path}' from vault")
+                logger.debug(f"obtained secret '{path}' from vault")
         except hvac.exceptions.Forbidden:
             raise VaultError(msg="permission denied obtaining secret") from None
         except Exception as e:

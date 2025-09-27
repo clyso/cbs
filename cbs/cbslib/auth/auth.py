@@ -19,7 +19,7 @@ from typing import Annotated, cast
 import pydantic
 import pydantic_core
 import pyseto
-from cbslib.auth import log as parent_logger
+from cbslib.auth import logger as parent_logger
 from cbslib.config.server import get_config
 from fastapi import Depends, HTTPException, status
 from fastapi.security import (
@@ -27,7 +27,7 @@ from fastapi.security import (
     HTTPBearer,
 )
 
-log = parent_logger.getChild("auth")
+logger = parent_logger.getChild("auth")
 
 
 class CBSTokenInfo(pydantic.BaseModel):
@@ -93,7 +93,7 @@ def token_decode(token: _AuthToken) -> CBSTokenInfo:
     try:
         decoded_token = pyseto.decode(key, token)
     except Exception as e:
-        log.exception("error decoding token")
+        logger.exception("error decoding token")
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
         ) from e

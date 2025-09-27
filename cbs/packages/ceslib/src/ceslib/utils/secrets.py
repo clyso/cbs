@@ -32,12 +32,13 @@ from pathlib import Path
 from typing import override
 
 import pydantic
+
 from ceslib.errors import CESError
 from ceslib.utils import MaybeSecure, Password, SecureURL
-from ceslib.utils import log as parent_logger
+from ceslib.utils import logger as parent_logger
 from ceslib.utils.vault import Vault, VaultError
 
-log = parent_logger.getChild("secrets")
+logger = parent_logger.getChild("secrets")
 
 
 class SecretsError(CESError):
@@ -149,7 +150,7 @@ class SecretsVaultMgr:
             vault_addr, vault_role_id, vault_secret_id, transit=vault_transit
         )
         self.secrets = Secrets.read(secrets_path)
-        self.log = log.getChild("secrets-vault-mgr")
+        self.log = logger.getChild("secrets-vault-mgr")
 
     @contextmanager
     def git_url_for(self, url: str) -> Generator[MaybeSecure]:
@@ -335,7 +336,7 @@ Host {remote_name}
                 raise SecretsVaultError(msg) from e
 
             if p.returncode != 0:
-                log.error(
+                logger.error(
                     f"error importing gpg private key from '{pvt_key_file}': {p.stderr}"
                 )
                 raise SecretsVaultError(
@@ -352,7 +353,7 @@ Host {remote_name}
                 shutil.rmtree(keyring_path)
             except Exception as e:
                 msg = f"error cleaning up keyring at '{keyring_path}': {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise SecretsVaultError(msg) from e
 
     @contextmanager

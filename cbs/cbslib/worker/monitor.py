@@ -19,10 +19,10 @@ from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import pydantic
 from cbslib.builds.tracker import BuildsTracker
-from cbslib.logger import log as parent_logger
+from cbslib.logger import logger as parent_logger
 from cbslib.worker.celery import celery_app
 
-log = parent_logger.getChild("monitor")
+logger = parent_logger.getChild("monitor")
 
 # monitoring as seen in
 #   https://docs.celeryq.dev/en/stable/userguide/monitoring.html
@@ -102,7 +102,7 @@ def _with_tracker(
 
 
 async def _event_task_started(tracker: BuildsTracker, event: _EventTaskStarted) -> None:
-    log.info(f"task started: uuid = {event.uuid}, ts = {event.timestamp}")
+    logger.info(f"task started: uuid = {event.uuid}, ts = {event.timestamp}")
     await tracker.mark_started(
         event.uuid, dt.fromtimestamp(event.timestamp, datetime.UTC)
     )
@@ -111,14 +111,14 @@ async def _event_task_started(tracker: BuildsTracker, event: _EventTaskStarted) 
 async def _event_task_succeeded(
     tracker: BuildsTracker, event: _EventTaskSucceeded
 ) -> None:
-    log.info(f"task succeeded, uuid: {event.uuid}, runtime: {event.runtime}")
+    logger.info(f"task succeeded, uuid: {event.uuid}, runtime: {event.runtime}")
     await tracker.mark_succeeded(
         event.uuid, dt.fromtimestamp(event.timestamp, datetime.UTC)
     )
 
 
 async def _event_task_failed(tracker: BuildsTracker, event: _EventTaskFailed) -> None:
-    log.info(
+    logger.info(
         f"task failed, uuid: {event.uuid}, exception: {event.exception}, "
         + f"ts: {event.timestamp}"
     )
@@ -130,12 +130,12 @@ async def _event_task_failed(tracker: BuildsTracker, event: _EventTaskFailed) ->
 async def _event_task_rejected(
     tracker: BuildsTracker, event: _EventTaskRejected
 ) -> None:
-    log.info(f"task rejected, uuid: {event.uuid}")
+    logger.info(f"task rejected, uuid: {event.uuid}")
     await tracker.mark_rejected(event.uuid)
 
 
 async def _event_task_revoked(tracker: BuildsTracker, event: _EventTaskRevoked) -> None:
-    log.info(
+    logger.info(
         f"task revoked, uuid: {event.uuid}, terminated: {event.terminated}, "
         + f"signum: {event.signum}, expired: {event.expired}"
     )
@@ -167,6 +167,6 @@ def monitor(builds_tracker: BuildsTracker) -> None:
             )
             recv.capture(limit=None, timeout=None, wakeup=None)
     except Exception:
-        log.exception("error capturing events")
+        logger.exception("error capturing events")
         pass
     pass

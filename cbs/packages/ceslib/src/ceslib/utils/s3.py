@@ -17,10 +17,11 @@ from typing import override
 
 import aioboto3
 import pydantic
-from ceslib.errors import CESError
-from ceslib.utils import log as parent_logger
-from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 from types_aiobotocore_s3.service_resource import S3ServiceResource
+
+from ceslib.errors import CESError
+from ceslib.utils import logger as parent_logger
+from ceslib.utils.secrets import SecretsVaultError, SecretsVaultMgr
 
 
 class S3Error(CESError):
@@ -65,7 +66,7 @@ class S3ListResult(pydantic.BaseModel):
 _UPLOAD_BUCKET = "ces-packages"
 
 
-log = parent_logger.getChild("s3")
+logger = parent_logger.getChild("s3")
 
 
 async def s3_upload_str_obj(
@@ -83,10 +84,10 @@ async def s3_upload_str_obj(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise S3Error(msg) from e
 
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
+    logger.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
     s3_session = aioboto3.Session(
         aws_access_key_id=access_id,
@@ -106,7 +107,7 @@ async def s3_upload_str_obj(
             )
         except Exception as e:
             msg = f"error uploading object to '{location}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise S3Error(msg) from e
 
 
@@ -124,10 +125,10 @@ async def s3_download_str_obj(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise S3Error(msg) from e
 
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
+    logger.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
     s3_session = aioboto3.Session(
         aws_access_key_id=access_id,
@@ -142,28 +143,28 @@ async def s3_download_str_obj(
         try:
             obj = await bucket.Object(location)
         except s3.meta.client.exceptions.NoSuchKey:
-            log.debug(f"object '{location}' not found")
+            logger.debug(f"object '{location}' not found")
             return None
         except Exception as e:
             msg = f"error downloading string object from '{location}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise S3Error(msg) from e
 
         try:
             obj_content_type = await obj.content_type
         except s3.meta.client.exceptions.ClientError as e:
-            log.error(f"client error: {e.response}")
+            logger.error(f"client error: {e.response}")
             if (
                 "ResponseMetadata" in e.response
                 and e.response["ResponseMetadata"]["HTTPStatusCode"] == 404
             ):
-                log.debug(f"object '{location}' not found")
+                logger.debug(f"object '{location}' not found")
                 return None
             raise S3Error("foo") from None
 
         if content_type and obj_content_type != content_type:
             msg = f"unexpected content type '{obj_content_type}' for string object"
-            log.error(msg)
+            logger.error(msg)
             raise S3Error(msg)
 
         contents = await obj.get()
@@ -173,7 +174,7 @@ async def s3_download_str_obj(
             data = await body.read()
         except Exception as e:
             msg = f"error reading object string from '{location}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise S3Error(msg) from e
 
         return data.decode("utf-8")
@@ -203,7 +204,7 @@ async def _upload_file(
 
     extra_args = None if not public else {"ACL": "public-read"}
 
-    log.debug(f"uploading file '{file_loc.name}' to '{file_loc.dst}'")
+    logger.debug(f"uploading file '{file_loc.name}' to '{file_loc.dst}'")
     try:
         await bucket.upload_file(
             file_loc.src.as_posix(),
@@ -215,7 +216,7 @@ async def _upload_file(
             f"error uploading file '{file_loc.name}' from '{file_loc.src}' "
             + f"to '{file_loc.dst}': {e}"
         )
-        log.exception(msg)
+        logger.exception(msg)
         raise S3Error(msg) from e
 
 
@@ -227,10 +228,10 @@ async def s3_upload_files(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise S3Error(msg) from e
 
-    log.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
+    logger.debug(f"S3: hostname = {hostname}, access_id = {access_id}")
 
     s3_session = aioboto3.Session(
         aws_access_key_id=access_id,
@@ -246,11 +247,11 @@ async def s3_upload_files(
                 await _upload_file(s3, loc, public=public)
             except S3Error as e:
                 msg = f"error uploading file: {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise S3Error(msg) from e
             except Exception as e:
                 msg = f"unknown error uploading file: {e}"
-                log.exception(msg)
+                logger.exception(msg)
                 raise S3Error(msg) from e
 
 
@@ -275,7 +276,7 @@ async def s3_list(
         hostname, access_id, secret_id = secrets.s3_creds()
     except SecretsVaultError as e:
         msg = f"error obtaining S3 credentials: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise S3Error(msg) from e
 
     s3_session = aioboto3.Session(
@@ -296,11 +297,11 @@ async def s3_list(
     async with (
         s3_session.client("s3", endpoint_url=hostname) as s3_client,
     ):
-        log.debug(f"listing objects for bucket '{_UPLOAD_BUCKET}")
+        logger.debug(f"listing objects for bucket '{_UPLOAD_BUCKET}")
 
         continuation_token = ""
         while True:
-            log.debug(f"listing objects, continuation_token: '{continuation_token}'")
+            logger.debug(f"listing objects, continuation_token: '{continuation_token}'")
             res = await s3_client.list_objects_v2(
                 Bucket=_UPLOAD_BUCKET,
                 Prefix=prefix if prefix else "",
@@ -315,13 +316,13 @@ async def s3_list(
                     if p:
                         common_prefixes.add(p)
 
-            log.debug(f"found common_prefixes: {common_prefixes}")
+            logger.debug(f"found common_prefixes: {common_prefixes}")
 
             objs = res.get("Contents")
             if not objs:
                 break
 
-            log.debug(f"found objects: {len(objs)}")
+            logger.debug(f"found objects: {len(objs)}")
 
             for obj_entry in objs:
                 key = obj_entry.get("Key")

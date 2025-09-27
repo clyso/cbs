@@ -19,7 +19,7 @@ from copy import deepcopy
 from typing import Any
 
 import uvicorn.config
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -132,4 +132,4 @@ def setup_logging() -> None:
 
 # application logger
 #
-log = root_logger.getChild("cbs")
+logger = root_logger.getChild("cbs")

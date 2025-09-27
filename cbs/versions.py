@@ -22,7 +22,7 @@ from pathlib import Path
 import click
 from ceslib.errors import CESError, NoSuchVersionError
 from ceslib.images.desc import get_image_desc
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 from ceslib.releases import ReleaseError
 from ceslib.releases.s3 import list_releases
 from ceslib.utils.git import GitError, get_git_repo_root, get_git_user
@@ -31,7 +31,7 @@ from ceslib.utils.vault import VaultError
 from ceslib.versions.create import VersionType, component_repos, create
 from ceslib.versions.errors import VersionError
 
-log = root_logger.getChild("builds")
+logger = root_logger.getChild("builds")
 
 
 @click.group()
@@ -123,7 +123,7 @@ async def _list(
     verbose: bool,
 ) -> None:
     """List releases from S3."""
-    log.info("listing s3 objects")
+    logger.info("listing s3 objects")
 
     try:
         releases = await list_releases(secrets)
@@ -323,7 +323,7 @@ def list_versions(
             vault_transit=None,
         )
     except VaultError:
-        log.exception("error logging in to vault")
+        logger.exception("error logging in to vault")
         sys.exit(1)
 
     asyncio.run(_list(secrets, verbose))

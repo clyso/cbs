@@ -16,9 +16,9 @@ from typing import override
 from ceslib.errors import CESError
 
 from . import CmdArgs, async_run_cmd
-from . import log as parent_logger
+from . import logger as parent_logger
 
-log = parent_logger.getChild("podman")
+logger = parent_logger.getChild("podman")
 
 
 class PodmanError(CESError):
@@ -84,11 +84,11 @@ async def podman_run(
         cmd.extend(args)
 
     def cb(s: str) -> None:
-        log.debug(s)
+        logger.debug(s)
 
     rc, stdout, stderr = await async_run_cmd(cmd, timeout=timeout, outcb=cb)
     if rc != 0:
-        log.error(f"running podman: {stderr} ({rc})")
+        logger.error(f"running podman: {stderr} ({rc})")
     return rc, stdout, stderr
 
 
@@ -99,4 +99,4 @@ async def podman_stop(*, name: str | None = None, timeout: int = 1) -> None:
 
     rc, _, stderr = await async_run_cmd(cmd)
     if rc != 0:
-        log.error(f"error stopping container: {stderr}")
+        logger.error(f"error stopping container: {stderr}")

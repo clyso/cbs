@@ -15,7 +15,7 @@ import enum
 import re
 from typing import cast
 
-from ceslib.logger import log as parent_logger
+from ceslib.logger import logger as parent_logger
 from ceslib.versions.desc import (
     VersionComponent,
     VersionDescriptor,
@@ -24,7 +24,7 @@ from ceslib.versions.desc import (
 )
 from ceslib.versions.errors import VersionError
 
-log = parent_logger.getChild("versions_create")
+logger = parent_logger.getChild("versions_create")
 
 
 class _Prios(enum.Enum):
@@ -75,25 +75,25 @@ def _parse_types(version_types: list[str]) -> list[tuple[str, int]]:
         res = _obtain_type(t)
         if res is None:
             msg = f"malformed version type '{t}'"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
 
         rel_entry = _release_types.get(res[0], None)
         if rel_entry is None:
             msg = f"unknown version type '{res[0]}'"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
 
         rel_idx, _ = rel_entry
         if highest_index > rel_idx:
             msg = f"malformed type sequence: '{res[0]}' must come after '{types_lst}'"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
         highest_index = rel_idx
 
         if res[0] in found_types:
             msg = f"multiple types '{res[0]}' found in provided types"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
         found_types.append(res[0])
 
@@ -109,7 +109,7 @@ def _parse_components(components: list[str]) -> dict[str, str]:
         m = re.match(r"^([\w_-]+)@([\d\w_.-]+)$", c)
         if not m:
             msg = f"malformed component name/version pair '{c}'"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
         comps[m.group(1)] = m.group(2)
 
@@ -124,7 +124,7 @@ def _parse_component_overrides(overrides: list[str]) -> dict[str, str]:
         m = re.match(regex, override)
         if not m:
             msg = f"malformed component override '{override}'"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
         override_map[m.group(1)] = m.group(2)
 
@@ -167,7 +167,7 @@ def create(
 ) -> tuple[VersionType, VersionDescriptor]:
     if not _validate_version(version):
         msg = f"malformed version '{version}'"
-        log.error(msg)
+        logger.error(msg)
         raise VersionError(msg)
 
     types_lst = _parse_types(version_types)
@@ -176,20 +176,20 @@ def create(
     components_map = _parse_components(components)
     if len(components_map) == 0:
         msg = "missing valid components"
-        log.error(msg)
+        logger.error(msg)
         raise VersionError(msg)
 
     for c in components_map:
         if c not in component_repos:
             msg = f"unknown component '{c}' specified"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
 
     component_overrides_map = _parse_component_overrides(component_overrides)
     for c in component_overrides_map:
         if c not in components_map:
             msg = f"missing component '{c}' for override"
-            log.error(msg)
+            logger.error(msg)
             raise VersionError(msg)
 
     version_types_str = "-".join([f"{t}.{n}" for t, n in types_lst])
@@ -201,10 +201,10 @@ def create(
         f", {version_types_title}" if version_types_title else ""
     )
 
-    log.debug(f"version types: {version_types_str}")
-    log.debug(f"version str: {version_str}")
-    log.debug(f"version types title: {version_types_title}")
-    log.debug(f"version title: {version_title}")
+    logger.debug(f"version types: {version_types_str}")
+    logger.debug(f"version str: {version_str}")
+    logger.debug(f"version types title: {version_types_title}")
+    logger.debug(f"version title: {version_title}")
 
     component_res: list[VersionComponent] = []
     for comp_name, comp_version in components_map.items():

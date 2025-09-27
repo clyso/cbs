@@ -14,14 +14,14 @@
 from pathlib import Path
 
 from ceslib.builder import BuilderError, MissingScriptError
-from ceslib.builder import log as parent_logger
+from ceslib.builder import logger as parent_logger
 from ceslib.utils import CmdArgs, CommandError, async_run_cmd
 from ceslib.utils.paths import (
     get_component_scripts_path,
     get_script_path,
 )
 
-log = parent_logger.getChild("utils")
+logger = parent_logger.getChild("utils")
 
 
 async def get_component_version(
@@ -44,13 +44,13 @@ async def get_component_version(
             f"unable to find scripts path for component '{component_name}' "
             + f"under '{components_path}"
         )
-        log.error(msg)
+        logger.error(msg)
         raise BuilderError(msg)
 
     version_script_path = get_script_path(scripts_path, "get_version.*")
     if not version_script_path:
         msg = f"unable to find 'get_version' script for component '{component_name}'"
-        log.error(msg)
+        logger.error(msg)
         raise MissingScriptError("get_version", msg=msg)
 
     cmd: CmdArgs = [
@@ -61,16 +61,16 @@ async def get_component_version(
         rc, stdout, stderr = await async_run_cmd(cmd, cwd=repo_path)
     except CommandError as e:
         msg = f"error running version script for '{component_name}': {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
     except Exception as e:
         msg = f"unknown exception running version script for '{component_name}: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     if rc != 0:
         msg = f"error running version script for '{component_name}': {stderr}"
-        log.error(msg)
+        logger.error(msg)
         raise BuilderError(msg)
 
     return stdout.strip()

@@ -14,8 +14,9 @@
 import asyncio
 
 import pydantic
+
 from ceslib.releases import ReleaseError
-from ceslib.releases import log as parent_logger
+from ceslib.releases import logger as parent_logger
 from ceslib.releases.desc import ReleaseComponent, ReleaseDesc
 from ceslib.utils.s3 import (
     S3Error,
@@ -26,7 +27,7 @@ from ceslib.utils.s3 import (
 )
 from ceslib.utils.secrets import SecretsVaultMgr
 
-log = parent_logger.getChild("s3")
+logger = parent_logger.getChild("s3")
 
 RELEASES_S3_PATH = "releases"
 _RELEASES_COMPONENT_S3_PATH = f"{RELEASES_S3_PATH}/components"
@@ -36,7 +37,7 @@ async def release_desc_upload(
     secrets: SecretsVaultMgr, release_desc: ReleaseDesc
 ) -> None:
     """Upload a release descriptor to S3."""
-    log.debug(f"upload release desc for version '{release_desc.version}' to S3")
+    logger.debug(f"upload release desc for version '{release_desc.version}' to S3")
     desc_json = release_desc.model_dump_json(indent=2)
     location = f"{RELEASES_S3_PATH}/{release_desc.version}.json"
     try:
@@ -46,14 +47,14 @@ async def release_desc_upload(
             f"error uploading release desc for version '{release_desc.version}' "
             + f"to '{location}': {e}"
         )
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
     except Exception as e:
         msg = (
             "unknown error uploading release desc for version "
             + f"'{release_desc.version}' to '{location}': {e}"
         )
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
 
 
@@ -62,7 +63,7 @@ async def release_upload_components(
     component_releases: dict[str, ReleaseComponent],
 ) -> None:
     """Upload component release descriptors to S3, in parallel."""
-    log.info(f"upload release for components '{component_releases.keys()}' to S3")
+    logger.info(f"upload release for components '{component_releases.keys()}' to S3")
 
     async def _put_component(comp_rel: ReleaseComponent) -> str:
         """Write a component's release descriptor to S3."""
@@ -78,7 +79,7 @@ async def release_upload_components(
                 f"error uploading component release desc for '{comp_rel.name}' "
                 + f"to '{location}': {e}"
             )
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from e
         return location
 
@@ -89,29 +90,29 @@ async def release_upload_components(
                 for name, rel in component_releases.items()
             }
     except ExceptionGroup as e:
-        log.error("error uploading release descriptors for components:")  # noqa: TRY400
+        logger.error("error uploading release descriptors for components:")
         excs = e.subgroup(ReleaseError)
         if excs is not None:
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         raise ReleaseError(msg="error uploading release descriptors") from e
 
     for name, task in task_dict.items():
-        log.debug(f"uploaded '{name}' to '{task.result()}'")
+        logger.debug(f"uploaded '{name}' to '{task.result()}'")
 
 
 async def check_release_exists(
     secrets: SecretsVaultMgr, version: str
 ) -> ReleaseDesc | None:
     """Check whether a given release version exists in S3."""
-    log.debug(f"check if release '{version}' already exists in S3")
+    logger.debug(f"check if release '{version}' already exists in S3")
 
     location = f"{RELEASES_S3_PATH}/{version}.json"
     try:
         data = await s3_download_json(secrets, location)
     except ReleaseError as e:
         msg = f"error checking if release '{version}' exists: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
 
     if not data:
@@ -121,11 +122,11 @@ async def check_release_exists(
         return ReleaseDesc.model_validate_json(data)
     except pydantic.ValidationError:
         msg = f"invalid release data from '{location}'"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from None
     except Exception as e:
         msg = f"unknown exception validating release data: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg) from e
 
 
@@ -143,7 +144,7 @@ async def check_released_components(
     It's the caller's responsibility to decide whether a component should be built
     or not, regardless of it existing.
     """
-    log.debug("check if components exist in S3")
+    logger.debug("check if components exist in S3")
 
     async def _get_component(name: str, long_version: str) -> ReleaseComponent | None:
         """Obtain `ReleaseComponent` from S3, if available."""
@@ -155,7 +156,7 @@ async def check_released_components(
                 f"error checking if component '{name}' "
                 + f"version '{long_version}' exists in S3: {e}"
             )
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from e
 
         if not data:
@@ -165,11 +166,11 @@ async def check_released_components(
             return ReleaseComponent.model_validate_json(data)
         except pydantic.ValidationError:
             msg = f"invalid component release data from '{location}'"
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from None
         except Exception as e:
             msg = f"unknown error validating component release data: {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from e
 
     try:
@@ -179,11 +180,11 @@ async def check_released_components(
                 for name, long_version in components.items()
             }
     except ExceptionGroup as e:
-        log.error("error checking released components:")  # noqa: TRY400
+        logger.error("error checking released components:")
         excs = e.subgroup(ReleaseError)
         if excs is not None:
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         raise ReleaseError(msg="error checking released components") from e
 
     existing: dict[str, ReleaseComponent] = {}
@@ -191,7 +192,7 @@ async def check_released_components(
         res = task.result()
         if not res:
             continue
-        log.debug(f"component '{name}' release exists, s3 loc: {res.loc}")
+        logger.debug(f"component '{name}' release exists, s3 loc: {res.loc}")
         existing[name] = res
 
     return existing
@@ -205,13 +206,13 @@ async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
         )
     except S3Error as e:
         msg = "error obtaining release objects"
-        log.exception(msg)
+        logger.exception(msg)
         raise ReleaseError(msg=f"{msg}: {e}") from e
 
     releases: dict[str, ReleaseDesc] = {}
     for entry in res.objects:
         if not entry.name.endswith(".json"):
-            log.debug(f"skipping '{entry.key}', not JSON")
+            logger.debug(f"skipping '{entry.key}', not JSON")
             continue
 
         try:
@@ -220,7 +221,7 @@ async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
             raw_json = await s3_download_str_obj(secrets, entry.key, content_type=None)
         except S3Error as e:
             msg = "error obtaining JSON object"
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg=f"{msg}: {e}") from e
 
         if not raw_json:
@@ -230,7 +231,7 @@ async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
             release_desc = ReleaseDesc.model_validate_json(raw_json)
         except pydantic.ValidationError:
             msg = "malformed or old JSON format for release descriptor"
-            log.error(msg)  # noqa: TRY400
+            logger.error(msg)
             continue
 
         releases[release_desc.version] = release_desc

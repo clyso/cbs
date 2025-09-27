@@ -16,11 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pydantic
+
 from ceslib.releases import ReleaseError
-from ceslib.releases import log as parent_logger
+from ceslib.releases import logger as parent_logger
 from ceslib.releases.utils import get_component_release_rpm
 
-log = parent_logger.getChild("desc")
+logger = parent_logger.getChild("desc")
 
 
 class ReleaseComponent(pydantic.BaseModel):
@@ -67,11 +68,11 @@ class ReleaseDesc(pydantic.BaseModel):
 
         except pydantic.ValidationError as e:
             msg = f"error loading container descriptor at '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from e
         except Exception as e:
             msg = f"unknown error loading descriptor at '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ReleaseError(msg) from e
 
 
@@ -96,7 +97,7 @@ async def release_component_desc(
             + f"for '{component_name}', "
             + f"el version: {build_el_version}"
         )
-        log.error(msg)
+        logger.error(msg)
         return None
 
     return ReleaseComponent(

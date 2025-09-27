@@ -23,9 +23,9 @@ from pathlib import Path
 from typing import override
 
 from ceslib.errors import CESError
-from ceslib.logger import log as root_logger
+from ceslib.logger import logger as root_logger
 
-log = root_logger.getChild("utils")
+logger = root_logger.getChild("utils")
 
 
 class CommandError(CESError):
@@ -154,15 +154,15 @@ def get_unsecured_cmd(orig: CmdArgs) -> list[str]:
 
 
 def run_cmd(cmd: CmdArgs, env: dict[str, str] | None = None) -> tuple[int, str, str]:
-    log.debug(f"sync run '{_sanitize_cmd(cmd)}'")
+    logger.debug(f"sync run '{_sanitize_cmd(cmd)}'")
     try:
         p = subprocess.run(get_unsecured_cmd(cmd), env=env, capture_output=True)  # noqa: S603
     except OSError as e:
-        log.exception(f"error running '{_sanitize_cmd(cmd)}'")
+        logger.exception(f"error running '{_sanitize_cmd(cmd)}'")
         raise CESError() from e
 
     if p.returncode != 0:
-        log.error(
+        logger.error(
             f"error running '{_sanitize_cmd(cmd)}': "
             + f"retcode = {p.returncode}, res: {p.stderr}"
         )
@@ -172,18 +172,18 @@ def run_cmd(cmd: CmdArgs, env: dict[str, str] | None = None) -> tuple[int, str, 
 
 
 def _reset_python_env(env: dict[str, str]) -> dict[str, str]:
-    log.debug("reset python env for command")
+    logger.debug("reset python env for command")
 
     python3_loc = shutil.which("python3")
     if not python3_loc:
         print("python3 executable not found")
         return env
 
-    log.debug(f"python3 location: {python3_loc}")
+    logger.debug(f"python3 location: {python3_loc}")
 
     python3_path = Path(python3_loc)
     if python3_path.parent.full_match("/usr/bin"):
-        log.debug("nothing to do to python3 path")
+        logger.debug("nothing to do to python3 path")
         return env
 
     orig_path = env.get("PATH")
@@ -209,7 +209,7 @@ async def async_run_cmd(
     reset_python_env: bool = False,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    log.debug(f"async run '{_sanitize_cmd(cmd)}'")
+    logger.debug(f"async run '{_sanitize_cmd(cmd)}'")
 
     env: dict[str, str] = os.environ.copy()
     if reset_python_env:
@@ -228,7 +228,7 @@ async def async_run_cmd(
     assert p.stdout
     assert p.stderr
 
-    log.debug(f"env path: {os.environ['PATH']}")
+    logger.debug(f"env path: {os.environ['PATH']}")
 
     try:
         stdout, stderr = await asyncio.gather(
@@ -239,7 +239,7 @@ async def async_run_cmd(
         # attempt to kill the process, if possible. Some states may prevent it from
         # being killed.
         p.kill()
-        log.exception(f"running exceeded timeout ({timeout} secs)")
+        logger.exception(f"running exceeded timeout ({timeout} secs)")
         raise CommandError(msg="timeout exceeded") from None
 
     return retcode, stdout, stderr

@@ -16,13 +16,13 @@ import shutil
 from pathlib import Path
 
 from ceslib.builder import BuilderError
-from ceslib.builder import log as parent_logger
+from ceslib.builder import logger as parent_logger
 from ceslib.builder.rpmbuild import ComponentBuild
 from ceslib.utils import CommandError, async_run_cmd
 from ceslib.utils.s3 import S3Error, S3FileLocator, s3_upload_files
 from ceslib.utils.secrets import SecretsVaultMgr
 
-log = parent_logger.getChild("upload")
+logger = parent_logger.getChild("upload")
 
 
 class S3ComponentLocation:
@@ -68,16 +68,16 @@ async def _get_repo(
             _ = await async_run_cmd(["createrepo", p.resolve().as_posix()])
         except CommandError as e:
             msg = f"error creating repodata at '{repodata_path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
         except Exception as e:
             msg = f"unknown error creating repodata at '{repodata_path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise BuilderError(msg) from e
 
         if not repodata_path.exists() or not repodata_path.is_dir():
             msg = f"unexpected missing repodata dir at '{repodata_path}'"
-            log.error(msg)
+            logger.error(msg)
             raise BuilderError(msg)
 
         return repodata_path
@@ -129,13 +129,13 @@ async def _upload_component_rpms(
     to_upload.extend(await _get_repo(path_to_srpms, s3_base_dst, path_to_srpms.parent))
 
     for rpm in to_upload:
-        log.debug(f"{rpm.name}\n-> SRC: {rpm.src}\n=> DST: {rpm.dst}")
+        logger.debug(f"{rpm.name}\n-> SRC: {rpm.src}\n=> DST: {rpm.dst}")
 
     try:
         await s3_upload_files(secrets, to_upload, public=True)
     except S3Error as e:
         msg = f"error uploading rpms: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     return s3_base_dst
@@ -159,17 +159,17 @@ async def s3_upload_rpms(
     except ExceptionGroup as e:
         excs = e.subgroup(BuilderError)
         if excs is not None:
-            log.error("error uploading components RPMs:")  # noqa: TRY400
+            logger.error("error uploading components RPMs:")
             for exc in excs.exceptions:
-                log.error(f"- {exc}")  # noqa: TRY400
+                logger.error(f"- {exc}")
         else:
-            log.error(f"unexpected error uploading RPMs: {e}")  # noqa: TRY400
+            logger.error(f"unexpected error uploading RPMs: {e}")
 
         raise BuilderError(msg=f"error uploading component RPMs: {e}") from e
 
     except Exception as e:
         msg = f"unexpected error uploading RPMs: {e}"
-        log.exception(msg)
+        logger.exception(msg)
         raise BuilderError(msg) from e
 
     s3_comp_loc: dict[str, S3ComponentLocation] = {}
@@ -178,5 +178,5 @@ async def s3_upload_rpms(
         s3_comp_loc[comp_name] = S3ComponentLocation(
             comp_name, components[comp_name].version, s3_loc
         )
-        log.info(f"uploaded '{comp_name}' to '{s3_loc}'")
+        logger.info(f"uploaded '{comp_name}' to '{s3_loc}'")
     return s3_comp_loc

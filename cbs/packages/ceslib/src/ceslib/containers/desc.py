@@ -25,10 +25,11 @@ from typing import Annotated, Any
 
 import pydantic
 import yaml
-from ceslib.containers import ContainerError, repos
-from ceslib.containers import log as parent_logger
 
-log = parent_logger.getChild("descriptor")
+from ceslib.containers import ContainerError, repos
+from ceslib.containers import logger as parent_logger
+
+logger = parent_logger.getChild("descriptor")
 
 
 class ContainerPre(pydantic.BaseModel):
@@ -94,9 +95,9 @@ class ContainerDescriptor(pydantic.BaseModel):
 
         except (yaml.YAMLError, pydantic.ValidationError) as e:
             msg = f"error loading container descriptor at '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ContainerError(msg) from None
         except Exception as e:
             msg = f"unknown error loading descriptor at '{path}': {e}"
-            log.exception(msg)
+            logger.exception(msg)
             raise ContainerError(msg) from e

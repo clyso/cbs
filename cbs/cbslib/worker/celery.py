@@ -28,14 +28,14 @@ celery_app = Celery(
     include=["cbslib.worker.tasks"],
 )
 
-log = celery_app.log.get_default_logger(__name__)
+logger = celery_app.log.get_default_logger(__name__)
 
 
 def _init() -> None:
     try:
         config = config_init()
     except (CESError, Exception):
-        log.exception("unable to init config")
+        logger.exception("unable to init config")
         sys.exit(1)
 
     celery_app.conf.broker_url = config.worker.broker_url

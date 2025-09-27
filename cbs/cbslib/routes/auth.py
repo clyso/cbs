@@ -22,20 +22,20 @@ from cbslib.auth import AuthError
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
 from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB, User
 from cbslib.config.user import CBSUserConfig
-from cbslib.routes import log as parent_logger
+from cbslib.routes import logger as parent_logger
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-log = parent_logger.getChild("auth")
+logger = parent_logger.getChild("auth")
 
 router = APIRouter(prefix="/auth")
 
 
 @router.get("/login")
 async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
-    log.debug(f"req base url: {req.base_url}")
+    logger.debug(f"req base url: {req.base_url}")
     redirect_uri = req.url_for("auth_callback")  # takes function name
-    log.debug(f"redirect uri: {redirect_uri}")
+    logger.debug(f"redirect uri: {redirect_uri}")
     redirect_uri_str = str(redirect_uri)
 
     google = cast(oauth.oauth2_client_cls, oauth.google)
@@ -43,14 +43,14 @@ async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
         redirect_uri_str,
         access_type="offline",
     )
-    log.debug(f"auth uri: {auth_uri}")
+    logger.debug(f"auth uri: {auth_uri}")
     await google.save_authorize_data(
         req,
         redirect_uri=redirect_uri_str,
         **auth_uri,  # pyright: ignore[reportUnknownArgumentType]
     )
 
-    log.debug(f"session: {req.session}")
+    logger.debug(f"session: {req.session}")
 
     return RedirectResponse(
         auth_uri["url"],  # pyright: ignore[reportUnknownArgumentType]
@@ -66,17 +66,17 @@ async def auth_callback(
     try:
         token = await google.authorize_access_token(req)
     except Exception as e:
-        log.exception("error authorizing access token")
+        logger.exception("error authorizing access token")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "unauthorized token") from e
 
-    log.debug(f"token: {token}")
+    logger.debug(f"token: {token}")
 
     try:
         user_info = oauth_google_user_info(
             token,  # pyright: ignore[reportUnknownArgumentType]
         )
     except AuthError as e:
-        log.exception("error obtaining google token")
+        logger.exception("error obtaining google token")
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "error obtaining user information"
         ) from e
@@ -95,7 +95,7 @@ async def auth_callback(
 
 @router.get("/whoami")
 async def auth_whoami(user: CBSAuthUser) -> User:
-    log.debug(f"auth token info: {user}")
+    logger.debug(f"auth token info: {user}")
     return user
 
 
