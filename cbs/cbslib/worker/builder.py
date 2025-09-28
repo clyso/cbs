@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import override
 
 import pydantic
+from cbscore.runner import gen_run_name, runner, stop
+from cbscore.versions.desc import VersionDescriptor
 from cbslib.config.server import Config, get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger
-from ceslib.runner import gen_run_name, runner, stop
-from ceslib.versions.desc import VersionDescriptor
 
 logger = parent_logger.getChild("builder")
 

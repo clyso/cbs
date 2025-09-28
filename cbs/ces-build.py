@@ -19,11 +19,11 @@ import sys
 from pathlib import Path
 
 import click
-from ceslib.builder.builder import Builder
-from ceslib.errors import CESError
-from ceslib.logger import logger as root_logger
-from ceslib.runner import RunnerError, runner
-from ceslib.versions.desc import VersionDescriptor
+from cbscore.builder.builder import Builder
+from cbscore.errors import CESError
+from cbscore.logger import logger as root_logger
+from cbscore.runner import RunnerError, runner
+from cbscore.versions.desc import VersionDescriptor
 
 logger = root_logger.getChild("ces-build")
 

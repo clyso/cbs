@@ -6,7 +6,6 @@ authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
 requires-python = ">=3.13"
 dependencies = [
     "boto3==1.35.81",
-    "ceslib",
     "click>=8.1.8",
     "gitpython>=3.1.44",
     "httpx>=0.28.1",
@@ -14,6 +13,3 @@ dependencies = [
     "rich>=14.0.0",
     "types-boto3[s3]==1.35.81",
 ]
-
-[tool.uv.sources]
-ceslib = { workspace = true }

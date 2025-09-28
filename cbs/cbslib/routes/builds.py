@@ -14,6 +14,7 @@
 
 from typing import Any
 
+from cbscore.versions.desc import VersionDescriptor
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
@@ -25,7 +26,6 @@ from cbslib.routes import logger as parent_logger
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from cbslib.worker.celery import celery_app
 from celery.result import AsyncResult
-from ceslib.versions.desc import VersionDescriptor
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 

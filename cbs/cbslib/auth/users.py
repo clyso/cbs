@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Annotated, override
 
 import pydantic
+from cbscore.errors import CESError
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
 from cbslib.config.server import get_config
-from ceslib.errors import CESError
 from fastapi import Depends, HTTPException, status
 
 logger = parent_logger.getChild("users")

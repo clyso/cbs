@@ -32,7 +32,7 @@ from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds
 from cbslib.worker.monitor import monitor
-from ceslib.errors import CESError
+from cbscore.errors import CESError
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 

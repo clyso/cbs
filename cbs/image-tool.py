@@ -20,12 +20,12 @@ import sys
 from pathlib import Path
 
 import click
-from ceslib.errors import CESError
-from ceslib.images.desc import get_image_desc
-from ceslib.images.sync import sync_image
-from ceslib.logger import logger as root_logger
-from ceslib.utils.secrets import SecretsVaultMgr
-from ceslib.utils.vault import VaultError
+from cbscore.errors import CESError
+from cbscore.images.desc import get_image_desc
+from cbscore.images.sync import sync_image
+from cbscore.logger import logger as root_logger
+from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.vault import VaultError
 
 ourdir = os.path.dirname(os.path.realpath(__file__))
 

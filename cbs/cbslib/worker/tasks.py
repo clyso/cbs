@@ -14,11 +14,11 @@
 import asyncio
 from typing import Any, ParamSpec, cast, override
 
+from cbscore.versions.desc import VersionDescriptor
 from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
 from cbslib.worker.celery import celery_app, logger
 from celery import Task
 from celery.worker.request import Request
-from ceslib.versions.desc import VersionDescriptor
 
 Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIssue]
     lambda cls, *args, **kwargs: cls,

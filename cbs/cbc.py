@@ -28,11 +28,11 @@ from cbslib.auth.users import User
 from cbslib.builds.types import BuildEntry
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
-from ceslib.errors import CESError
-from ceslib.logger import logger as parent_logger
-from ceslib.versions.create import create
-from ceslib.versions.desc import VersionDescriptor
-from ceslib.versions.errors import VersionError
+from cbscore.errors import CESError
+from cbscore.logger import logger as parent_logger
+from cbscore.versions.create import create
+from cbscore.versions.desc import VersionDescriptor
+from cbscore.versions.errors import VersionError
 from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")

@@ -13,8 +13,8 @@
 
 from typing import override
 
+from cbscore.errors import CESError
 from cbslib.logger import logger as parent_logger
-from ceslib.errors import CESError
 
 
 class AuthError(CESError):
