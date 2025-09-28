@@ -1,15 +1,13 @@
 [project]
-name = "ces"
+name = "clyso-cbs"
 version = "0.0.0"
-description = "Clyso Enterprise Storage main project"
+description = "Clyso Enterprise Storage Build Service"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = [
-    "basedpyright>=1.29.5",
-]
+dependencies = ["basedpyright>=1.29.5"]
 
 [tool.uv.workspace]
-members = ["cbs", "cbs/packages/ceslib", "crt"]
+members = ["cbs", "cbs/packages/cbscore", "crt"]
 
 [dependency-groups]
 dev = ["basedpyright>=1.29.0", "lefthook>=1.11.11", "ruff>=0.11.8"]

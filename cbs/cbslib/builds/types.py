@@ -15,7 +15,7 @@ import enum
 from datetime import datetime as dt
 
 import pydantic
-from ceslib.versions.desc import VersionDescriptor
+from cbscore.versions.desc import VersionDescriptor
 
 
 class EntryState(str, enum.Enum):

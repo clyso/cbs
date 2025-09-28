@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Annotated
 
 import pydantic
+from cbscore.errors import CESError
 from cbslib.logger import logger as parent_logger
-from ceslib.errors import CESError
 from fastapi import Depends
 
 logger = parent_logger.getChild("config")
