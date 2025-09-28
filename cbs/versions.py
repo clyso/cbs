@@ -86,7 +86,7 @@ async def _create(
 
     repo_path = await get_git_repo_root()
     version_path = (
-        repo_path.joinpath("versions")
+        repo_path.joinpath("_versions")  # FIXME: make this configurable
         .joinpath(version_type_dir_name)
         .joinpath(f"{desc.version}.json")
     )
