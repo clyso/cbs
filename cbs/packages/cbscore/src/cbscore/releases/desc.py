@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pydantic
 
+from cbscore.core.component import CoreComponentLoc
 from cbscore.releases import ReleaseError
 from cbscore.releases import logger as parent_logger
 from cbscore.releases.utils import get_component_release_rpm
@@ -77,7 +78,7 @@ class ReleaseDesc(pydantic.BaseModel):
 
 
 async def release_component_desc(
-    components_path: Path,
+    component_loc: CoreComponentLoc,
     component_name: str,
     repo_url: str,
     long_version: str,
@@ -86,11 +87,20 @@ async def release_component_desc(
     build_el_version: int,
 ) -> ReleaseComponent | None:
     """Create a component release descriptor."""
-    rpm_release_loc = await get_component_release_rpm(
-        components_path,
-        component_name,
-        build_el_version,
-    )
+    if not component_loc.comp.build.rpm:
+        msg = f"component '{component_name}' has no 'build.rpm' section"
+        logger.error(msg)
+        return None
+
+    rpm_release = component_loc.path / component_loc.comp.build.rpm.release_rpm
+    if not rpm_release.exists() or not rpm_release.is_file():
+        msg = (
+            f"component '{component_name}' has no release RPM script at '{rpm_release}'"
+        )
+        logger.error(msg)
+        return None
+
+    rpm_release_loc = await get_component_release_rpm(component_loc, build_el_version)
     if not rpm_release_loc:
         msg = (
             "unable to find component release RPM location "

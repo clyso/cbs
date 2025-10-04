@@ -22,6 +22,7 @@ import pydantic
 from cbscore.builder import BuilderError
 from cbscore.builder import logger as parent_logger
 from cbscore.builder.utils import get_component_version
+from cbscore.core.component import CoreComponentLoc
 from cbscore.utils import CommandError, async_run_cmd, git
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.versions.desc import VersionComponent
@@ -170,7 +171,7 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
 async def prepare_components(
     secrets: SecretsVaultMgr,
     scratch_path: Path,
-    components_path: Path,
+    components_loc: dict[str, CoreComponentLoc],
     components: list[VersionComponent],
     version: str,
 ) -> dict[str, BuildComponentInfo]:
@@ -228,9 +229,9 @@ async def prepare_components(
         """Apply required patches to component's repository."""
         logger.info(f"apply patches to '{comp.name}' at '{repo}'")
 
-        comp_path = components_path.joinpath(comp.name)
+        comp_path = components_loc[comp.name].path
         if not comp_path.exists():
-            logger.warning(f"component '{comp.name}' not found in {components_path}")
+            logger.warning(f"component '{comp.name}' not found at '{comp_path}'")
             return
 
         comp_patches_path = comp_path.joinpath("patches")
@@ -281,9 +282,7 @@ async def prepare_components(
 
         try:
             long_version = await get_component_version(
-                comp.name,
-                components_path,
-                repo_path,
+                components_loc[comp.name], repo_path
             )
         except (BuilderError, Exception) as e:
             msg = f"error obtaining version for component '{comp.name}': {e}"
@@ -329,6 +328,13 @@ async def prepare_components(
             raise BuilderError(msg) from e
 
         return info
+
+    # ensure all components to build have corresponding core components defined.
+    for comp in components:
+        if comp.name not in components_loc:
+            msg = f"unable to find core component definition for '{comp.name}'"
+            logger.error(msg)
+            raise BuilderError(msg=msg)
 
     try:
         async with asyncio.TaskGroup() as tg:

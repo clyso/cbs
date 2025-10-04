@@ -106,7 +106,7 @@ def _parse_components(components: list[str]) -> dict[str, str]:
     comps: dict[str, str] = {}
 
     for c in components:
-        m = re.match(r"^([\w_-]+)@([\d\w_.-]+)$", c)
+        m = re.match(r"^([\w_-]+)@([\d\w_./-]+)$", c)
         if not m:
             msg = f"malformed component name/version pair '{c}'"
             logger.error(msg)

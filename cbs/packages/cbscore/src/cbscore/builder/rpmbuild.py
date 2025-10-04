@@ -20,8 +20,8 @@ from pathlib import Path
 from cbscore.builder import BuilderError
 from cbscore.builder import logger as parent_logger
 from cbscore.builder.prepare import BuildComponentInfo
+from cbscore.core.component import CoreComponentLoc
 from cbscore.utils import CmdArgs, CommandError, async_run_cmd
-from cbscore.utils.paths import get_component_scripts_path, get_script_path
 
 logger = parent_logger.getChild("rpmbuild")
 
@@ -33,17 +33,6 @@ class ComponentBuild:
     def __init__(self, version: str, rpms_path: Path) -> None:
         self.version = version
         self.rpms_path = rpms_path
-
-
-def _get_component_build_script(
-    component_name: str, component_scripts_path: Path
-) -> Path | None:
-    build_script_path = get_script_path(component_scripts_path, "build_rpms.*")
-    if not build_script_path:
-        logger.error(f"unable to find build script for component '{component_name}'")
-        return None
-
-    return build_script_path
 
 
 def _setup_rpm_topdir(
@@ -135,20 +124,17 @@ async def _build_component(
 
 
 async def _install_deps(
-    components_path: Path,
+    components_locs: dict[str, CoreComponentLoc],
     components: dict[str, BuildComponentInfo],
 ) -> None:
     """Install dependencies for all components, sequentially."""
     for name, comp in components.items():
-        comp_scripts_path = get_component_scripts_path(components_path, comp.name)
-        if not comp_scripts_path:
-            logger.warning(f"scripts for component '{comp.name}' not found, continue")
-            continue
-
-        install_deps_script = get_script_path(comp_scripts_path, "install_deps.*")
-        if not install_deps_script:
-            logger.info(f"no dependencies to install for component '{comp.name}'")
-            continue
+        comp_loc = components_locs[comp.name]
+        install_deps_script = comp_loc.path / comp_loc.comp.build.deps
+        if not install_deps_script.exists():
+            msg = f"install_deps script not found for component '{comp.name}'"
+            logger.error(msg)
+            raise BuilderError(msg)
 
         clog = logger.getChild(f"comp[{name}]")
 
@@ -186,7 +172,7 @@ async def _install_deps(
 async def build_rpms(
     rpms_path: Path,
     el_version: int,
-    components_path: Path,
+    components_locs: dict[str, CoreComponentLoc],
     components: dict[str, BuildComponentInfo],
     *,
     ccache_path: Path | None = None,
@@ -200,11 +186,15 @@ async def build_rpms(
     Returns a `ComponentBuild`, containing the component's built version and a
     `Path` to where its RPMs can be found.
     """
-    if not components_path.exists():
-        raise BuilderError(msg=f"components path at '{components_path}' not found")
+    # check if all components have corresponding core components.
+    for comp in components:
+        if comp not in components_locs:
+            msg = f"component '{comp}' has no corresponding core component"
+            logger.error(msg)
+            raise BuilderError(msg=msg)
 
     try:
-        await _install_deps(components_path, components)
+        await _install_deps(components_locs, components)
     except BuilderError as e:
         msg = f"error installing components' dependencies: {e}"
         logger.exception(msg)
@@ -220,26 +210,23 @@ async def build_rpms(
 
     to_build: dict[str, _ToBuildComponent] = {}
     for comp_name, comp_info in components.items():
-        comp_path = components_path.joinpath(comp_name)
-        if not comp_path.exists():
+        comp_loc = components_locs[comp_name]
+        # comp_path = components_path.joinpath(comp_name)
+        if not comp_loc.path.exists():
             logger.warning(
-                f"component path for '{comp_name}' "
-                + f"not found in '{components_path}'"
+                f"component path for '{comp_name}' " + f"not found in '{comp_loc.path}'"
             )
             continue
 
-        comp_scripts_path = get_component_scripts_path(components_path, comp_name)
-        if not comp_scripts_path:
-            logger.warning(
-                f"component scripts path for '{comp_name}' "
-                + f"not found in '{comp_path}'"
-            )
+        if not comp_loc.comp.build.rpm:
+            logger.warning(f"component '{comp_name}' has no RPM build section")
             continue
 
-        build_script_path = _get_component_build_script(comp_name, comp_scripts_path)
-        if not build_script_path:
-            logger.warning(f"build script not found for '{comp_name}'")
-            continue
+        build_script_path = comp_loc.path / comp_loc.comp.build.rpm.build
+        if not build_script_path.exists():
+            msg = f"build script not found for '{comp_name}'"
+            logger.error(msg)
+            raise BuilderError(msg)
 
         to_build[comp_name] = _ToBuildComponent(
             build_script_path, comp_info.long_version

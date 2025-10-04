@@ -13,7 +13,9 @@
 
 import logging
 import random
+import shutil
 import string
+import tempfile
 from pathlib import Path
 from typing import override
 
@@ -36,14 +38,41 @@ def gen_run_name(prefix: str = "ces_") -> str:
     return prefix + "".join(random.choices(string.ascii_lowercase, k=10))  # noqa: S311
 
 
+def _setup_components_dir(components_paths: list[Path]) -> Path:
+    # build a temporary directory for an aggregated components dir
+    dst_path = Path(tempfile.mkdtemp(suffix=".cbs", prefix="components-"))
+    for comp_dir in components_paths:
+        for d in comp_dir.iterdir():
+            if not d.is_dir():
+                continue
+            dest = dst_path / d.name
+            try:
+                _ = shutil.copytree(d, dest, dirs_exist_ok=True)
+            except Exception as e:
+                msg = f"unable to copy component '{d}' to '{dest}': {e}"
+                logger.error(msg)
+                raise RunnerError(msg) from e
+
+    logger.debug(f"Using temporary components dir at '{dst_path}'")
+    return dst_path
+
+
+def _cleanup_components_dir(components_path: Path) -> None:
+    try:
+        shutil.rmtree(components_path, ignore_errors=True)
+    except Exception as e:
+        msg = f"unable to remove temporary components dir '{components_path}': {e}"
+        logger.error(msg)
+        raise RunnerError(msg) from e
+
+
 async def runner(
     desc_file_path: Path,
     tools_path: Path,
     secrets_file_path: Path,
     scratch_path: Path,
     scratch_container_path: Path,
-    components_path: Path,
-    containers_path: Path,
+    components_paths_lst: list[Path],
     vault_addr: str,
     vault_role_id: str,
     vault_secret_id: str,
@@ -62,8 +91,7 @@ async def runner(
     secrets file path:       {secrets_file_path}
     scratch path:            {scratch_path}
     scratch containers path: {scratch_container_path}
-    components path:         {components_path}
-    containers path:         {containers_path}
+    components paths:        {components_paths_lst}
     ccache path:             {ccache_path}
     vault: addr = {vault_addr}, role id = {vault_role_id}, transit = {vault_transit}
     timeout: {timeout}
@@ -84,6 +112,10 @@ async def runner(
 
     desc_mount_loc = f"/runner/{desc_file_path.name}"
 
+    # propagate exception
+    components_path = _setup_components_dir(components_paths_lst)
+    logger.debug(f"components contents: {list(components_path.walk())}")
+
     podman_volumes = {
         desc_file_path.resolve().as_posix(): desc_mount_loc,
         tools_path.resolve().as_posix(): "/runner/tools",
@@ -91,7 +123,6 @@ async def runner(
         scratch_path.resolve().as_posix(): "/runner/scratch",
         scratch_container_path.resolve().as_posix(): "/var/lib/containers:Z",
         components_path.resolve().as_posix(): "/runner/components",
-        containers_path.resolve().as_posix(): "/runner/containers",
     }
 
     podman_args = ["--desc", desc_mount_loc]
@@ -142,6 +173,8 @@ async def runner(
         msg = f"unknown error running build: {e}"
         logger.exception(msg)
         raise RunnerError(msg) from e
+    finally:
+        _cleanup_components_dir(components_path)
 
     if rc != 0:
         msg = f"error running build (rc={rc}): {stderr}"

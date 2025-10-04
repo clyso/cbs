@@ -13,11 +13,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from cbscore.builder import logger as parent_logger
 from cbscore.containers import ContainerError
 from cbscore.containers.component import ComponentContainer
+from cbscore.core.component import CoreComponentLoc
 from cbscore.releases.desc import ReleaseDesc
 from cbscore.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
 from cbscore.utils.secrets import SecretsVaultMgr
@@ -26,18 +25,10 @@ from cbscore.versions.desc import VersionDescriptor
 logger = parent_logger.getChild("containers")
 
 
-def _get_component_path(containers_path: Path, component: str) -> Path | None:
-    p = containers_path.joinpath(component)
-    if not p.exists() or not p.is_dir():
-        logger.warning(f"container path does not exist for component '{component}'")
-        return None
-    return p
-
-
 class ContainerBuilder:
     version_desc: VersionDescriptor
     release_desc: ReleaseDesc
-    containers_path: Path
+    components: dict[str, CoreComponentLoc]
 
     container: BuildahContainer | None
 
@@ -45,11 +36,11 @@ class ContainerBuilder:
         self,
         version_desc: VersionDescriptor,
         release_desc: ReleaseDesc,
-        containers_path: Path,
+        components: dict[str, CoreComponentLoc],
     ) -> None:
         self.version_desc = version_desc
         self.release_desc = release_desc
-        self.containers_path = containers_path
+        self.components = components
         self.container = None
 
     async def build(self) -> None:
@@ -101,12 +92,11 @@ class ContainerBuilder:
 
         for component in self.version_desc.components:
             comp_name = component.name
-            comp_path = _get_component_path(self.containers_path, comp_name)
-            if not comp_path:
-                logger.warning(
-                    f"unable to find container path for '{comp_name}', skipping"
-                )
-                continue
+
+            if comp_name not in self.components:
+                msg = f"unable to find core component '{comp_name}'"
+                logger.error(msg)
+                raise ContainerError(msg)
 
             if comp_name not in self.release_desc.components:
                 logger.warning(f"component '{comp_name}' not in release descriptor")
@@ -126,7 +116,7 @@ class ContainerBuilder:
 
             try:
                 component = ComponentContainer(
-                    comp_path, release_comp.version, vars=vars
+                    self.components[comp_name], release_comp.version, vars=vars
                 )
             except ContainerError as e:
                 msg = (

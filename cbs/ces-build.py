@@ -118,6 +118,7 @@ def main(debug: bool) -> None:
 )
 @click.option(
     "--components-dir",
+    "components_paths",
     type=click.Path(
         exists=True,
         dir_okay=True,
@@ -127,18 +128,7 @@ def main(debug: bool) -> None:
         path_type=Path,
     ),
     required=True,
-)
-@click.option(
-    "--containers-dir",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
+    multiple=True,
 )
 @click.option(
     "--ccache-dir",
@@ -180,14 +170,14 @@ def build(
     vault_transit: str,
     scratch_dir: Path,
     scratch_containers_dir: Path,
-    components_dir: Path,
-    containers_dir: Path,
+    components_paths: list[Path],
     ccache_dir: Path | None,
     timeout: float | None,
     skip_build: bool,
     force: bool,
 ) -> None:
     our_dir = Path(sys.argv[0]).parent.parent
+
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(
@@ -197,8 +187,7 @@ def build(
                 secrets_path,
                 scratch_dir,
                 scratch_containers_dir,
-                components_dir,
-                containers_dir,
+                components_paths,
                 vault_addr,
                 vault_role_id,
                 vault_secret_id,
@@ -273,18 +262,7 @@ Should not be called by the user directly. Use 'build' instead.
 )
 @click.option(
     "--components-dir",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-)
-@click.option(
-    "--containers-dir",
+    "components_path",
     type=click.Path(
         exists=True,
         dir_okay=True,
@@ -344,8 +322,7 @@ def runner_build(
     vault_secret_id: str,
     vault_transit: str,
     scratch_dir: Path,
-    components_dir: Path,
-    containers_dir: Path,
+    components_path: Path,
     secrets_path: Path,
     ccache_path: Path | None,
     upload: bool,
@@ -378,8 +355,7 @@ def runner_build(
         vault_transit,
         scratch_dir,
         secrets_path,
-        components_dir,
-        containers_dir,
+        components_path,
         upload=upload,
         ccache_path=ccache_path,
         skip_build=skip_build,
