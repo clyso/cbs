@@ -25,6 +25,7 @@ from cbscore.builder.signing import sign_rpms
 from cbscore.builder.upload import s3_upload_rpms
 from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
+from cbscore.core.component import CoreComponentLoc, load_components
 from cbscore.releases.desc import (
     ReleaseComponent,
     ReleaseDesc,
@@ -46,8 +47,7 @@ logger = parent_logger.getChild("builder")
 class Builder:
     desc: VersionDescriptor
     scratch_path: Path
-    components_path: Path
-    containers_path: Path
+    components: dict[str, CoreComponentLoc]
     upload: bool
     secrets: SecretsVaultMgr
     ccache_path: Path | None
@@ -64,7 +64,6 @@ class Builder:
         scratch_path: Path,
         secrets_path: Path,
         components_path: Path,
-        containers_path: Path,
         *,
         ccache_path: Path | None = None,
         upload: bool = True,
@@ -73,8 +72,6 @@ class Builder:
     ) -> None:
         self.desc = desc
         self.scratch_path = scratch_path
-        self.components_path = components_path
-        self.containers_path = containers_path
         self.upload = upload
         self.ccache_path = ccache_path
         self.skip_build = skip_build
@@ -91,6 +88,12 @@ class Builder:
         except VaultError as e:
             logger.exception("error logging in to vault")
             raise BuilderError(msg=f"error logging in to vault: {e}") from e
+
+        self.components = load_components(components_path)
+        if not self.components:
+            msg = f"no components found in '{components_path}'"
+            logger.error(msg)
+            raise BuilderError(msg)
 
     async def run(self) -> None:
         logger.info("preparing builder")
@@ -127,9 +130,7 @@ class Builder:
             )
 
         try:
-            ctr_builder = ContainerBuilder(
-                self.desc, release_desc, self.containers_path
-            )
+            ctr_builder = ContainerBuilder(self.desc, release_desc, self.components)
             await ctr_builder.build()
             await ctr_builder.finish(self.secrets)
         except (ContainerError, Exception) as e:
@@ -159,7 +160,7 @@ class Builder:
             components = await prepare_components(
                 self.secrets,
                 self.scratch_path,
-                self.components_path,
+                self.components,
                 self.desc.components,
                 self.desc.version,
             )
@@ -287,7 +288,7 @@ class Builder:
             comp_builds = await build_rpms(
                 rpms_path,
                 self.desc.el_version,
-                self.components_path,
+                self.components,
                 components,
                 ccache_path=self.ccache_path,
                 skip_build=self.skip_build,
@@ -362,7 +363,7 @@ class Builder:
                 raise BuilderError(msg)
 
             comp_release = await release_component_desc(
-                components_path=self.components_path,
+                component_loc=self.components[name],
                 component_name=name,
                 repo_url=infos.repo_url,
                 long_version=infos.long_version,

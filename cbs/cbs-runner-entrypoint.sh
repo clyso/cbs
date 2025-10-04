@@ -53,5 +53,4 @@ python3 "${ourpath}"/ces-build.py ${dbg} runner build \
   --scratch-dir "${RUNNER_DIR}"/scratch \
   --secrets-path "${RUNNER_DIR}"/secrets.json \
   --components-dir "${RUNNER_DIR}"/components \
-  --containers-dir "${RUNNER_DIR}"/containers \
   $* || exit 1

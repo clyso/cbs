@@ -15,41 +15,26 @@ from pathlib import Path
 
 from cbscore.builder import BuilderError, MissingScriptError
 from cbscore.builder import logger as parent_logger
+from cbscore.core.component import CoreComponentLoc
 from cbscore.utils import CmdArgs, CommandError, async_run_cmd
-from cbscore.utils.paths import (
-    get_component_scripts_path,
-    get_script_path,
-)
 
 logger = parent_logger.getChild("utils")
 
 
-async def get_component_version(
-    component_name: str, components_path: Path, repo_path: Path
-) -> str:
+async def get_component_version(comp_loc: CoreComponentLoc, repo_path: Path) -> str:
     """
     Obtain a component's version.
 
-    Version is obtained by running the component's provided 'get_version.*' script,
+    Version is obtained by running the component's provided 'get_version' script,
     and returning the obtained value.
-
-    The `components_path` argument refers to the directory under which we can find the
-    components supported (under which a `scripts/` directory is expected).
 
     Raises `MissingScriptError` if the version script is not found.
     """
-    scripts_path = get_component_scripts_path(components_path, component_name)
-    if not scripts_path:
+    version_script_path = comp_loc.path / comp_loc.comp.build.get_version
+    if not version_script_path.exists():
         msg = (
-            f"unable to find scripts path for component '{component_name}' "
-            + f"under '{components_path}"
+            f"unable to find 'get_version' script for component '{comp_loc.comp.name}'"
         )
-        logger.error(msg)
-        raise BuilderError(msg)
-
-    version_script_path = get_script_path(scripts_path, "get_version.*")
-    if not version_script_path:
-        msg = f"unable to find 'get_version' script for component '{component_name}'"
         logger.error(msg)
         raise MissingScriptError("get_version", msg=msg)
 
@@ -60,16 +45,16 @@ async def get_component_version(
     try:
         rc, stdout, stderr = await async_run_cmd(cmd, cwd=repo_path)
     except CommandError as e:
-        msg = f"error running version script for '{component_name}': {e}"
+        msg = f"error running version script for '{comp_loc.comp.name}': {e}"
         logger.exception(msg)
         raise BuilderError(msg) from e
     except Exception as e:
-        msg = f"unknown exception running version script for '{component_name}: {e}"
+        msg = f"unknown exception running version script for '{comp_loc.comp.name}: {e}"
         logger.exception(msg)
         raise BuilderError(msg) from e
 
     if rc != 0:
-        msg = f"error running version script for '{component_name}': {stderr}"
+        msg = f"error running version script for '{comp_loc.comp.name}': {stderr}"
         logger.error(msg)
         raise BuilderError(msg)
 

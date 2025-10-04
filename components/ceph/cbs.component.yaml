@@ -9,7 +9,5 @@ build:
   get-version: scripts/get_version.sh
   deps: scripts/install_deps.sh
 
-versions:
-  - v17: containers/v17.2/
-  - v18: containers/v18.2/
-  - v19: containers/v19.2/
+containers:
+  path: containers/
