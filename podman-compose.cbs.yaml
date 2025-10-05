@@ -18,15 +18,14 @@ services:
     entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
-      - ./local/cbs-config.worker.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs-config.worker.json:/cbs/config/cbs-config.json
       - ./cbs:/cbs/tools
 
-      - ./versions/secrets.json:/cbs/secrets/secrets.json
-      - ./local/scratch:/cbs/scratch
-      - ./local/scratch/containers:/var/lib/containers
-      - ./local/scratch/ccache:/cbs/ccache
+      - ./_local/secrets.json:/cbs/secrets/secrets.json
+      - ./_local/cbs/scratch:/cbs/scratch
+      - ./_local/cbs/scratch/containers:/var/lib/containers
+      - ./_local/cbs/scratch/ccache:/cbs/ccache
       - ./components:/cbs/components
-      - ./containers:/cbs/containers
       - /dev/fuse:/dev/fuse:rw
     cap_add:
       - MKNOD
@@ -49,13 +48,13 @@ services:
     restart: "no"
     privileged: true
     volumes:
-      - ./local/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs-config.server.json:/cbs/config/cbs-config.json
 
-      - ./local/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
-      - ./versions/secrets.json:/cbs/secrets/secrets.json
-      - ./local/data:/cbs/data
-      - ./local/cbs-cert.pem:/cbs/config/cbs-cert.pem
-      - ./local/cbs-key.pem:/cbs/config/cbs-key.pem
+      - ./_local/cbs/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
+      - ./_local/secrets.json:/cbs/secrets/secrets.json
+      - ./_local/cbs/data:/cbs/data
+      - ./_local/cbs/cbs-cert.pem:/cbs/config/cbs-cert.pem
+      - ./_local/cbs/cbs-key.pem:/cbs/config/cbs-key.pem
       - ./cbs:/cbs/tools
     security_opt:
       - label=disable
@@ -73,7 +72,7 @@ services:
     ports:
       - "5555:5555"
     volumes:
-      - ./local/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs-config.server.json:/cbs/config/cbs-config.json
     environment:
       CBS_CONFIG: /cbs/config/cbs-config.json
       CBS_DEBUG: 1
