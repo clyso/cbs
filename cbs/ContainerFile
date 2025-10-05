@@ -28,11 +28,12 @@ WORKDIR /cbs/server
 
 COPY pyproject.toml ./
 COPY ces-build-server.py ./
-COPY ceslib/ ./ceslib/
+COPY packages/ ./packages/
 COPY cbslib/ ./cbslib/
 
 RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
 
+RUN uv add --no-cache ./packages/cbscore
 RUN uv sync --no-cache --no-dev
 
 VOLUME [ "/cbs/scratch" ]
