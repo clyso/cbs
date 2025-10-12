@@ -220,9 +220,13 @@ async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
             # function will obtain S3 credentials from vault each time.
             raw_json = await s3_download_str_obj(secrets, entry.key, content_type=None)
         except S3Error as e:
-            msg = "error obtaining JSON object"
-            logger.exception(msg)
-            raise ReleaseError(msg=f"{msg}: {e}") from e
+            msg = f"s3 error obtaining JSON object: {e}"
+            logger.error(msg)
+            raise ReleaseError(msg) from e
+        except Exception as e:
+            msg = f"unknown error obtaining JSON object: {e}"
+            logger.error(msg)
+            raise ReleaseError(msg) from e
 
         if not raw_json:
             continue

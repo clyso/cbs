@@ -191,7 +191,14 @@ async def s3_upload_json(
 
 async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | None:
     """Download a JSON object."""
-    return await s3_download_str_obj(secrets, location, content_type="application/json")
+    try:
+        return await s3_download_str_obj(
+            secrets, location, content_type="application/json"
+        )
+    except Exception as e:
+        msg = f"error downloading JSON object: {e}"
+        logger.error(msg)
+        raise S3Error(msg) from e
 
 
 async def _upload_file(
