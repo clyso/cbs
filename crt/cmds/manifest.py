@@ -224,6 +224,10 @@ def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> 
     new_manifest.from_name = old_name
     new_manifest.from_uuid = old_uuid
 
+    # reset stages publish state
+    for stage in new_manifest.stages:
+        stage.is_published = False
+
     try:
         store_manifest(patches_repo_path, new_manifest)
     except ManifestError as e:
