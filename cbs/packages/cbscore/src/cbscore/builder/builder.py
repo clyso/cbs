@@ -23,6 +23,7 @@ from cbscore.builder.prepare import (
 from cbscore.builder.rpmbuild import ComponentBuild, build_rpms
 from cbscore.builder.signing import sign_rpms
 from cbscore.builder.upload import s3_upload_rpms
+from cbscore.config import VaultConfig
 from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
 from cbscore.core.component import CoreComponentLoc, load_components
@@ -57,10 +58,7 @@ class Builder:
     def __init__(
         self,
         desc: VersionDescriptor,
-        vault_addr: str,
-        vault_role_id: str,
-        vault_secret_id: str,
-        vault_transit: str,
+        vault_config: VaultConfig,
         scratch_path: Path,
         secrets_path: Path,
         components_path: Path,
@@ -78,13 +76,7 @@ class Builder:
         self.force = force
 
         try:
-            self.secrets = SecretsVaultMgr(
-                secrets_path,
-                vault_addr,
-                vault_role_id,
-                vault_secret_id,
-                vault_transit=vault_transit,
-            )
+            self.secrets = SecretsVaultMgr(secrets_path, vault_config)
         except VaultError as e:
             logger.exception("error logging in to vault")
             raise BuilderError(msg=f"error logging in to vault: {e}") from e

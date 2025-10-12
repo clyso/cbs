@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import override
 
+from cbscore.config import Config
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
 from cbscore.utils.podman import PodmanError, podman_run, podman_stop
@@ -68,15 +69,13 @@ def _cleanup_components_dir(components_path: Path) -> None:
 
 async def runner(
     desc_file_path: Path,
-    tools_path: Path,
-    secrets_file_path: Path,
+    cbs_path: Path,
+    entrypoint_path: Path,
+    secrets_path: Path,
     scratch_path: Path,
-    scratch_container_path: Path,
-    components_paths_lst: list[Path],
-    vault_addr: str,
-    vault_role_id: str,
-    vault_secret_id: str,
-    vault_transit: str,
+    scratch_containers_path: Path,
+    components_paths: list[Path],
+    vault_config_path: Path,
     *,
     run_name: str | None = None,
     ccache_path: Path | None = None,
@@ -87,13 +86,14 @@ async def runner(
 ) -> None:
     logger.info(f"""run the runner:
     desc file path:          {desc_file_path}
-    tools path:              {tools_path}
-    secrets file path:       {secrets_file_path}
+    cbs path:                {cbs_path}
+    entrypoint:              {entrypoint_path}
+    secrets file path:       {secrets_path}
     scratch path:            {scratch_path}
-    scratch containers path: {scratch_container_path}
-    components paths:        {components_paths_lst}
+    scratch containers path: {scratch_containers_path}
+    components paths:        {components_paths}
     ccache path:             {ccache_path}
-    vault: addr = {vault_addr}, role id = {vault_role_id}, transit = {vault_transit}
+    vault config path:       {vault_config_path}
     timeout: {timeout}
     upload: {upload}, skip_build: {skip_build}, force: {force}
 
@@ -113,15 +113,17 @@ async def runner(
     desc_mount_loc = f"/runner/{desc_file_path.name}"
 
     # propagate exception
-    components_path = _setup_components_dir(components_paths_lst)
+    components_path = _setup_components_dir(components_paths)
     logger.debug(f"components contents: {list(components_path.walk())}")
 
     podman_volumes = {
         desc_file_path.resolve().as_posix(): desc_mount_loc,
-        tools_path.resolve().as_posix(): "/runner/tools",
-        secrets_file_path.resolve().as_posix(): "/runner/secrets.json",
+        cbs_path.resolve().as_posix(): "/runner/cbs",
+        entrypoint_path.resolve().as_posix(): "/runner/entrypoint.sh",
+        vault_config_path.resolve().as_posix(): "/runner/cbs-build.vault.json",
+        secrets_path.resolve().as_posix(): "/runner/secrets.json",
         scratch_path.resolve().as_posix(): "/runner/scratch",
-        scratch_container_path.resolve().as_posix(): "/var/lib/containers:Z",
+        scratch_containers_path.resolve().as_posix(): "/var/lib/containers:Z",
         components_path.resolve().as_posix(): "/runner/components",
     }
 
@@ -147,10 +149,10 @@ async def runner(
         rc, _, stderr = await podman_run(
             image=desc.distro,
             env={
-                "VAULT_ADDR": vault_addr,
-                "VAULT_ROLE_ID": vault_role_id,
-                "VAULT_SECRET_ID": vault_secret_id,
-                "VAULT_TRANSIT": vault_transit,
+                # "VAULT_ADDR": vault_addr,
+                # "VAULT_ROLE_ID": vault_role_id,
+                # "VAULT_SECRET_ID": vault_secret_id,
+                # "VAULT_TRANSIT": vault_transit,
                 "CBS_DEBUG": "1"
                 if logger.getEffectiveLevel() == logging.DEBUG
                 else "0",
@@ -158,7 +160,7 @@ async def runner(
             args=podman_args,
             volumes=podman_volumes,
             devices={"/dev/fuse": "/dev/fuse:rw"},
-            entrypoint="/runner/tools/cbs/cbs-runner-entrypoint.sh",
+            entrypoint="/runner/entrypoint.sh",
             name=ctr_name,
             use_user_ns=False,
             timeout=timeout,

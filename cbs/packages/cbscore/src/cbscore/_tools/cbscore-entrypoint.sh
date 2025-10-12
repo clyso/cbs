@@ -13,44 +13,43 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-ourpath="$(dirname "$(realpath "$0")")"
-workspacepath="$(dirname "${ourpath}/..")"
-
-RUNNER_DIR="/runner"
+RUNNER_PATH="/runner"
+CBS_PATH="${RUNNER_PATH}/cbs"
 
 if [[ -z ${HOME} ]] || [[ ${HOME} == "/" ]]; then
-  HOME="${RUNNER_DIR}"
+  HOME="${RUNNER_PATH}"
   export HOME
 fi
 
-mkdir "${RUNNER_DIR}"/bin || true
+mkdir "${RUNNER_PATH}"/bin || true
 
-PATH="${RUNNER_DIR}/bin:$PATH"
+PATH="${RUNNER_PATH}/bin:$PATH"
 export PATH
 
 echo "PATH: ${PATH}"
 
 curl -LsSf https://astral.sh/uv/install.sh |
-  UV_INSTALL_DIR="${RUNNER_DIR}"/bin \
+  UV_INSTALL_DIR="${RUNNER_PATH}"/bin \
     UV_DISABLE_UPDATE=1 \
     UV_NO_MODIFY_PATH=1 \
     sh
 
-cd "${RUNNER_DIR}" || exit 1
+cd "${RUNNER_PATH}" || exit 1
 
-export VIRTUAL_ENV="${RUNNER_DIR}/venv"
-uv venv --python 3.13 "${RUNNER_DIR}"/venv
+export VIRTUAL_ENV="${RUNNER_PATH}/venv"
+uv venv --python 3.13 "${RUNNER_PATH}"/venv
 
 # shellcheck source=/dev/null
-source "${RUNNER_DIR}"/venv/bin/activate
+source "${RUNNER_PATH}"/venv/bin/activate
 
-uv --directory "${workspacepath}" sync --all-packages --no-dev --active || exit 1
+uv --directory "${CBS_PATH}" add --no-cache ./packages/cbscore --active || exit 1
 
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"
 # shellcheck disable=2048,SC2086
-python3 "${ourpath}"/ces-build.py ${dbg} runner build \
-  --scratch-dir "${RUNNER_DIR}"/scratch \
-  --secrets-path "${RUNNER_DIR}"/secrets.json \
-  --components-dir "${RUNNER_DIR}"/components \
+cbsbuild --vault "${RUNNER_PATH}/cbs-build.vault.json" ${dbg} \
+  runner build \
+  --scratch-dir "${RUNNER_PATH}"/scratch \
+  --secrets-path "${RUNNER_PATH}"/secrets.json \
+  --components-dir "${RUNNER_PATH}"/components \
   $* || exit 1

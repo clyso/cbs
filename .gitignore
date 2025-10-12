@@ -3,6 +3,8 @@ __pycache__/
 /_local
 /_versions
 cbc-config.json
+cbs-build.config.json
+cbs-build.vault.json
 .go
 node_modules
 package.json

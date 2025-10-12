@@ -33,10 +33,11 @@ from typing import override
 
 import pydantic
 
+from cbscore.config import VaultConfig
 from cbscore.errors import CESError
 from cbscore.utils import MaybeSecure, Password, SecureURL
 from cbscore.utils import logger as parent_logger
-from cbscore.utils.vault import Vault, VaultError
+from cbscore.utils.vault import Vault, VaultError, get_vault_from_config
 
 logger = parent_logger.getChild("secrets")
 
@@ -139,16 +140,10 @@ class SecretsVaultMgr:
     def __init__(
         self,
         secrets_path: Path,
-        vault_addr: str,
-        vault_role_id: str,
-        vault_secret_id: str,
-        *,
-        vault_transit: str | None = None,
+        vault_config: VaultConfig,
     ) -> None:
         # propagate errors, let caller deal with them
-        self.vault = Vault(
-            vault_addr, vault_role_id, vault_secret_id, transit=vault_transit
-        )
+        self.vault = get_vault_from_config(vault_config)
         self.secrets = Secrets.read(secrets_path)
         self.log = logger.getChild("secrets-vault-mgr")
 
@@ -311,7 +306,7 @@ Host {remote_name}
         except KeyError as e:
             raise SecretsVaultError(msg=f"error obtaining S3 credentials: {e}") from e
 
-        return hostname, access_id, secret_id
+        return hostname.rstrip(), access_id.rstrip(), secret_id.rstrip()
 
     @contextmanager
     def gpg_private_keyring(self) -> Generator[tuple[Path, str, str]]:
