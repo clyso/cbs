@@ -107,7 +107,7 @@ def with_config(f: Callable[Concatenate[Config, _P], _R]) -> Callable[_P, _R]:
     default="cbs-build.vault.json",
 )
 @pass_ctx
-def main(ctx: Ctx, debug: bool, config_path: Path, vault_config_path: Path) -> None:
+def cmd_main(ctx: Ctx, debug: bool, config_path: Path, vault_config_path: Path) -> None:
     if debug:
         root_logger.setLevel(logging.DEBUG)
 
@@ -115,7 +115,7 @@ def main(ctx: Ctx, debug: bool, config_path: Path, vault_config_path: Path) -> N
     ctx.vault_config_path = vault_config_path
 
 
-@main.command("config-init", help="Initialize the configuration file.")
+@cmd_main.command("config-init", help="Initialize the configuration file.")
 @click.option(
     "--vault-addr",
     "vault_addr",
@@ -131,7 +131,7 @@ def main(ctx: Ctx, debug: bool, config_path: Path, vault_config_path: Path) -> N
     prompt="Vault transit",
 )
 @pass_ctx
-def config_init(ctx: Ctx, vault_addr: str, vault_transit: str) -> None:
+def cmd_config_init(ctx: Ctx, vault_addr: str, vault_transit: str) -> None:
     assert ctx.config_path
     assert ctx.vault_config_path
     config_path = ctx.config_path
@@ -267,7 +267,7 @@ vault config: {vault_config_path}
 """)
 
 
-@main.command("build", help="Start a containerized build.")
+@cmd_main.command("build", help="Start a containerized build.")
 @click.argument(
     "desc_path",
     metavar="DESCRIPTOR",
@@ -331,7 +331,7 @@ vault config: {vault_config_path}
     default=False,
 )
 @pass_ctx
-def build(
+def cmd_build(
     ctx: Ctx,
     desc_path: Path,
     cbs_path: Path,
@@ -400,12 +400,12 @@ runner loc path: {our_actual_loc}
         sys.exit(1)
 
 
-@main.group("runner", help="Build Runner related operations")
-def runner_grp() -> None:
+@cmd_main.group("runner", help="Build Runner related operations")
+def cmd_runner_grp() -> None:
     pass
 
 
-@runner_grp.command(
+@cmd_runner_grp.command(
     "build",
     help="""Perform a build (internal use).
 
@@ -488,7 +488,7 @@ Should not be called by the user directly. Use 'build' instead.
     default=False,
 )
 @pass_ctx
-def runner_build(
+def cmd_runner_build(
     ctx: Ctx,
     desc_path: Path,
     scratch_dir: Path,
@@ -551,4 +551,4 @@ def runner_build(
 
 
 if __name__ == "__main__":
-    main()
+    cmd_main()
