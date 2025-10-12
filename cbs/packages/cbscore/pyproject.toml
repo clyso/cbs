@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cbsbuild = "cbscore.__main__:main"
+cbsbuild = "cbscore.__main__:cmd_main"
 
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]
