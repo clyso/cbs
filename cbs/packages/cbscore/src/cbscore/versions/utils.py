@@ -13,36 +13,202 @@
 
 
 import re
+from typing import cast
 
 from cbscore.errors import MalformedVersionError
 
+ParseVersionResult = tuple[str | None, str, str | None, str | None, str | None]
 
-# obtain major version from supplied CES version.
-# it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
-# with 'vXX.*', such as ceph upstream versions, and other versions.
+
+def parse_version(version: str) -> ParseVersionResult:
+    v_re = re.compile(
+        r"""
+        ^
+        (?:(?P<prefix>(\w+))-)?         # optional prefix
+        v?                              # optional 'v'
+        (?P<major>\d+)                  # mandatory major version
+        (?:\.(?P<minor>\d+)             # optional minor version
+            (?:\.(?P<patch>\d+)         # optional patch version
+            (?:-(?P<suffix>[\w_.-]+))?  # optional suffix
+            )?
+        )?
+        $
+        """,
+        re.VERBOSE,
+    )
+    m = v_re.match(version)
+    if not m:
+        raise MalformedVersionError(f"invalid version '{version}'")
+
+    prefix = cast(str | None, m.group("prefix"))
+    major = cast(str, m.group("major"))
+    minor = cast(str | None, m.group("minor"))
+    patch = cast(str | None, m.group("patch"))
+    suffix = cast(str | None, m.group("suffix"))
+
+    return (prefix, major, minor, patch, suffix)
+
+
 def get_major_version(v: str) -> str:
-    m = re.match(r"^((?:ces-.*v|v)?\d+\.\d+).*", v)
-    if m is None:
+    """Obtain the major version from the supplied version."""
+    # Keep in mind 'parse_version()' is an agnostic version parser.
+    # It doesn't understand how we consider major and minor versions
+    # for CES or Ceph. So, a major version for CES/Ceph will be the
+    # first two version components: major and minor.
+    try:
+        _, major, minor, _, _ = parse_version(v)
+    except MalformedVersionError as e:
+        raise e from None
+
+    if not major or not minor:
         raise MalformedVersionError(v)
-    return m.group(1)
+
+    return f"{major}.{minor}"
 
 
-# obtain minor version from supplied version.
-# it can follow the CES format (ces-vXX.YY.mm.*) or any version starting
-# with 'vXX.*', such as ceph upstream versions, and other versions.
 def get_minor_version(v: str) -> str | None:
-    m = re.match(r"^((?:ces-.*v|v)?\d+\.\d+\.\d+).*", v)
-    if m is None:
+    """Obtain the minor version from the supplied version."""
+    # Keep in mind 'parse_version()' is an agnostic version parser.
+    # It doesn't understand how we consider major and minor versions
+    # for CES or Ceph. So, a minor version for CES/Ceph will be the three
+    # version components: major, minor, and patch.
+    try:
+        _, major, minor, patch, _ = parse_version(v)
+    except MalformedVersionError as e:
+        raise e from None
+
+    if not major or not minor or not patch:
         return None
-    return m.group(1)
+
+    return f"{major}.{minor}.{patch}"
 
 
 def normalize_version(v: str) -> str:
-    m = re.match(r"((ces-.*v|v)?\d+\.\d+\..*)", v)
-    if not m:
+    try:
+        prefix, major, minor, patch, suffix = parse_version(v)
+    except MalformedVersionError as e:
+        raise e from None
+
+    if not major or not minor:
         raise MalformedVersionError(v)
 
-    ver, prefix = m.groups()
-    if not prefix:
-        return f"v{ver}"
-    return ver
+    res = ""
+    if prefix:
+        res += f"{prefix}-"
+    res += f"v{major}.{minor}"
+    if patch:
+        res += f".{patch}"
+    if suffix:
+        res += f"-{suffix}"
+    return res
+
+
+if __name__ == "__main__":
+    overall_success = True
+
+    version_tests: list[tuple[str, bool, ParseVersionResult | None]] = [
+        # valid patterns
+        ("ces-v99.99.1-asd-qwe", True, ("ces", "99", "99", "1", "asd-qwe")),
+        ("ces-v99.99.1-asd", True, ("ces", "99", "99", "1", "asd")),
+        ("ces-v99.99.1", True, ("ces", "99", "99", "1", None)),
+        ("ces-v99.99", True, ("ces", "99", "99", None, None)),
+        ("ces-v99", True, ("ces", "99", None, None, None)),
+        ("ces-99.99.1-asd", True, ("ces", "99", "99", "1", "asd")),
+        ("ces-99.99.1", True, ("ces", "99", "99", "1", None)),
+        ("ces-99.99", True, ("ces", "99", "99", None, None)),
+        ("ces-99", True, ("ces", "99", None, None, None)),
+        ("v99.99.1-asd", True, (None, "99", "99", "1", "asd")),
+        ("v99.99.1", True, (None, "99", "99", "1", None)),
+        ("v99.99", True, (None, "99", "99", None, None)),
+        ("v99", True, (None, "99", None, None, None)),
+        ("99.99.1-asd", True, (None, "99", "99", "1", "asd")),
+        ("99.99.1", True, (None, "99", "99", "1", None)),
+        ("99.99", True, (None, "99", "99", None, None)),
+        ("99", True, (None, "99", None, None, None)),
+        # invalid patterns
+        ("ces", False, None),
+        ("ces-", False, None),
+        ("ces-v", False, None),
+        ("-99.99.1-asd", False, None),
+        ("-99", False, None),
+        ("-v99", False, None),
+        ("ces-99.", False, None),
+        ("ces-99.99.", False, None),
+        ("ces-v99.99.1-", False, None),
+        ("ces-v99.99.1.", False, None),
+        ("ces-v99-asd", False, None),
+        ("ces-v99.asd", False, None),
+        ("ces-asd", False, None),
+        ("99.asd", False, None),
+        ("99-asd", False, None),
+        ("ces-.99.99.1-asd", False, None),
+    ]
+
+    print("running version tests...")
+    for test in version_tests:
+        ver, is_valid, expected = test
+        success = False
+        try:
+            res = parse_version(ver)
+            if not is_valid:
+                print(f"ERROR: '{ver}' should be invalid!")
+            else:
+                if res != expected:
+                    print(f"ERROR: '{ver}' parsed as {res}, not as {expected}!")
+                else:
+                    success = True
+        except MalformedVersionError:
+            if is_valid:
+                print(f"ERROR: '{ver}' should be valid!")
+            else:
+                success = True
+        print(f"test '{ver}', success = {success}")
+        if not success:
+            overall_success = False
+
+    normalize_tests: list[tuple[str, bool, str | None]] = [
+        ("ces-v99.99.1-asd", True, "ces-v99.99.1-asd"),
+        ("ces-v99.99.1", True, "ces-v99.99.1"),
+        ("ces-v99.99", True, "ces-v99.99"),
+        ("ces-v99", False, None),
+        ("ces-99.99.1-asd", True, "ces-v99.99.1-asd"),
+        ("ces-99.99.1", True, "ces-v99.99.1"),
+        ("ces-99.99", True, "ces-v99.99"),
+        ("ces-99", False, None),
+        ("v99.99.1-asd", True, "v99.99.1-asd"),
+        ("v99.99.1", True, "v99.99.1"),
+        ("v99.99", True, "v99.99"),
+        ("v99", False, None),
+        ("99.99.1-asd", True, "v99.99.1-asd"),
+        ("99.99.1", True, "v99.99.1"),
+        ("99.99", True, "v99.99"),
+        ("99", False, None),
+        ("ces-v", False, None),
+        ("ces-", False, None),
+        ("ces", False, None),
+    ]
+
+    print("\nrunning normalize tests...")
+    for test in normalize_tests:
+        ver, is_valid, expected = test
+        success = False
+        try:
+            res = normalize_version(ver)
+            if not is_valid:
+                print(f"ERROR: '{ver}' should be invalid!")
+            else:
+                if res != expected:
+                    print(f"ERROR: '{ver}' normalized as {res}, not as {expected}!")
+                else:
+                    success = True
+        except MalformedVersionError:
+            if is_valid:
+                print(f"ERROR: '{ver}' should be valid!")
+            else:
+                success = True
+
+        print(f"test '{ver}', success = {success}")
+        if not success:
+            overall_success = False
+
+    print(f"\noverall success = {overall_success}")

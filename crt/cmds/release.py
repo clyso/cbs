@@ -19,6 +19,7 @@ from typing import cast
 
 import click
 import rich.box
+from cbscore.versions.utils import parse_version
 from crtlib.errors.manifest import NoSuchManifestError
 from crtlib.errors.release import NoSuchReleaseError
 from crtlib.git_utils import (
@@ -36,7 +37,6 @@ from crtlib.git_utils import (
 from crtlib.manifest import load_manifest_by_name_or_uuid
 from crtlib.models.release import Release
 from crtlib.release import load_release, release_exists, store_release
-from crtlib.utils import parse_version
 from git import GitError
 from rich.padding import Padding
 from rich.table import Table

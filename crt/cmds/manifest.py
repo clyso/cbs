@@ -23,6 +23,7 @@ from typing import cast
 
 import click
 import rich.box
+from cbscore.versions.utils import parse_version
 from crtlib.apply import ApplyConflictError, ApplyError, patches_apply_to_manifest
 from crtlib.errors import CRTError
 from crtlib.errors.manifest import (
@@ -56,7 +57,6 @@ from crtlib.patchset import (
     patchset_get_gh,
 )
 from crtlib.release import load_release
-from crtlib.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel

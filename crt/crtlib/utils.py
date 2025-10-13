@@ -16,9 +16,11 @@ import re
 from pathlib import Path
 from typing import cast
 
+from cbscore.versions.utils import parse_version
+from rich.tree import Tree
+
 from crtlib.errors.stages import MalformedStageTagError
 from crtlib.models.patch import Patch
-from rich.tree import Tree
 
 
 def print_patch_tree(what: str, lst: list[Patch]) -> None:
@@ -40,34 +42,6 @@ def get_tags(tags_lst: list[str] | None) -> list[tuple[str, str]]:
             raise MalformedStageTagError(msg=f"tag '{t}'")
 
     return tags
-
-
-def parse_version(
-    version: str,
-) -> tuple[str | None, str, str | None, str | None, str | None]:
-    v_re = re.compile(
-        r"""
-        ^(?P<prefix>.*?)(?:-)?  # optional prefix plus dash
-        v
-        (?P<major>\d{2})        # major version (required)
-        (?:\.(?P<minor>\d{1,2}))? # minor version (optional)
-        (?:\.(?P<patch>\d+))?   # patch version (optional)
-        (?:-(?P<suffix>.+))?    # dash with suffix (optional)
-        $
-        """,
-        re.VERBOSE,
-    )
-    m = v_re.match(version)
-    if not m:
-        raise ValueError(f"invalid version '{version}'")
-
-    prefix = cast(str | None, m.group("prefix"))
-    major = cast(str, m.group("major"))
-    minor = cast(str | None, m.group("minor"))
-    patch = cast(str | None, m.group("patch"))
-    suffix = cast(str | None, m.group("suffix"))
-
-    return (prefix, major, minor, patch, suffix)
 
 
 def split_version_into_paths(
