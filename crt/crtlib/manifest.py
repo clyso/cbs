@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import cast
 
 import pydantic
+from cbscore.versions.utils import parse_version
+
 from crtlib.apply import ApplyError, apply_manifest
 from crtlib.errors import CRTError
 from crtlib.errors.manifest import (
@@ -47,7 +49,7 @@ from crtlib.models.common import ManifestPatchEntry
 from crtlib.models.manifest import ReleaseManifest
 from crtlib.models.patch import Patch, PatchMeta
 from crtlib.models.patchset import GitHubPullRequest
-from crtlib.utils import parse_version, split_version_into_paths
+from crtlib.utils import split_version_into_paths
 
 logger = parent_logger.getChild("manifest")
 

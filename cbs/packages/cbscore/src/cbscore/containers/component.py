@@ -46,6 +46,8 @@ def _get_container_desc(
     )
 
     def _find_container_root_path(loc: Path) -> Path:
+        # this is a copy of 'cbscore.versions.utils.parse_version()'s
+        # match pattern. We should deduplicate this at some point.
         rs = r"""
             ^
             (?:(?P<prefix>(\w+))-)?
