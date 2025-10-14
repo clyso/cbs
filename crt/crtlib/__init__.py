@@ -1,4 +1,4 @@
-# Ceph Release Tool - core library
+# CBS Release Tool - core library
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify

@@ -1,4 +1,4 @@
-# Ceph Release Tool - common cli functions
+# CBS Release Tool - common cli functions
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify

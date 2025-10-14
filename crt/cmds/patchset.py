@@ -1,4 +1,4 @@
-# Ceph Release Tool - patchset commands
+# CBS Release Tool - patchset commands
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
