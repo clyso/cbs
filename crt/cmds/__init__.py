@@ -1,4 +1,4 @@
-# Ceph Release Tool - helps with managing and releasing Ceph versions
+# CBS Release Tool - helps with managing and releasing Ceph versions
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify

@@ -1,4 +1,4 @@
-# Ceph Release Tool - release commands
+# CBS Release Tool - release commands
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
