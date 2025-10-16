@@ -1,4 +1,4 @@
-# CBS - auth library - users
+# CBS server library - auth library - users
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,11 +17,12 @@ from typing import Annotated, override
 
 import pydantic
 from cbscore.errors import CESError
+from fastapi import Depends, HTTPException, status
+
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
 from cbslib.config.server import get_config
-from fastapi import Depends, HTTPException, status
 
 logger = parent_logger.getChild("users")
 

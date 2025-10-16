@@ -1,4 +1,4 @@
-# CBS - workqueue's worker - event monitor
+# CBS server library - workqueue's worker - event monitor
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,6 +18,7 @@ from datetime import datetime as dt
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import pydantic
+
 from cbslib.builds.tracker import BuildsTracker
 from cbslib.logger import logger as parent_logger
 from cbslib.worker.celery import celery_app

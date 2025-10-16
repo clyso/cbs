@@ -1,4 +1,4 @@
-# CBS - builds - types
+# CBS server library - builds - types
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify

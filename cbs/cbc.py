@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # CBC - CES Build Service Client
 # Copyright (C) 2025  Clyso GmbH
 #
@@ -431,7 +433,7 @@ def build() -> None:
     "version_types",
     type=str,
     multiple=True,
-    required=True,
+    required=False,
     metavar="TYPE=N",
     help="Type of build, including its iteration",
 )

@@ -1,4 +1,4 @@
-# CBS server library - routes
+# CBS server library - server config
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,6 +11,3 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from cbslib.logger import logger as parent_logger
-
-logger = parent_logger.getChild("routes")

@@ -1,4 +1,4 @@
-# CBS - auth library - OAuth
+# CBS server library - auth library - OAuth
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -21,9 +21,10 @@ from typing import Annotated, Any
 
 import pydantic
 from authlib.integrations.starlette_client import OAuth
+from fastapi import Depends
+
 from cbslib.auth import AuthError
 from cbslib.config.server import GoogleOAuthSecrets, get_config
-from fastapi import Depends
 
 _SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
