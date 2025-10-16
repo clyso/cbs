@@ -1,4 +1,4 @@
-# CBS - workqueue's worker - tasks
+# CBS server library - workqueue's worker - tasks
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,10 +15,11 @@ import asyncio
 from typing import Any, ParamSpec, cast, override
 
 from cbscore.versions.desc import VersionDescriptor
-from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
-from cbslib.worker.celery import celery_app, logger
 from celery import Task
 from celery.worker.request import Request
+
+from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
+from cbslib.worker.celery import celery_app, logger
 
 Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIssue]
     lambda cls, *args, **kwargs: cls,

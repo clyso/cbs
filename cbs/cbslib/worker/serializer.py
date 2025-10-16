@@ -1,4 +1,4 @@
-# CBS - workqueue's worker - pydantic model serializer
+# CBS server library - workqueue's worker - pydantic model serializer
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify

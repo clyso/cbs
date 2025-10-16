@@ -1,4 +1,4 @@
-# CBS - builds library - builder
+# CBS server library - builds library - builder
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -20,6 +20,7 @@ from typing import override
 import pydantic
 from cbscore.runner import gen_run_name, runner, stop
 from cbscore.versions.desc import VersionDescriptor
+
 from cbslib.config.server import Config, get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger

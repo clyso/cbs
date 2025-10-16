@@ -1,4 +1,4 @@
-# CBS - routes - builds
+# CBS server library - routes - builds
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,6 +15,10 @@
 from typing import Any
 
 from cbscore.versions.desc import VersionDescriptor
+from celery.result import AsyncResult
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import JSONResponse
+
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
@@ -25,9 +29,6 @@ from cbslib.builds.types import BuildEntry
 from cbslib.routes import logger as parent_logger
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from cbslib.worker.celery import celery_app
-from celery.result import AsyncResult
-from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import JSONResponse
 
 logger = parent_logger.getChild("builds")
 

@@ -1,4 +1,4 @@
-# CBS - config - user config
+# CBS server library - server config - user config
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pydantic
 from cbscore.errors import CESError
+
 from cbslib.auth.auth import CBSToken
 
 

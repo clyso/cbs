@@ -1,4 +1,4 @@
-# CBS - builds - tracker
+# CBS server library - builds - tracker
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,11 +18,12 @@ from typing import Annotated, override
 
 from cbscore.errors import CESError
 from cbscore.versions.desc import VersionDescriptor
+from celery.result import AsyncResult as CeleryTaskResult
+from fastapi import Depends
+
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.types import BuildEntry, EntryState
 from cbslib.worker import tasks
-from celery.result import AsyncResult as CeleryTaskResult
-from fastapi import Depends
 
 logger = parent_logger.getChild("tracker")
 

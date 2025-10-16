@@ -27,7 +27,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \
 WORKDIR /cbs/server
 
 COPY pyproject.toml ./
-COPY ces-build-server.py ./
+COPY cbs-server.py ./
 COPY packages/ ./packages/
 COPY cbslib/ ./cbslib/
 
@@ -50,6 +50,6 @@ ENTRYPOINT [ "uv", "run", "--no-sync", \
   "--port", "8080", \ 
   "--ssl-keyfile", "/cbs/config/cbs-key.pem", \
   "--ssl-certfile", "/cbs/config/cbs-cert.pem", \
-  "ces-build-server:factory" \
+  "cbs-server:factory" \
   ]
 

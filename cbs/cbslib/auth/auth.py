@@ -1,4 +1,4 @@
-# CBS - auth library - tokens
+# CBS server library - auth library - tokens
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -19,13 +19,14 @@ from typing import Annotated, cast
 import pydantic
 import pydantic_core
 import pyseto
-from cbslib.auth import logger as parent_logger
-from cbslib.config.server import get_config
 from fastapi import Depends, HTTPException, status
 from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
+
+from cbslib.auth import logger as parent_logger
+from cbslib.config.server import get_config
 
 logger = parent_logger.getChild("auth")
 

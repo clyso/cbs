@@ -1,4 +1,4 @@
-# CBS - routes - authentication
+# CBS server library - routes - authentication
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,13 +18,14 @@
 #
 from typing import cast
 
+from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
+
 from cbslib.auth import AuthError
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
 from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB, User
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes import logger as parent_logger
-from fastapi import APIRouter, HTTPException, Request, Response, status
-from fastapi.responses import RedirectResponse
 
 logger = parent_logger.getChild("auth")
 

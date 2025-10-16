@@ -1,4 +1,4 @@
-# CBS - config - server config
+# CBS server library - server config
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -19,8 +19,9 @@ from typing import Annotated
 
 import pydantic
 from cbscore.errors import CESError
-from cbslib.logger import logger as parent_logger
 from fastapi import Depends
+
+from cbslib.logger import logger as parent_logger
 
 logger = parent_logger.getChild("config")
 

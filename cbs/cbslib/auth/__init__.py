@@ -1,4 +1,4 @@
-# CBS - auth library
+# CBS server library - auth library
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,6 +14,7 @@
 from typing import override
 
 from cbscore.errors import CESError
+
 from cbslib.logger import logger as parent_logger
 
 

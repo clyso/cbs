@@ -1,4 +1,4 @@
-# CBS - workqueue's worker - celery
+# CBS server library - workqueue's worker - celery
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -17,10 +17,11 @@ import sys
 from typing import Any
 
 from cbscore.errors import CESError
-from cbslib.config.server import config_init
-from cbslib.worker.serializer import pydantic_dumps
 from celery import Celery, signals
 from kombu.serialization import register
+
+from cbslib.config.server import config_init
+from cbslib.worker.serializer import pydantic_dumps
 
 celery_app = Celery(
     __name__,
