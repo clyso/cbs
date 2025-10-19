@@ -257,8 +257,8 @@ Host {remote_name}
                 ) from e
 
             try:
-                username = https_secret[entry.username]
-                password = https_secret[entry.password]
+                username = https_secret[entry.username].rstrip()
+                password = https_secret[entry.password].rstrip()
             except KeyError as e:
                 raise SecretsVaultError(
                     msg=f"error obtaining https credentials: {e}"
@@ -289,7 +289,7 @@ Host {remote_name}
                 msg=f"error obtaining harbor credentials: {e}"
             ) from e
 
-        return address, username, password
+        return address.rstrip(), username.rstrip(), password.rstrip()
 
     def s3_creds(self) -> tuple[str, str, str]:
         try:
@@ -379,7 +379,7 @@ Host {remote_name}
             self.log.exception(msg)
             raise SecretsVaultError(msg) from e
 
-        yield gpg_pvt_path, gpg_pvt_passphrase
+        yield gpg_pvt_path, gpg_pvt_passphrase.rstrip()
 
         try:
             with gpg_pvt_path.open("bw") as f:
