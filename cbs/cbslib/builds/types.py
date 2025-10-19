@@ -15,6 +15,7 @@ import enum
 from datetime import datetime as dt
 
 import pydantic
+
 from cbscore.versions.desc import VersionDescriptor
 
 

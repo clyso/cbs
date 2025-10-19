@@ -10,6 +10,6 @@
   ],
   "baselineFile": ".basedpyright/baseline.json",
   "extraPaths": [
-    "cbs/packages/cbscore/src"
+    "cbscore/src"
   ]
 }

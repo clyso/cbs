@@ -14,11 +14,11 @@
 
 from typing import Any
 
-from cbscore.versions.desc import VersionDescriptor
 from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
+from cbscore.versions.desc import VersionDescriptor
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,

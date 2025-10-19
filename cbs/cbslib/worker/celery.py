@@ -16,10 +16,10 @@ import os
 import sys
 from typing import Any
 
-from cbscore.errors import CESError
 from celery import Celery, signals
 from kombu.serialization import register
 
+from cbscore.errors import CESError
 from cbslib.config import config_init
 from cbslib.worker.serializer import pydantic_dumps
 

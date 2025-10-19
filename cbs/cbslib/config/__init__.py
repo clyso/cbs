@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Annotated
 
 import pydantic
-from cbscore.errors import CESError
 from fastapi import Depends
 
+from cbscore.errors import CESError
 from cbslib.config.server import ServerConfig
 from cbslib.config.worker import WorkerConfig
 

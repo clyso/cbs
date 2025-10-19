@@ -26,16 +26,17 @@ from typing import Any, Concatenate, ParamSpec, TypeVar, override
 import click
 import httpx
 import pydantic
-from cbscore.errors import CESError
-from cbscore.logger import logger as parent_logger
-from cbscore.versions.create import create
-from cbscore.versions.desc import VersionDescriptor
-from cbscore.versions.errors import VersionError
 from cbslib.auth.users import User
 from cbslib.builds.types import BuildEntry
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
+
+from cbscore.errors import CESError
+from cbscore.logger import logger as parent_logger
+from cbscore.versions.create import create
+from cbscore.versions.desc import VersionDescriptor
+from cbscore.versions.errors import VersionError
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 

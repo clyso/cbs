@@ -16,9 +16,9 @@ import re
 from pathlib import Path
 from typing import cast
 
-from cbscore.versions.utils import parse_version
 from rich.tree import Tree
 
+from cbscore.versions.utils import parse_version
 from crtlib.errors.stages import MalformedStageTagError
 from crtlib.models.patch import Patch
 

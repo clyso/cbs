@@ -16,8 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pydantic
-from cbscore.errors import CESError
 
+from cbscore.errors import CESError
 from cbslib.logger import logger as parent_logger
 
 logger = parent_logger.getChild("config")

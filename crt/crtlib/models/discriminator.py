@@ -15,6 +15,7 @@
 from typing import Annotated, Any, cast
 
 import pydantic
+
 from crtlib.models.common import ManifestPatchEntry, ManifestPatchSetEntryType
 from crtlib.models.patch import PatchMeta
 from crtlib.models.patchset import CustomPatchSet, GitHubPullRequest

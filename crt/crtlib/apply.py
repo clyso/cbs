@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import override
 
 import git
+
 from crtlib.git_utils import (
     SHA,
     GitAMApplyError,
