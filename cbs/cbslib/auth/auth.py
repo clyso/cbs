@@ -26,7 +26,7 @@ from fastapi.security import (
 )
 
 from cbslib.auth import logger as parent_logger
-from cbslib.config.server import get_config
+from cbslib.config import get_config
 
 logger = parent_logger.getChild("auth")
 
@@ -44,17 +44,18 @@ class CBSToken(pydantic.BaseModel):
 def token_create(user: str) -> CBSToken:
     """Create a new CBSToken, including its paseto token, for the given user."""
     config = get_config()
+    assert config.server, "unexpected server config missing"
     expiration = (
         None
-        if not config.secrets.server.token_secret_ttl_minutes
+        if not config.server.secrets.token_secret_ttl_minutes
         else dt.now(datetime.UTC)
-        + td(minutes=config.secrets.server.token_secret_ttl_minutes)
+        + td(minutes=config.server.secrets.token_secret_ttl_minutes)
     )
     info = CBSTokenInfo(user=user, expires=expiration)
     info_payload = pydantic_core.to_jsonable_python(info)  # pyright: ignore[reportAny]
 
     key = pyseto.Key.new(
-        version=4, purpose="local", key=config.secrets.server.token_secret_key
+        version=4, purpose="local", key=config.server.secrets.token_secret_key
     )
     token = pyseto.encode(  # pyright: ignore[reportUnknownMemberType]
         key,
@@ -88,8 +89,9 @@ def token_decode(token: _AuthToken) -> CBSTokenInfo:
     print(f"token_decode, token: {token}")
 
     config = get_config()
+    assert config.server, "unexpected server config missing"
     key = pyseto.Key.new(
-        version=4, purpose="local", key=config.secrets.server.token_secret_key
+        version=4, purpose="local", key=config.server.secrets.token_secret_key
     )
     try:
         decoded_token = pyseto.decode(key, token)

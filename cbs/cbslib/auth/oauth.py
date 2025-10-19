@@ -24,7 +24,8 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends
 
 from cbslib.auth import AuthError
-from cbslib.config.server import GoogleOAuthSecrets, get_config
+from cbslib.config import get_config
+from cbslib.config.server import GoogleOAuthSecrets
 
 _SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
@@ -74,7 +75,9 @@ class _GoogleInvalidTokenResponseError(AuthError):
 def oauth_init_config() -> None:
     global _oauth_config
     config = get_config()
-    _oauth_config = config.get_oauth_config()
+
+    assert config.server, "unexpected missing server config"
+    _oauth_config = config.server.get_oauth_config()
 
 
 def get_oauth_config() -> GoogleOAuthSecrets:

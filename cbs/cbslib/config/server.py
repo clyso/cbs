@@ -1,4 +1,4 @@
-# CBS server library - server config
+# CBS server library - config - server
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,13 +13,10 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Annotated
 
 import pydantic
 from cbscore.errors import CESError
-from fastapi import Depends
 
 from cbslib.logger import logger as parent_logger
 
@@ -65,30 +62,6 @@ class ServerSecretsConfig(pydantic.BaseModel):
     token_secret_ttl_minutes: int
 
 
-class VaultSecretsConfig(pydantic.BaseModel):
-    addr: str
-    role_id: str
-    secret_id: str
-    transit: str
-
-
-# config
-#
-class SecretsConfig(pydantic.BaseModel):
-    server: ServerSecretsConfig
-    vault: VaultSecretsConfig
-
-
-class PathsConfig(pydantic.BaseModel):
-    secrets_file_path: Path
-    tools_path: Path
-    scratch_path: Path
-    scratch_container_path: Path
-    components_path: Path
-    containers_path: Path
-    ccache_path: Path
-
-
 class ServerConfig(pydantic.BaseModel):
     # ssl certs
     #
@@ -99,66 +72,9 @@ class ServerConfig(pydantic.BaseModel):
     #
     db_path: Path
 
-
-class WorkerConfig(pydantic.BaseModel):
-    paths: PathsConfig
-
-    broker_url: str
-    result_backend_url: str
-
-
-class Config(pydantic.BaseModel):
-    secrets: SecretsConfig
-    server: ServerConfig
-    worker: WorkerConfig
-
-    @classmethod
-    def load(cls, *, path: Path | None = None) -> Config:
-        env_conf = os.getenv("CBS_CONFIG")
-        env_conf_path = Path(env_conf) if env_conf else None
-        config_path = path if path else env_conf_path
-        if not config_path:
-            raise CESError(msg="missing config")
-
-        if not config_path.exists():
-            raise CESError(msg=f"config at '{config_path}' does not exist")
-
-        with config_path.open("r") as f:
-            try:
-                return Config.model_validate_json(f.read())
-            except pydantic.ValidationError:
-                raise CESError(msg=f"malformed config at '{config_path}'") from None
-            except Exception as e:
-                raise CESError(
-                    msg=f"unexpected error loading config at '{config_path}': {e}"
-                ) from e
+    # server secrets
+    #
+    secrets: ServerSecretsConfig
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
-        return _GoogleOAuthSecrets.load(Path(self.secrets.server.oauth2_secrets_file))
-
-
-_config: Config | None = None
-
-
-def config_init() -> Config:
-    global _config
-    if _config:
-        return _config
-
-    _config = Config.load()
-    return _config
-
-
-def cbs_config() -> Config:
-    if not _config:
-        raise CESError(msg="config not set!")
-    return _config
-
-
-def get_config() -> Config:
-    if not _config:
-        raise CESError(msg="config not set!")
-    return _config.model_copy(deep=True)
-
-
-CBSConfig = Annotated[Config, Depends(cbs_config)]
+        return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))

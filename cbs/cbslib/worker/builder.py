@@ -21,7 +21,7 @@ import pydantic
 from cbscore.runner import gen_run_name, runner, stop
 from cbscore.versions.desc import VersionDescriptor
 
-from cbslib.config.server import Config, get_config
+from cbslib.config import Config, get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger
 
@@ -56,6 +56,11 @@ class WorkerBuilder:
         self._name = gen_run_name("cbs_worker_")
         logger.info(f"init builder, name: {self._name}")
 
+        if not self._config.broker_url or not self._config.result_backend_url:
+            msg = "broker or result backend url missing from config"
+            logger.error(msg)
+            raise WorkerBuilderError(msg)
+
     async def pretend_build(self) -> None:
         await asyncio.sleep(300)
 
@@ -63,8 +68,16 @@ class WorkerBuilder:
         logger.info(f"kill builder {self._name}")
 
     async def build(self, version_desc: VersionDescriptor) -> None:
+        if not self._config.worker:
+            msg = "worker config missing"
+            logger.error(msg)
+            raise WorkerBuilderError(msg)
+
+        logger.debug(f"starting build for version '{version_desc.version}'")
         if self._build:
             raise WorkerBuilderError(msg="build already exists?")
+
+        assert self._config.worker, "unexpected missing worker config"
 
         _, desc_file = tempfile.mkstemp(prefix="cbs_worker_")
         desc_file_path = Path(desc_file)
@@ -77,21 +90,20 @@ class WorkerBuilder:
         try:
             await runner(
                 desc_file_path,
-                self._config.worker.paths.tools_path,
-                self._config.worker.paths.secrets_file_path,
+                self._config.worker.paths.cbs_path,
+                self._config.secrets_file_path,
                 self._config.worker.paths.scratch_path,
                 self._config.worker.paths.scratch_container_path,
                 self._config.worker.paths.components_path,
-                self._config.worker.paths.containers_path,
-                self._config.secrets.vault.addr,
-                self._config.secrets.vault.role_id,
-                self._config.secrets.vault.secret_id,
-                self._config.secrets.vault.transit,
+                self._config.vault_config,
                 run_name=self._name,
                 ccache_path=self._config.worker.paths.ccache_path,
-                timeout=2 * 60 * 60,  # TODO: make this configurable
+                timeout=(
+                    self._config.worker.build_timeout_seconds
+                    if self._config.worker.build_timeout_seconds
+                    else 2 * 60 * 60
+                ),
             )
-            pass
         except Exception as e:
             msg = f"error building '{version_desc.version}': {e}"
             logger.exception(msg)
