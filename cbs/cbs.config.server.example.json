@@ -1,0 +1,17 @@
+{
+  "vault_config": "/cbs/config/cbs.vault.json",
+  "server": {
+    "cert_path": "/cbs/config/cbs.cert.pem",
+    "key_path": "/cbs/config/cbs.key.pem",
+    "db_path": "/cbs/data/cbs.db",
+    "secrets": {
+      "oauth2_secrets_file": "/cbs/config/google-client-cbs.json",
+      "session_secret_key": "session-secret-key",
+      "token_secret_key": "token-secret-key",
+      "token_secret_ttl_minutes": 30
+    }
+  },
+  "broker_url": "redis://cbs-redis:6379/0",
+  "result_backend_url": "redis://cbs-redis:6379/0",
+  "secrets_file_path": "/cbs/config/secrets.json"
+}

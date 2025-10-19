@@ -1,11 +1,15 @@
 #!/bin/bash
 
+components=()
+
 ourdir="$(dirname "$(realpath "$0")")"
 localdir="${ourdir}/_local"
 rundir="${localdir}/cbs"
 
-server_cfg="${rundir}/cbs-config.server.json"
-worker_cfg="${rundir}/cbs-config.worker.json"
+components_dir="${rundir}/components"
+vault_cfg="${rundir}/cbs.vault.json"
+server_cfg="${rundir}/cbs.config.server.json"
+worker_cfg="${rundir}/cbs.config.worker.json"
 google_client_secrets="${rundir}/google-client-cbs.json"
 cbs_cert="${rundir}/cbs-cert.pem"
 cbs_key="${rundir}/cbs-key.pem"
@@ -20,7 +24,7 @@ up() {
     --podman-run-args="--rm" -f ./podman-compose.cbs.yaml up --build
 }
 
-gen_keys() {
+gen_server_keys() {
   if [[ -e "${cbs_key}" ]] && [[ -e "${cbs_cert}" ]]; then
     echo "PEM key and cert already exist, not overwriting"
     return
@@ -33,48 +37,22 @@ gen_keys() {
   )
 }
 
-set_keys() {
+set_server_keys() {
   local src_template="${1}"
   local tgt_file="${2}"
   local srv_key="${3}"
   local tkn_key="${4}"
 
-  (jq ".secrets.server.session_secret_key = \"${srv_key}\" |
-    .secrets.server.token_secret_key = \"${tkn_key}\"" \
+  (jq ".server.secrets.session_secret_key = \"${srv_key}\" |
+    .server.secrets.token_secret_key = \"${tkn_key}\"" \
     "${src_template}" >"${tgt_file}") || (
     echo "error: failed to set keys in ${tgt_file}" >/dev/stderr && exit 1
   )
 }
 
-set_vault_creds() {
-  local src_file="${1}"
-
-  [[ -z "${VAULT_ADDR}" ]] && "error: missing VAULT_ADDR" >/dev/stderr && exit 1
-  [[ -z "${VAULT_ROLE_ID}" ]] &&
-    "error: missing VAULT_ROLE_ID" >/dev/stderr &&
-    exit 1
-  [[ -z "${VAULT_SECRET_ID}" ]] &&
-    "error: missing VAULT_SECRET_ID" >/dev/stderr &&
-    exit 1
-  [[ -z "${VAULT_TRANSIT}" ]] && echo "error: missing VAULT_TRANSIT" >/dev/stderr && exit 1
-
-  tmp_file=$(mktemp)
-
-  (jq ".secrets.vault.addr = \"${VAULT_ADDR}\" |
-    .secrets.vault.role_id = \"${VAULT_ROLE_ID}\" |
-    .secrets.vault.secret_id = \"${VAULT_SECRET_ID}\" |
-    .secrets.vault.transit = \"${VAULT_TRANSIT}\"" \
-    "${src_file}" >"${tmp_file}") || (
-    echo "error: failed to set vault creds in ${src_file}" >/dev/stderr && exit 1
-  )
-  cp "${tmp_file}" "${src_file}" || (echo "error: unable to copy vault creds" >/dev/stderr && exit 1)
-  rm "${tmp_file}"
-}
-
 prepare() {
   local scratch_dir="${1}"
   local google_client_secrets_src="${2}"
-  local vault_env_src="${3}"
 
   [[ -z "${scratch_dir}" ]] &&
     echo "error: missing scratch dir argument" >/dev/stderr &&
@@ -82,10 +60,6 @@ prepare() {
 
   [[ -z "${google_client_secrets_src}" ]] &&
     echo "error: missing google client secrets source argument" >/dev/stderr &&
-    exit 1
-
-  [[ -z "${vault_env_src}" ]] &&
-    echo "error: missing vault env source argument" >/dev/stderr &&
     exit 1
 
   [[ ! -d "${localdir}" ]] && mkdir -p "${localdir}"
@@ -106,39 +80,63 @@ prepare() {
   [[ ! -e "${rundir}"/data ]] &&
     mkdir "${rundir}"/data
 
-  gen_keys
+  gen_server_keys
 
   if [[ ! -e "${server_cfg}" ]] || [[ ! -e "${worker_cfg}" ]]; then
     srv_key=$(openssl rand -hex 32)
     tkn_key=$(openssl rand -hex 32)
 
     tmp_server_cfg=$(mktemp)
-    tmp_worker_cfg=$(mktemp)
 
-    set_keys "${ourdir}"/cbs/cbs-config.server.example.json \
+    set_server_keys "${ourdir}"/cbs/cbs.config.server.example.json \
       "${tmp_server_cfg}" "${srv_key}" "${tkn_key}"
-    set_keys "${ourdir}"/cbs/cbs-config.worker.example.json \
-      "${tmp_worker_cfg}" "${srv_key}" "${tkn_key}"
-
-    # shellcheck disable=SC1090
-    source "${vault_env_src}"
-
-    set_vault_creds "${tmp_server_cfg}"
-    set_vault_creds "${tmp_worker_cfg}"
 
     cp "${tmp_server_cfg}" "${server_cfg}" || (
       echo "error: unable to copy server config" >/dev/stderr && exit 1
     )
-    cp "${tmp_worker_cfg}" "${worker_cfg}" || (
+    cp "${ourdir}"/cbs/cbs.config.worker.example.json "${worker_cfg}" || (
       echo "error: unable to copy worker config" >/dev/stderr && exit 1
     )
-    rm "${tmp_server_cfg}" "${tmp_worker_cfg}"
   fi
 
   cp "${google_client_secrets_src}" "${google_client_secrets}" || (
     echo "error: unable to copy google client secrets" >/dev/stderr &&
       exit 1
   )
+
+  if [[ ! -e "${vault_cfg}" ]]; then
+    cp "${ourdir}"/cbs/cbs.vault.example.json "${vault_cfg}" || (
+      echo "error: unable to copy vault config" >/dev/stderr && exit 1
+    )
+    cat <<EOF >/dev/stdout
+
+!! please configure the vault access credentials at
+  -> ${vault_cfg} <-
+!! keep in mind that only one authentication method will be used!
+
+EOF
+  fi
+
+  [[ -e "${components_dir}" ]] && (rm -rf "${components_dir}" || (
+    echo "error: unable to remove old components dir" >/dev/stderr && exit 1
+  ))
+
+  mkdir "${components_dir}" || (
+    echo "error: unable to create components dir" >/dev/stderr && exit 1
+  )
+  for comp_dir in "${components[@]}"; do
+    cp -r "${comp_dir}"/* "${components_dir}"/ || (
+      echo "error: unable to copy components from '${comp_dir}'" >/dev/stderr &&
+        exit 1
+    )
+    echo "=> using components from '${comp_dir}'"
+  done
+
+  available_components=$(ls "${components_dir}")
+  [[ -z "${available_components}" ]] &&
+    echo "error: no components found in '${components_dir}'" >/dev/stderr &&
+    exit 1
+  echo "=> available components: ${available_components}"
 
   echo "=> fully prepared CBS environment in '${rundir}'"
 }
@@ -175,8 +173,8 @@ Options for 'prepare':
   -f | --force                    force preparing from scratch
   --google-client-secrets <PATH>  path to google client app secrets file
                                   [required]
-  --vault-env <PATH>              path to vaul creds environment file
-                                  [required]
+  --components <PATH>             path to a directory with components
+                                  [multiple] (default: ./components)
 
 EOF
 }
@@ -208,16 +206,15 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 1
       ;;
-    --vault-env)
+    --components)
       [[ -z $2 ]] &&
-        echo "error: missing 'vault-env' argument" >/dev/stderr &&
+        echo "error: missing 'components' argument" >/dev/stderr &&
         usage &&
         exit 1
-      vault_env_src="${2}"
-      if [[ ! -e "${vault_env_src}" ]]; then
-        echo "error: vault env file at '${vault_env_src}' not found" >/dev/stderr
+      [[ ! -d $2 ]] &&
+        echo "error: components directory at '${2}' not found" >/dev/stderr &&
         exit 1
-      fi
+      components+=("${2}")
       shift 1
       ;;
     -h | --help)
@@ -254,7 +251,11 @@ case ${cmd} in
       rm -rf "${rundir}"
     fi
 
-    prepare "${args[0]}" "${google_client_secrets_src}" "${vault_env_src}"
+    [[ "${#components[@]}" -eq 0 ]] &&
+      echo "=> using default components from './components'" &&
+      components=("./components")
+
+    prepare "${args[0]}" "${google_client_secrets_src}"
     ;;
   up)
     check

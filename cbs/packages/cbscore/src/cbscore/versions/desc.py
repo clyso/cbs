@@ -17,6 +17,7 @@ import errno
 from pathlib import Path
 
 import pydantic
+
 from cbscore.versions.errors import (
     InvalidVersionDescriptorError,
     NoSuchVersionDescriptorError,

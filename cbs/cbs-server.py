@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import errno
 import sys
 import threading
 from collections.abc import AsyncGenerator
@@ -29,7 +30,7 @@ from cbscore.errors import CESError
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.builds.tracker import get_builds_tracker
-from cbslib.config.server import config_init
+from cbslib.config import config_init
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds
@@ -92,8 +93,12 @@ def factory() -> FastAPI:
         logger.exception("error setting up config state")
         sys.exit(1)
 
+    if not config.server:
+        logger.error("missing server config")
+        sys.exit(errno.EINVAL)
+
     api.add_middleware(
-        SessionMiddleware, secret_key=config.secrets.server.session_secret_key
+        SessionMiddleware, secret_key=config.server.secrets.session_secret_key
     )
 
     api.include_router(auth.router)
@@ -108,6 +113,9 @@ def factory() -> FastAPI:
 def main() -> None:
     ourname = Path(__file__).stem
     config = config_init()
+    if not config.server:
+        print("missing server config")
+        sys.exit(errno.EINVAL)
 
     uvicorn.run(
         app=f"{ourname}:factory",

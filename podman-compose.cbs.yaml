@@ -18,10 +18,11 @@ services:
     entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
-      - ./_local/cbs/cbs-config.worker.json:/cbs/config/cbs-config.json
-      - ./cbs:/cbs/tools
+      - ./_local/cbs/cbs.config.worker.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs.vault.json:/cbs/config/cbs.vault.json
+      - ./cbs:/cbs/src
 
-      - ./_local/secrets.json:/cbs/secrets/secrets.json
+      - ./_local/secrets.json:/cbs/config/secrets.json
       - ./_local/cbs/scratch:/cbs/scratch
       - ./_local/cbs/scratch/containers:/var/lib/containers
       - ./_local/cbs/scratch/ccache:/cbs/ccache
@@ -36,6 +37,11 @@ services:
     environment:
       CBS_CONFIG: /cbs/config/cbs-config.json
       CBS_DEBUG: 1
+    # We require the host network to be able to properly access interfaces
+    # such as those of a vpn. This means the cbs worker is not in the same
+    # network as the other containers, and must access the redis broker by
+    # its external address (in this case, localhost). This must be taken
+    # into account when configuring the worker.
     network_mode: host
     depends_on:
       - redis
@@ -48,14 +54,15 @@ services:
     restart: "no"
     privileged: true
     volumes:
-      - ./_local/cbs/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs.config.server.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs.vault.json:/cbs/config/cbs.vault.json
 
-      - ./_local/cbs/google-client-cbs.json:/cbs/secrets/google-client-cbs.json
-      - ./_local/secrets.json:/cbs/secrets/secrets.json
+      - ./_local/cbs/google-client-cbs.json:/cbs/config/google-client-cbs.json
+      - ./_local/secrets.json:/cbs/config/secrets.json
       - ./_local/cbs/data:/cbs/data
       - ./_local/cbs/cbs-cert.pem:/cbs/config/cbs-cert.pem
       - ./_local/cbs/cbs-key.pem:/cbs/config/cbs-key.pem
-      - ./cbs:/cbs/tools
+      # - ./cbs:/cbs/tools
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -68,11 +75,11 @@ services:
   flower:
     build: ./cbs
     container_name: clyso-cbs-worker-flower
-    entrypoint: uv run --no-sync celery --broker=redis://redis:6379/0 -A cbslib.worker flower
+    entrypoint: uv run --no-sync celery --broker=redis://cbs-redis:6379/0 -A cbslib.worker flower
     ports:
       - "5555:5555"
     volumes:
-      - ./_local/cbs/cbs-config.server.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/cbs.config.worker.json:/cbs/config/cbs-config.json
     environment:
       CBS_CONFIG: /cbs/config/cbs-config.json
       CBS_DEBUG: 1
@@ -83,6 +90,7 @@ services:
       - redis
 
   redis:
+    container_name: cbs-redis
     image: redis:7
     ports:
       - "6379:6379"

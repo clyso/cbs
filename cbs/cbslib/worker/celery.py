@@ -20,7 +20,7 @@ from cbscore.errors import CESError
 from celery import Celery, signals
 from kombu.serialization import register
 
-from cbslib.config.server import config_init
+from cbslib.config import config_init
 from cbslib.worker.serializer import pydantic_dumps
 
 celery_app = Celery(
@@ -39,8 +39,8 @@ def _init() -> None:
         logger.exception("unable to init config")
         sys.exit(1)
 
-    celery_app.conf.broker_url = config.worker.broker_url
-    celery_app.conf.result_backend = config.worker.result_backend_url
+    celery_app.conf.broker_url = config.broker_url
+    celery_app.conf.result_backend = config.result_backend_url
 
     register(
         "pydantic",
