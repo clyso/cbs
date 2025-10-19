@@ -77,7 +77,7 @@ async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
     cmd: CmdArgs = [
         "cosign",
         "sign",
-        "--key=hashivault://container-image-key",
+        "--key=hashivault://ces-image-key",
         PasswordArg("--registry-username", username),
         PasswordArg("--registry-password", password),
         "--tlog-upload=false",
