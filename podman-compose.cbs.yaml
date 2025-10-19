@@ -13,7 +13,9 @@
 
 services:
   worker:
-    build: ./cbs
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs
     container_name: clyso-cbs-worker
     entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
@@ -47,7 +49,9 @@ services:
       - redis
 
   cbs:
-    build: ./cbs
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs
     container_name: clyso-cbs
     ports:
       - "8080:8080"
@@ -73,7 +77,9 @@ services:
       - redis
 
   flower:
-    build: ./cbs
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs
     container_name: clyso-cbs-worker-flower
     entrypoint: uv run --no-sync celery --broker=redis://cbs-redis:6379/0 -A cbslib.worker flower
     ports:

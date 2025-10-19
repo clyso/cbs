@@ -20,6 +20,7 @@ from typing import override
 
 import httpx
 import pydantic
+
 from crtlib.errors import CRTError
 from crtlib.logger import logger as parent_logger
 from crtlib.models.common import AuthorData

@@ -16,8 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pydantic
-from cbscore.errors import CESError
 
+from cbscore.errors import CESError
 from cbslib.auth.auth import CBSToken
 
 

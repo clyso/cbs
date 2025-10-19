@@ -17,6 +17,7 @@ from datetime import datetime as dt
 from typing import Annotated, Any, override
 
 import pydantic
+
 from crtlib.errors.patchset import EmptyPatchSetError
 from crtlib.git_utils import SHA
 from crtlib.models.common import (

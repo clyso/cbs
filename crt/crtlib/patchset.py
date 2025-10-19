@@ -18,6 +18,7 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
+
 from crtlib.errors.patchset import (
     MalformedPatchSetError,
     NoSuchPatchSetError,

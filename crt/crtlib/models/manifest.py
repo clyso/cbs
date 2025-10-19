@@ -20,6 +20,7 @@ from datetime import datetime as dt
 from random import choices
 
 import pydantic
+
 from crtlib.errors.manifest import (
     NoStageError,
 )

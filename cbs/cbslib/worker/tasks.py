@@ -14,10 +14,10 @@
 import asyncio
 from typing import Any, ParamSpec, cast, override
 
-from cbscore.versions.desc import VersionDescriptor
 from celery import Task
 from celery.worker.request import Request
 
+from cbscore.versions.desc import VersionDescriptor
 from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
 from cbslib.worker.celery import celery_app, logger
 

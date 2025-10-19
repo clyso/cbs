@@ -16,6 +16,7 @@ from datetime import datetime as dt
 from typing import override
 
 import pydantic
+
 from crtlib.git_utils import SHA
 from crtlib.models.common import (
     AuthorData,

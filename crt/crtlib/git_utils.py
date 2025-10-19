@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import cast, override
 
 import git
+
 from crtlib.errors import CRTError
 from crtlib.logger import logger as parent_logger
 

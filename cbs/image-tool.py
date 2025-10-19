@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import click
+
 from cbscore.errors import CESError
 from cbscore.images.desc import get_image_desc
 from cbscore.images.sync import sync_image

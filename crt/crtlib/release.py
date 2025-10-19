@@ -14,6 +14,7 @@
 from pathlib import Path
 
 import pydantic
+
 from crtlib.errors.release import NoSuchReleaseError, ReleaseError
 from crtlib.models.release import Release
 
