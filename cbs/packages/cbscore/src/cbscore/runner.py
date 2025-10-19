@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 import logging
+import os
 import random
 import shutil
 import string
@@ -19,7 +20,6 @@ import tempfile
 from pathlib import Path
 from typing import override
 
-from cbscore.config import Config
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
 from cbscore.utils.podman import PodmanError, podman_run, podman_stop
@@ -70,7 +70,6 @@ def _cleanup_components_dir(components_path: Path) -> None:
 async def runner(
     desc_file_path: Path,
     cbs_path: Path,
-    entrypoint_path: Path,
     secrets_path: Path,
     scratch_path: Path,
     scratch_containers_path: Path,
@@ -79,11 +78,20 @@ async def runner(
     *,
     run_name: str | None = None,
     ccache_path: Path | None = None,
+    entrypoint_path: Path | None = None,
     timeout: float | None = None,
     upload: bool = True,
     skip_build: bool = False,
     force: bool = False,
 ) -> None:
+    our_actual_loc = Path(__file__).parent
+
+    entrypoint_path = (
+        entrypoint_path
+        if entrypoint_path
+        else our_actual_loc / "_tools" / "cbscore-entrypoint.sh"
+    ).resolve()
+
     logger.info(f"""run the runner:
     desc file path:          {desc_file_path}
     cbs path:                {cbs_path}
@@ -98,6 +106,21 @@ async def runner(
     upload: {upload}, skip_build: {skip_build}, force: {force}
 
 """)
+
+    if not entrypoint_path.exists() or not entrypoint_path.is_file():
+        msg = f"error: unable to find entrypoint script at '{entrypoint_path}'"
+        logger.error(msg)
+        raise RunnerError(msg)
+
+    if entrypoint_path.is_symlink():
+        msg = f"error: entrypoint script at '{entrypoint_path}' can't be a symlink"
+        logger.error(msg)
+        raise RunnerError(msg)
+
+    if not os.access(entrypoint_path, os.X_OK):
+        msg = f"error: entrypoint script at '{entrypoint_path}' is not executable"
+        logger.error(msg)
+        raise RunnerError(msg)
 
     if not desc_file_path.exists():
         logger.error(f"version descriptor does not exist at '{desc_file_path}'")
@@ -149,10 +172,6 @@ async def runner(
         rc, _, stderr = await podman_run(
             image=desc.distro,
             env={
-                # "VAULT_ADDR": vault_addr,
-                # "VAULT_ROLE_ID": vault_role_id,
-                # "VAULT_SECRET_ID": vault_secret_id,
-                # "VAULT_TRANSIT": vault_transit,
                 "CBS_DEBUG": "1"
                 if logger.getEffectiveLevel() == logging.DEBUG
                 else "0",
