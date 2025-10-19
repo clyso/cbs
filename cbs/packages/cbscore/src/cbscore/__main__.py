@@ -16,7 +16,6 @@
 import asyncio
 import errno
 import logging
-import os
 import sys
 from collections.abc import Callable
 from functools import update_wrapper
@@ -349,32 +348,6 @@ def cmd_build(
     skip_build: bool,
     force: bool,
 ) -> None:
-    # our_dir = Path(sys.argv[0]).parent
-    our_actual_loc = Path(__file__).parent
-
-    entrypoint_path = (
-        cbs_entrypoint_path
-        if cbs_entrypoint_path
-        else our_actual_loc / "_tools" / "cbscore-entrypoint.sh"
-    ).resolve()
-    if not entrypoint_path.exists() or not entrypoint_path.is_file():
-        print(f"error: unable to find entrypoint script at '{entrypoint_path}'")
-        sys.exit(errno.ENOENT)
-
-    if entrypoint_path.is_symlink():
-        print(f"error: entrypoint script at '{entrypoint_path}' can't be a symlink")
-        sys.exit(errno.EINVAL)
-
-    if not os.access(entrypoint_path, os.X_OK):
-        print(f"error: entrypoint script at '{entrypoint_path}' is not executable")
-        sys.exit(errno.EACCES)
-
-    print(f"""
-runner loc path: {our_actual_loc}
-     entrypoint: {entrypoint_path}
-       cbs path: {cbs_path}
-""")
-
     assert ctx.config_path
     assert ctx.vault_config_path
 
@@ -390,13 +363,13 @@ runner loc path: {our_actual_loc}
             runner(
                 desc_path,
                 cbs_path,
-                entrypoint_path,
                 config.secrets_path,
                 config.scratch_path,
                 config.scratch_containers_path,
                 config.components_path,
                 ctx.vault_config_path,
                 ccache_path=config.ccache_path,
+                entrypoint_path=cbs_entrypoint_path,
                 timeout=timeout,
                 upload=upload,
                 skip_build=skip_build,
