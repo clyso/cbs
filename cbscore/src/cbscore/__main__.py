@@ -285,8 +285,8 @@ vault config: {vault_config_path}
     required=True,
 )
 @click.option(
-    "--cbs-path",
-    "cbs_path",
+    "--cbscore-path",
+    "cbscore_path",
     help="Path to the 'cbs' directory.",
     type=click.Path(
         exists=True,
@@ -341,7 +341,7 @@ vault config: {vault_config_path}
 def cmd_build(
     ctx: Ctx,
     desc_path: Path,
-    cbs_path: Path,
+    cbscore_path: Path,
     cbs_entrypoint_path: Path | None,
     upload: bool,
     timeout: float | None,
@@ -362,7 +362,7 @@ def cmd_build(
         loop.run_until_complete(
             runner(
                 desc_path,
-                cbs_path,
+                cbscore_path,
                 config.secrets_path,
                 config.scratch_path,
                 config.scratch_containers_path,
