@@ -69,7 +69,7 @@ def _cleanup_components_dir(components_path: Path) -> None:
 
 async def runner(
     desc_file_path: Path,
-    cbs_path: Path,
+    cbscore_path: Path,
     secrets_path: Path,
     scratch_path: Path,
     scratch_containers_path: Path,
@@ -94,7 +94,7 @@ async def runner(
 
     logger.info(f"""run the runner:
     desc file path:          {desc_file_path}
-    cbs path:                {cbs_path}
+    cbscore path:            {cbscore_path}
     entrypoint:              {entrypoint_path}
     secrets file path:       {secrets_path}
     scratch path:            {scratch_path}
@@ -141,7 +141,7 @@ async def runner(
 
     podman_volumes = {
         desc_file_path.resolve().as_posix(): desc_mount_loc,
-        cbs_path.resolve().as_posix(): "/runner/cbs",
+        cbscore_path.resolve().as_posix(): "/runner/cbscore",
         entrypoint_path.resolve().as_posix(): "/runner/entrypoint.sh",
         vault_config_path.resolve().as_posix(): "/runner/cbs-build.vault.json",
         secrets_path.resolve().as_posix(): "/runner/secrets.json",

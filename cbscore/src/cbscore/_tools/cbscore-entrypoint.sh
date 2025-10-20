@@ -14,7 +14,7 @@
 # GNU General Public License for more details.
 
 RUNNER_PATH="/runner"
-CBS_PATH="${RUNNER_PATH}/cbs"
+CBSCORE_PATH="${RUNNER_PATH}/cbscore"
 
 if [[ -z ${HOME} ]] || [[ ${HOME} == "/" ]]; then
   HOME="${RUNNER_PATH}"
@@ -42,7 +42,14 @@ uv venv --python 3.13 "${RUNNER_PATH}"/venv
 # shellcheck source=/dev/null
 source "${RUNNER_PATH}"/venv/bin/activate
 
-uv --directory "${CBS_PATH}" add --no-cache ./packages/cbscore --active || exit 1
+PATH="/root/.local/bin:$PATH"
+export PATH
+
+uv --directory "${CBSCORE_PATH}" \
+  tool install \
+  --no-cache \
+  --python 3.13 \
+  . || exit 1
 
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"

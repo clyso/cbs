@@ -343,16 +343,20 @@ version = "0.1.0"
 source = { editable = "cbscore" }
 dependencies = [
     { name = "aioboto3" },
+    { name = "click" },
     { name = "hvac" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "types-aioboto3", extra = ["full"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = "==13.3.0" },
+    { name = "click", specifier = ">=8.1.8" },
     { name = "hvac", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.11.6" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "types-aioboto3", extras = ["full"], specifier = "==13.3.0.post1" },
 ]
 

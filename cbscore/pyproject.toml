@@ -9,8 +9,10 @@ license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
   "aioboto3==13.3.0",
+  "click>=8.1.8",
   "hvac>=2.3.0",
   "pydantic>=2.11.6",
+  "pyyaml>=6.0.2",
   "types-aioboto3[full]==13.3.0.post1",
 ]
 
