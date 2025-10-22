@@ -24,6 +24,7 @@ from typing import Concatenate, ParamSpec, TypeVar, cast
 
 import click
 
+from cbscore.builder import BuilderError
 from cbscore.builder.builder import Builder
 from cbscore.config import Config, VaultAppRoleConfig, VaultConfig, VaultUserPassConfig
 from cbscore.errors import CESError, NoSuchVersionError
@@ -511,24 +512,28 @@ def cmd_runner_build(
         sys.exit(errno.ENOTRECOVERABLE)
 
     print(f"run builder, desc = '{desc_path}'")
-    builder = Builder(
-        desc,
-        vault_config,
-        scratch_dir,
-        secrets_path,
-        components_path,
-        upload=upload,
-        ccache_path=ccache_path,
-        skip_build=skip_build,
-        force=force,
-    )
+    try:
+        builder = Builder(
+            desc,
+            vault_config,
+            scratch_dir,
+            secrets_path,
+            components_path,
+            upload=upload,
+            ccache_path=ccache_path,
+            skip_build=skip_build,
+            force=force,
+        )
+    except BuilderError as e:
+        logger.error(f"unable to initialize builder: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         loop = asyncio.new_event_loop()
         loop.run_until_complete(builder.run())
-    except Exception:
-        logger.exception("unable to run build")
-        sys.exit(1)
+    except Exception as e:
+        logger.error(f"unable to run build: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
 
 @cmd_main.group("versions", help="Manipulate version descriptors.")
