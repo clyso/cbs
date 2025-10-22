@@ -27,6 +27,7 @@ from cbscore.config import VaultConfig
 from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
 from cbscore.core.component import CoreComponentLoc, load_components
+from cbscore.images.skopeo import skopeo_image_exists
 from cbscore.releases.desc import (
     ReleaseComponent,
     ReleaseDesc,
@@ -38,6 +39,7 @@ from cbscore.releases.s3 import (
     release_desc_upload,
     release_upload_components,
 )
+from cbscore.utils.containers import get_container_canonical_uri
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.utils.vault import VaultError
 from cbscore.versions.desc import VersionDescriptor
@@ -94,16 +96,26 @@ class Builder:
             await prepare_builder()
         except BuilderError as e:
             msg = f"error preparing builder: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg=msg) from e
+
+        container_img_uri = get_container_canonical_uri(self.desc)
+        if skopeo_image_exists(container_img_uri, self.secrets):
+            logger.info(f"image '{container_img_uri}' already exists -- do not build!")
+            return
 
         release_desc = await check_release_exists(self.secrets, self.desc.version)
         if not release_desc or self.force:
+            if self.force and release_desc:
+                logger.warning(
+                    f"force flag set, rebuild existing release '{self.desc.version}'"
+                )
+
             try:
                 release_desc = await self._build_release()
             except (BuilderError, Exception) as e:
                 msg = f"error building components: {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise BuilderError(msg) from e
 
             if not release_desc:
@@ -128,7 +140,7 @@ class Builder:
             await ctr_builder.finish(self.secrets)
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
     pass
