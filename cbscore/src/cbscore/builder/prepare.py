@@ -93,6 +93,7 @@ async def prepare_builder() -> None:
                 "jq",
                 "ccache",
                 "buildah",
+                "skopeo",
             ],
             outcb=_cb,
         )

@@ -57,3 +57,9 @@ class MissingTagError(CESError):
             + (f"'{self.tag}' " if self.tag is not None else "")
             + f"for '{self.for_what}'"
         )
+
+
+class ImageNotFoundError(SkopeoError):
+    @override
+    def __str__(self) -> str:
+        return "image not found" + f": {self.msg}" if self.msg else ""

@@ -23,7 +23,7 @@ import pydantic
 from cbscore.errors import CESError, UnknownRepositoryError
 from cbscore.images import get_image_name
 from cbscore.images import logger as parent_logger
-from cbscore.images.errors import SkopeoError
+from cbscore.images.errors import ImageNotFoundError, SkopeoError
 from cbscore.images.signing import sign
 from cbscore.utils import CmdArgs, Password, run_cmd
 from cbscore.utils.secrets import SecretsVaultError, SecretsVaultMgr
@@ -102,3 +102,51 @@ def skopeo_copy(src: str, dst: str, secrets: SecretsVaultMgr) -> None:
         raise SkopeoError()
 
     logger.info(f"signed image '{dst}': {out}")
+
+
+def skopeo_inspect(img: str, secrets: SecretsVaultMgr) -> str:
+    logger.debug(f"inspect image '{img}'")
+
+    try:
+        _, user, passwd = secrets.harbor_creds()
+    except SecretsVaultError as e:
+        logger.error(f"error obtaining registry credentials: {e}")
+        raise e from None
+
+    try:
+        retcode, raw_out, err = skopeo(
+            [
+                "inspect",
+                "--creds",
+                Password(f"{user}:{passwd}"),
+                f"docker://{img}",
+            ]
+        )
+    except SkopeoError as e:
+        logger.exception(f"error inspecting image '{img}'")
+        raise e  # noqa: TRY201
+
+    if retcode != 0:
+        msg = f"error inspecting image '{img}': {err}"
+        logger.error(msg)
+        if re.match(r".*not\s+found.*", err):
+            raise ImageNotFoundError(img) from None
+        raise SkopeoError(msg) from None
+
+    return raw_out
+
+
+def skopeo_image_exists(img: str, secrets: SecretsVaultMgr) -> bool:
+    logger.debug(f"check if image '{img}' exists")
+
+    try:
+        _ = skopeo_inspect(img, secrets)
+    except ImageNotFoundError:
+        logger.debug(f"image '{img}' does not exist")
+        return False
+    except SkopeoError as e:
+        logger.exception(f"error checking if image '{img}' exists")
+        raise e from None
+
+    logger.debug(f"image '{img}' exists")
+    return True
