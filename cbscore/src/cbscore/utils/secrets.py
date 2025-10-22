@@ -147,6 +147,12 @@ class SecretsVaultMgr:
         self.secrets = Secrets.read(secrets_path)
         self.log = logger.getChild("secrets-vault-mgr")
 
+        try:
+            self.vault.check_vault_connection()
+        except VaultError as e:
+            logger.error(f"error connecting to vault: {e}")
+            raise e from None
+
     @contextmanager
     def git_url_for(self, url: str) -> Generator[MaybeSecure]:
         entry: GitSSHSecrets | GitHTTPSSecrets | None = None

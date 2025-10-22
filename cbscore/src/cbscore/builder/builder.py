@@ -78,8 +78,9 @@ class Builder:
         try:
             self.secrets = SecretsVaultMgr(secrets_path, vault_config)
         except VaultError as e:
-            logger.exception("error logging in to vault")
-            raise BuilderError(msg=f"error logging in to vault: {e}") from e
+            msg = f"error logging in to vault: {e}"
+            logger.error(msg)
+            raise BuilderError(msg) from e
 
         self.components = load_components(components_path)
         if not self.components:

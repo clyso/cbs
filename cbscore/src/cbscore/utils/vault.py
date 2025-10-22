@@ -76,6 +76,15 @@ class Vault(abc.ABC):
 
         return entry
 
+    def check_vault_connection(self) -> None:
+        try:
+            with self.client():
+                pass
+        except Exception as e:
+            msg = f"unable to access vault: {e}"
+            logger.error(msg)
+            raise VaultError(msg) from e
+
 
 class VaultAppRoleBackend(Vault):
     role_id: str
@@ -105,8 +114,8 @@ class VaultAppRoleBackend(Vault):
             logger.debug("approle logged in to vault")
         except hvac.exceptions.Forbidden:
             raise VaultError(msg="permission denied logging in to vault") from None
-        except Exception:
-            raise VaultError(msg="error logging in to vault") from None
+        except Exception as e:
+            raise VaultError(msg=f"error logging in to vault: {e}") from None
 
         yield client
 
@@ -137,8 +146,8 @@ class VaultUserPassBackend(Vault):
             logger.debug("userpass logged in to vault")
         except hvac.exceptions.Forbidden:
             raise VaultError(msg="permission denied logging in to vault") from None
-        except Exception:
-            raise VaultError(msg="error logging in to vault") from None
+        except Exception as e:
+            raise VaultError(msg=f"error logging in to vault: {e}") from e
 
         yield client
 
