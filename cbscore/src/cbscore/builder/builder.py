@@ -28,10 +28,15 @@ from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
 from cbscore.core.component import CoreComponentLoc, load_components
 from cbscore.images.skopeo import skopeo_image_exists
+from cbscore.releases import ReleaseError
 from cbscore.releases.desc import (
+    ArchType,
+    BuildType,
+    ReleaseBuildEntry,
     ReleaseComponent,
+    ReleaseComponentVersion,
     ReleaseDesc,
-    release_component_desc,
+    ReleaseRPMArtifacts,
 )
 from cbscore.releases.s3 import (
     check_release_exists,
@@ -39,6 +44,7 @@ from cbscore.releases.s3 import (
     release_desc_upload,
     release_upload_components,
 )
+from cbscore.releases.utils import get_component_release_rpm
 from cbscore.utils.containers import get_container_canonical_uri
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.utils.vault import VaultError
@@ -105,34 +111,38 @@ class Builder:
             return
 
         release_desc = await check_release_exists(self.secrets, self.desc.version)
-        if not release_desc or self.force:
-            if self.force and release_desc:
+
+        # FIXME: checking for arch must be done agaisnt the version descriptor,
+        # instead of hardcoded.
+        if release_desc and release_desc.builds.get(ArchType.x86_64):
+            if not self.force:
+                logger.info(
+                    f"found existing x86_64 release for version '{self.desc.version}', "
+                    + "not building"
+                )
+                return
+            else:
                 logger.warning(
-                    f"force flag set, rebuild existing release '{self.desc.version}'"
+                    "force flag set, rebuild existing x86_64 release"
+                    + f"'{self.desc.version}'"
                 )
 
-            try:
-                release_desc = await self._build_release()
-            except (BuilderError, Exception) as e:
-                msg = f"error building components: {e}"
+        try:
+            release_desc = await self._build_release()
+        except (BuilderError, Exception) as e:
+            msg = f"error building components: {e}"
+            logger.error(msg)
+            raise BuilderError(msg) from e
+
+        if not release_desc:
+            if self.upload:
+                # this should not happen!
+                msg = "unexpected missing release descriptor!"
                 logger.error(msg)
-                raise BuilderError(msg) from e
+                raise BuilderError(msg)
 
-            if not release_desc:
-                if self.upload:
-                    # this should not happen!
-                    msg = "unexpected missing release descriptor!"
-                    logger.error(msg)
-                    raise BuilderError(msg)
-
-                logger.warning("not uploading, build done")
-                return
-
-        else:
-            logger.info(
-                f"found existing release for version '{self.desc.version}', "
-                + "not building"
-            )
+            logger.warning("not uploading, build done")
+            return
 
         try:
             ctr_builder = ContainerBuilder(self.desc, release_desc, self.components)
@@ -180,24 +190,37 @@ class Builder:
         # If the 'force' flag has been set, assume we have no existing components,
         # and force all components to be built.
         #
-        existing: dict[str, ReleaseComponent] = {}
+        existing: dict[str, ReleaseComponentVersion] = {}
 
         if not self.force:
             try:
                 to_check = {
                     comp.name: comp.long_version for comp in components.values()
                 }
-                existing = await check_released_components(self.secrets, to_check)
+                found = await check_released_components(self.secrets, to_check)
             except (BuilderError, Exception) as e:
                 msg = f"error checking released components: {e}"
                 logger.exception(msg)
                 raise BuilderError(msg) from e
 
+            # from the found components, do they match the required architecture,
+            # build type, and os version?
+            #
+            for comp_name, comp_rel in found.items():
+                for ver in comp_rel.versions:
+                    if (
+                        ver.arch == ArchType.x86_64
+                        and ver.build_type == BuildType.rpm
+                        and ver.os_version == f"el{self.desc.el_version}"
+                    ):
+                        existing[comp_name] = ver
+                        break
+
         to_build = {
             name: info for name, info in components.items() if name not in existing
         }
 
-        built: dict[str, ReleaseComponent] = {}
+        built: dict[str, ReleaseComponentVersion] = {}
         if to_build:
             # build RPMs for required components
             try:
@@ -211,25 +234,34 @@ class Builder:
             logger.warning("not uploading per config, stop release build")
             return None
 
-        comp_releases = existing.copy()
-        comp_releases.update(built)
+        comp_versions = existing.copy()
+        comp_versions.update(built)
 
-        if not comp_releases:
+        if not comp_versions:
             msg = (
-                f"no component releases found, existing: {existing.keys()}, "
+                f"no component release versions found, existing: {existing.keys()}, "
                 + f"built: {built.keys()}"
             )
             logger.error(msg)
             raise BuilderError(msg)
 
-        release = ReleaseDesc(
-            version=self.desc.version,
-            el_version=self.desc.el_version,
-            components=comp_releases,
+        release_build = ReleaseBuildEntry(
+            arch=ArchType.x86_64,
+            build_type=BuildType.rpm,
+            os_version=f"el{self.desc.el_version}",
+            components=comp_versions,
         )
 
+        # release = ReleaseDesc(
+        #     version=self.desc.version,
+        #     el_version=self.desc.el_version,
+        #     components=comp_releases,
+        # )
+
         try:
-            await release_desc_upload(self.secrets, release)
+            release = await release_desc_upload(
+                self.secrets, self.desc.version, release_build
+            )
         except (BuilderError, Exception) as e:
             msg = f"error uploading release desc to S3: {e}"
             logger.exception(msg)
@@ -239,7 +271,7 @@ class Builder:
 
     async def _build(
         self, components: dict[str, BuildComponentInfo]
-    ) -> dict[str, ReleaseComponent]:
+    ) -> dict[str, ReleaseComponentVersion]:
         """
         Build all the specified components, sign them, and upload them to S3 (unless the
         `upload` flag is `False`).
@@ -264,13 +296,13 @@ class Builder:
             return {}
 
         try:
-            comp_descs = await self._upload(components, comp_builds)
+            comp_versions = await self._upload(components, comp_builds)
         except (BuilderError, Exception) as e:
             msg = f"error uploading component builds '{comp_builds.keys()}': {e}"
             logger.exception(msg)
             raise BuilderError(msg) from e
 
-        return comp_descs
+        return comp_versions
 
     async def _build_rpms(
         self, components: dict[str, BuildComponentInfo]
@@ -321,7 +353,7 @@ class Builder:
         self,
         comp_infos: dict[str, BuildComponentInfo],
         comp_builds: dict[str, ComponentBuild],
-    ) -> dict[str, ReleaseComponent]:
+    ) -> dict[str, ReleaseComponentVersion]:
         """
         Upload the provided component builds to S3, along with a component release
         descriptor.
@@ -352,10 +384,27 @@ class Builder:
             logger.exception(msg)
             raise BuilderError(msg) from e
 
+        # obtain existing released components at their versions.
+        #
+        comp_versions = {name: info.long_version for name, info in comp_infos.items()}
+        try:
+            existing_components = await check_released_components(
+                self.secrets, comp_versions
+            )
+        except ReleaseError as e:
+            msg = f"error checking existing released components: {e}"
+            logger.error(msg)
+            raise BuilderError(msg) from e
+        except Exception as e:
+            msg = f"unknown error checking existing released components: {e}"
+            logger.error(msg)
+            raise BuilderError(msg) from e
+
         # create individual component's release descriptors, which will then
         # be returned.
         #
         comp_releases: dict[str, ReleaseComponent] = {}
+        comp_rel_versions: dict[str, ReleaseComponentVersion] = {}
         for name, infos in comp_infos.items():
             if name not in s3_comp_loc:
                 msg = f"unexpected missing component '{name}' in S3 upload result"
@@ -367,21 +416,59 @@ class Builder:
                 logger.error(msg)
                 raise BuilderError(msg)
 
-            comp_release = await release_component_desc(
-                component_loc=self.components[name],
-                component_name=name,
-                repo_url=infos.repo_url,
-                long_version=infos.long_version,
-                sha1=infos.sha1,
-                s3_location=s3_comp_loc[name].location,
-                build_el_version=self.desc.el_version,
+            comp_release: ReleaseComponent = (
+                existing_components[name]
+                if name in existing_components
+                else ReleaseComponent(
+                    name=name, version=infos.long_version, sha1=infos.sha1, versions=[]
+                )
             )
-            if not comp_release:
+
+            release_comp_s3_loc = s3_comp_loc[name].location
+            release_rpm_loc = await get_component_release_rpm(
+                self.components[name], self.desc.el_version
+            )
+            if not release_rpm_loc:
                 logger.error(
-                    f"unable to obtain component '{name}' "
-                    + "release descriptor, ignore"
+                    "unable to find component release RPM location "
+                    + f"for '{name}' el version '{self.desc.el_version}' -- "
+                    + "ignore component"
                 )
                 continue
+
+            release_rpm_s3_loc = f"{release_comp_s3_loc}/{release_rpm_loc}"
+
+            comp_release_ver = ReleaseComponentVersion(
+                name=name,
+                version=infos.long_version,
+                sha1=infos.sha1,
+                arch=ArchType.x86_64,
+                build_type=BuildType.rpm,
+                os_version=f"el{self.desc.el_version}",
+                repo_url=infos.repo_url,
+                artifacts=ReleaseRPMArtifacts(
+                    loc=release_comp_s3_loc,
+                    release_rpm_loc=release_rpm_s3_loc,
+                ),
+            )
+            comp_release.versions.append(comp_release_ver)
+            comp_rel_versions[name] = comp_release_ver
+
+            # comp_release = await release_component_desc(
+            #     component_loc=self.components[name],
+            #     component_name=name,
+            #     repo_url=infos.repo_url,
+            #     long_version=infos.long_version,
+            #     sha1=infos.sha1,
+            #     s3_location=s3_comp_loc[name].location,
+            #     build_el_version=self.desc.el_version,
+            # )
+            # if not comp_release:
+            #     logger.error(
+            #         f"unable to obtain component '{name}' "
+            #         + "release descriptor, ignore"
+            #     )
+            #     continue
 
             comp_releases[name] = comp_release
 
@@ -395,4 +482,4 @@ class Builder:
             logger.exception(msg)
             raise BuilderError(msg) from e
 
-        return comp_releases
+        return comp_rel_versions

@@ -33,6 +33,7 @@ from cbscore.logger import logger as root_logger
 from cbscore.releases import ReleaseError
 from cbscore.releases.s3 import list_releases
 from cbscore.runner import RunnerError, runner
+from cbscore.utils._migration import migrate_releases_v1
 from cbscore.utils.git import GitError, get_git_repo_root, get_git_user
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.utils.vault import VaultError
@@ -632,16 +633,23 @@ async def _versions_list(
 
     for version, entry in releases.items():
         click.echo(f"> release: {version}")
-        click.echo(f"  el version: {entry.el_version}")
 
         if not verbose:
             continue
 
-        for comp_name, component in entry.components.items():
-            click.echo(f"  - {comp_name}:")
-            click.echo(f"    version:  {component.version}")
-            click.echo(f"    location: {component.loc}")
-            click.echo(f"    repo:     {component.repo_url}")
+        for arch, build in entry.builds.items():
+            click.echo(f"  - architecture: {arch.value}")
+            click.echo(f"    build type: {build.build_type.value}")
+            click.echo(f"    OS version: {build.os_version}")
+            click.echo("    components:")
+
+            for comp_name, comp in build.components.items():
+                click.echo(f"      - {comp_name}:")
+                click.echo(f"        version:  {comp.version}")
+                click.echo(f"        sha1: {comp.sha1}")
+                click.echo(f"        repo url: {comp.repo_url}")
+                click.echo(f"        loc: {comp.artifacts.loc}")
+            pass
 
 
 _version_create_help_msg = """Creates a new version descriptor file.
@@ -805,6 +813,41 @@ def cmd_versions_list(
     asyncio.run(_versions_list(secrets, verbose))
 
     pass
+
+
+@cmd_main.group("advanced", help="Advanced actions", hidden=True)
+def cmd_advanced() -> None:
+    pass
+
+
+@cmd_advanced.command(
+    "migrate-releases-v1",
+    help="Migrate components' and releases' build descriptors from v1",
+)
+@with_config
+@pass_ctx
+def cmd_advanced_migrate_releases_v1(
+    ctx: Ctx,
+    config: Config,
+    # secrets_path: Path,
+) -> None:
+    if not ctx.vault_config_path or not ctx.vault_config_path.exists():
+        logger.error("vault config path not provided or does not exist")
+        sys.exit(errno.ENOENT)
+
+    try:
+        vault_config = VaultConfig.load(ctx.vault_config_path)
+    except Exception as e:
+        logger.error(f"unable to read vault config from '{ctx.vault_config_path}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        secrets = SecretsVaultMgr(config.secrets_path, vault_config)
+    except VaultError as e:
+        logger.error(f"error logging in to vault: {e}")
+        sys.exit(errno.EACCES)
+
+    asyncio.run(migrate_releases_v1(secrets))
 
 
 if __name__ == "__main__":
