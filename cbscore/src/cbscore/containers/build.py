@@ -17,7 +17,7 @@ from cbscore.builder import logger as parent_logger
 from cbscore.containers import ContainerError
 from cbscore.containers.component import ComponentContainer
 from cbscore.core.component import CoreComponentLoc
-from cbscore.releases.desc import ReleaseDesc
+from cbscore.releases.desc import ArchType, ReleaseDesc
 from cbscore.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.versions.desc import VersionDescriptor
@@ -88,6 +88,14 @@ class ContainerBuilder:
     ) -> dict[str, ComponentContainer]:
         logger.info(f"build container for '{self.version_desc.version}'")
 
+        # FIXME: make arch decision according to what is specified in the version
+        # descriptor (which must support it first!)
+        if not self.release_desc or not self.release_desc.builds.get(ArchType.x86_64):
+            msg = f"no release builds for x86_64 for '{self.version_desc.version}'"
+            logger.error(msg)
+            raise ContainerError(msg)
+
+        release_build = self.release_desc.builds[ArchType.x86_64]
         components: dict[str, ComponentContainer] = {}
 
         for component in self.version_desc.components:
@@ -98,11 +106,11 @@ class ContainerBuilder:
                 logger.error(msg)
                 raise ContainerError(msg)
 
-            if comp_name not in self.release_desc.components:
+            if comp_name not in release_build.components:
                 logger.warning(f"component '{comp_name}' not in release descriptor")
                 continue
 
-            release_comp = self.release_desc.components[comp_name]
+            release_comp = release_build.components[comp_name]
 
             vars = {
                 "version": release_comp.version,

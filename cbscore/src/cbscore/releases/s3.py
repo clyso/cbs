@@ -17,7 +17,7 @@ import pydantic
 
 from cbscore.releases import ReleaseError
 from cbscore.releases import logger as parent_logger
-from cbscore.releases.desc import ReleaseComponent, ReleaseDesc
+from cbscore.releases.desc import ReleaseBuildEntry, ReleaseComponent, ReleaseDesc
 from cbscore.utils.s3 import (
     S3Error,
     s3_download_json,
@@ -33,29 +33,76 @@ RELEASES_S3_PATH = "releases"
 _RELEASES_COMPONENT_S3_PATH = f"{RELEASES_S3_PATH}/components"
 
 
+async def check_release_exists(
+    secrets: SecretsVaultMgr, version: str
+) -> ReleaseDesc | None:
+    """Check whether a given release version exists in S3."""
+    logger.debug(f"check if release '{version}' already exists in S3")
+
+    location = f"{RELEASES_S3_PATH}/{version}.json"
+    try:
+        data = await s3_download_json(secrets, location)
+    except ReleaseError as e:
+        msg = f"error checking if release '{version}' exists: {e}"
+        logger.exception(msg)
+        raise ReleaseError(msg) from e
+
+    if not data:
+        return None
+
+    try:
+        return ReleaseDesc.model_validate_json(data)
+    except pydantic.ValidationError:
+        msg = f"invalid release data from '{location}'"
+        logger.exception(msg)
+        raise ReleaseError(msg) from None
+    except Exception as e:
+        msg = f"unknown exception validating release data: {e}"
+        logger.exception(msg)
+        raise ReleaseError(msg) from e
+
+
 async def release_desc_upload(
-    secrets: SecretsVaultMgr, release_desc: ReleaseDesc
-) -> None:
+    secrets: SecretsVaultMgr,
+    version: str,
+    release_build: ReleaseBuildEntry,
+) -> ReleaseDesc:
     """Upload a release descriptor to S3."""
-    logger.debug(f"upload release desc for version '{release_desc.version}' to S3")
-    desc_json = release_desc.model_dump_json(indent=2)
-    location = f"{RELEASES_S3_PATH}/{release_desc.version}.json"
+    logger.debug(f"upload release desc for version '{version}' to S3")
+
+    try:
+        existing_desc = await check_release_exists(secrets, version)
+    except ReleaseError as e:
+        logger.error(f"error checking for existing release '{version}': {e}")
+        raise e from None
+    except Exception as e:
+        msg = f"unknown error checking for existing release '{version}': {e}"
+        logger.error(msg)
+        raise ReleaseError(msg) from e
+
+    desc = existing_desc or ReleaseDesc(version=version, builds={})
+    desc.builds[release_build.arch] = release_build
+
+    desc_json = desc.model_dump_json(indent=2)
+    location = f"{RELEASES_S3_PATH}/{version}.json"
     try:
         await s3_upload_json(secrets, location, desc_json)
     except ReleaseError as e:
         msg = (
-            f"error uploading release desc for version '{release_desc.version}' "
+            f"error uploading release desc for version '{version}' "
             + f"to '{location}': {e}"
         )
         logger.exception(msg)
         raise ReleaseError(msg) from e
     except Exception as e:
         msg = (
-            "unknown error uploading release desc for version "
-            + f"'{release_desc.version}' to '{location}': {e}"
+            f"unknown error uploading release desc for version '{version}'"
+            + f"to '{location}': {e}"
         )
         logger.exception(msg)
         raise ReleaseError(msg) from e
+
+    return desc
 
 
 async def release_upload_components(
@@ -99,35 +146,6 @@ async def release_upload_components(
 
     for name, task in task_dict.items():
         logger.debug(f"uploaded '{name}' to '{task.result()}'")
-
-
-async def check_release_exists(
-    secrets: SecretsVaultMgr, version: str
-) -> ReleaseDesc | None:
-    """Check whether a given release version exists in S3."""
-    logger.debug(f"check if release '{version}' already exists in S3")
-
-    location = f"{RELEASES_S3_PATH}/{version}.json"
-    try:
-        data = await s3_download_json(secrets, location)
-    except ReleaseError as e:
-        msg = f"error checking if release '{version}' exists: {e}"
-        logger.exception(msg)
-        raise ReleaseError(msg) from e
-
-    if not data:
-        return None
-
-    try:
-        return ReleaseDesc.model_validate_json(data)
-    except pydantic.ValidationError:
-        msg = f"invalid release data from '{location}'"
-        logger.exception(msg)
-        raise ReleaseError(msg) from None
-    except Exception as e:
-        msg = f"unknown exception validating release data: {e}"
-        logger.exception(msg)
-        raise ReleaseError(msg) from e
 
 
 async def check_released_components(
@@ -192,7 +210,7 @@ async def check_released_components(
         res = task.result()
         if not res:
             continue
-        logger.debug(f"component '{name}' release exists, s3 loc: {res.loc}")
+        logger.debug(f"component '{name}' release exists, version: {res.version}")
         existing[name] = res
 
     return existing
