@@ -22,7 +22,7 @@ services:
     volumes:
       - ./_local/cbs/cbs.config.worker.json:/cbs/config/cbs-config.json
       - ./_local/cbs/cbs.vault.json:/cbs/config/cbs.vault.json
-      - ./cbs:/cbs/src
+      - ./cbscore:/cbs/src
 
       - ./_local/secrets.json:/cbs/config/secrets.json
       - ./_local/cbs/scratch:/cbs/scratch
