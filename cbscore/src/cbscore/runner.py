@@ -77,6 +77,7 @@ async def runner(
     vault_config_path: Path,
     *,
     run_name: str | None = None,
+    replace_run: bool = False,
     ccache_path: Path | None = None,
     entrypoint_path: Path | None = None,
     timeout: float | None = None,
@@ -185,6 +186,7 @@ async def runner(
             timeout=timeout,
             use_host_network=True,
             unconfined=True,
+            replace_if_exists=replace_run,
         )
     except PodmanError as e:
         msg = f"error running build: {e}"

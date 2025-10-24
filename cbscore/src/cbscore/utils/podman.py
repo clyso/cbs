@@ -46,6 +46,7 @@ async def podman_run(
     timeout: float | None = None,
     use_host_network: bool = False,
     unconfined: bool = False,
+    replace_if_exists: bool = False,
 ) -> tuple[int, str, str]:
     cmd: CmdArgs = ["podman", "run", "--security-opt", "label=disable"]
 
@@ -60,6 +61,9 @@ async def podman_run(
 
     if unconfined:
         cmd.extend(["--security-opt", "seccomp=unconfined"])
+
+    if replace_if_exists:
+        cmd.append("--replace")
 
     if env is not None:
         for k, v in env.items():

@@ -97,6 +97,7 @@ class WorkerBuilder:
                 self._config.worker.paths.components_path,
                 self._config.vault_config,
                 run_name=self._name,
+                replace_run=True,
                 ccache_path=self._config.worker.paths.ccache_path,
                 timeout=(
                     self._config.worker.build_timeout_seconds
