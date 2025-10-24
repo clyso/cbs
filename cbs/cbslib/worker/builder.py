@@ -112,6 +112,7 @@ class WorkerBuilder:
         finally:
             logger.info("no longer building")
             desc_file_path.unlink()
+            self._build = None
 
     async def kill(self) -> None:
         try:
@@ -121,3 +122,5 @@ class WorkerBuilder:
             msg = f"error stopping '{self._name}': {e}"
             logger.exception(msg)
             raise WorkerBuilderError(msg) from e
+        finally:
+            self._build = None
