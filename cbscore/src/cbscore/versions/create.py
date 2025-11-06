@@ -11,11 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import enum
 import re
-from typing import cast
+from pathlib import Path
 
-from cbscore.logger import logger as parent_logger
+from cbscore.core.component import CoreComponentLoc, load_components
+from cbscore.errors import MalformedVersionError
+from cbscore.versions import logger as parent_logger
 from cbscore.versions.desc import (
     VersionComponent,
     VersionDescriptor,
@@ -23,86 +24,25 @@ from cbscore.versions.desc import (
     VersionSignedOffBy,
 )
 from cbscore.versions.errors import VersionError
+from cbscore.versions.utils import (
+    VersionType,
+    get_version_type,
+    get_version_type_desc,
+    parse_version,
+)
 
-logger = parent_logger.getChild("versions_create")
-
-
-class _Prios(enum.Enum):
-    GA = 0
-    RC = 1
-    DEV = 2
-    TEST = 3
-    CI = 4
-
-
-class VersionType(enum.Enum):
-    RELEASE = 1
-    TESTING = 2
-
-
-_release_types: dict[str, tuple[int, str]] = {
-    "ga": (_Prios.GA.value, "General Availability"),
-    "rc": (_Prios.RC.value, "Release Candidate"),
-    "dev": (_Prios.DEV.value, "Development release"),
-    "test": (_Prios.TEST.value, "Test release"),
-    "ci": (_Prios.CI.value, "CI/CD release"),
-}
-
-component_repos: dict[str, str] = {
-    "ceph": "https://github.com/clyso/ceph",
-}
+logger = parent_logger.getChild("create")
 
 
 def _validate_version(v: str) -> bool:
-    return re.match(r"^.*v\d{2}\.\d+\.\d+$", v) is not None
+    try:
+        _, _, minor, patch, _ = parse_version(v)
+    except MalformedVersionError:
+        return False
+    return minor is not None and patch is not None
 
 
-def _obtain_type(s: str) -> tuple[str, int] | None:
-    regex = r"^([a-z]+)=(\d+)$"
-    m = re.match(regex, s)
-    if m is None:
-        return None
-    return (m.group(1), cast(int, m.group(2)))
-
-
-def _parse_types(version_types: list[str]) -> list[tuple[str, int]]:
-    types_lst: list[tuple[str, int]] = []
-
-    highest_index: int = -1
-    found_types: list[str] = []
-
-    for t in version_types:
-        res = _obtain_type(t)
-        if res is None:
-            msg = f"malformed version type '{t}'"
-            logger.error(msg)
-            raise VersionError(msg)
-
-        rel_entry = _release_types.get(res[0], None)
-        if rel_entry is None:
-            msg = f"unknown version type '{res[0]}'"
-            logger.error(msg)
-            raise VersionError(msg)
-
-        rel_idx, _ = rel_entry
-        if highest_index > rel_idx:
-            msg = f"malformed type sequence: '{res[0]}' must come after '{types_lst}'"
-            logger.error(msg)
-            raise VersionError(msg)
-        highest_index = rel_idx
-
-        if res[0] in found_types:
-            msg = f"multiple types '{res[0]}' found in provided types"
-            logger.error(msg)
-            raise VersionError(msg)
-        found_types.append(res[0])
-
-        types_lst.append((res[0], res[1]))
-
-    return types_lst
-
-
-def _parse_components(components: list[str]) -> dict[str, str]:
+def _parse_component_refs(components: list[str]) -> dict[str, str]:
     comps: dict[str, str] = {}
 
     for c in components:
@@ -116,47 +56,46 @@ def _parse_components(components: list[str]) -> dict[str, str]:
     return comps
 
 
-def _parse_component_overrides(overrides: list[str]) -> dict[str, str]:
-    override_map: dict[str, str] = {}
+def _do_version_title(version: str, version_type: VersionType) -> str:
+    try:
+        prefix, major, minor, patch, suffix = parse_version(version)
+    except MalformedVersionError:
+        msg = f"malformed version '{version}'"
+        logger.error(msg)
+        raise VersionError(msg) from None
 
-    regex = re.compile(r"^([\w_-]+)=([\d\w_.:/-]+)$")
-    for override in overrides:
-        m = re.match(regex, override)
-        if not m:
-            msg = f"malformed component override '{override}'"
-            logger.error(msg)
-            raise VersionError(msg)
-        override_map[m.group(1)] = m.group(2)
+    if not minor or not patch:
+        msg = f"malformed version '{version}'"
+        logger.error(msg)
+        raise VersionError(msg)
 
-    return override_map
+    version_title = f"{prefix.upper()} " if prefix else ""
+    version_title += f"version {major}.{minor}.{patch}"
 
+    if suffix:
+        parts = suffix.split("-")
+        parts_str = ""
+        for p in parts:
+            p_entries = p.split(".", maxsplit=1)
+            if parts_str:
+                parts_str += ", "
+            parts_str += (
+                f"{p_entries[0].upper()} {p_entries[1]}"
+                if len(p_entries) > 1
+                else f"{p_entries[0].upper()}"
+            )
+        if parts_str:
+            version_title += f" ({parts_str})"
 
-def _get_version_type(types_lst: list[tuple[str, int]]) -> VersionType:
-    if len(types_lst) == 0:
-        return VersionType.RELEASE
-
-    what: VersionType | None = None
-    for t, _ in types_lst:
-        assert t in _release_types
-        if what is not None:
-            what = VersionType.TESTING
-            break
-
-        if _release_types[t][0] <= _Prios.RC.value:
-            what = VersionType.RELEASE
-        else:
-            what = VersionType.TESTING
-            break
-
-    assert what is not None
-    return what
+    return f"Release {get_version_type_desc(version_type)} {version_title}"
 
 
 def create(
     version: str,
-    version_types: list[str],
-    components: list[str],
-    component_overrides: list[str],
+    version_type: VersionType,
+    component_refs: list[str],
+    components: dict[str, CoreComponentLoc],
+    component_uri_overrides: dict[str, str],
     distro: str,
     el_version: int,
     registry: str,
@@ -164,62 +103,46 @@ def create(
     image_tag: str | None,
     user_name: str,
     user_email: str,
-) -> tuple[VersionType, VersionDescriptor]:
+) -> VersionDescriptor:
     if not _validate_version(version):
         msg = f"malformed version '{version}'"
         logger.error(msg)
         raise VersionError(msg)
 
-    types_lst = _parse_types(version_types)
-    version_type = _get_version_type(types_lst)
-
-    components_map = _parse_components(components)
-    if len(components_map) == 0:
+    component_refs_map = _parse_component_refs(component_refs)
+    if len(component_refs_map) == 0:
         msg = "missing valid components"
         logger.error(msg)
         raise VersionError(msg)
 
-    for c in components_map:
-        if c not in component_repos:
+    components_uris: dict[str, str] = {}
+
+    for c in component_refs_map:
+        if c not in components:
             msg = f"unknown component '{c}' specified"
             logger.error(msg)
             raise VersionError(msg)
 
-    component_overrides_map = _parse_component_overrides(component_overrides)
-    for c in component_overrides_map:
-        if c not in components_map:
-            msg = f"missing component '{c}' for override"
-            logger.error(msg)
-            raise VersionError(msg)
+        components_uris[c] = components[c].comp.repo
+        if c in component_uri_overrides:
+            components_uris[c] = component_uri_overrides[c]
 
-    version_types_str = "-".join([f"{t}.{n}" for t, n in types_lst])
-    version_str = f"{version}" + (f"-{version_types_str}" if version_types_str else "")
-    version_types_title = " ".join(
-        [f"{_release_types[t][1]} #{n}" for t, n in types_lst]
-    )
-    version_title = f"Release {version}" + (
-        f", {version_types_title}" if version_types_title else ""
-    )
-
-    logger.debug(f"version types: {version_types_str}")
-    logger.debug(f"version str: {version_str}")
-    logger.debug(f"version types title: {version_types_title}")
+    version_title = _do_version_title(version, version_type)
     logger.debug(f"version title: {version_title}")
 
     component_res: list[VersionComponent] = []
-    for comp_name, comp_version in components_map.items():
-        comp_repo = component_repos[comp_name]
-        if comp_name in component_overrides_map:
-            comp_repo = component_overrides_map[comp_name]
-
+    for comp_name, comp_ref in component_refs_map.items():
+        assert comp_name in components_uris
         component_res.append(
-            VersionComponent(name=comp_name, repo=comp_repo, ref=comp_version)
+            VersionComponent(
+                name=comp_name, repo=components_uris[comp_name], ref=comp_ref
+            )
         )
 
-    image_tag_str = image_tag if image_tag else version_str
+    image_tag_str = image_tag if image_tag else version
 
-    desc = VersionDescriptor(
-        version=version_str,
+    return VersionDescriptor(
+        version=version,
         title=version_title,
         signed_off_by=VersionSignedOffBy(
             user=user_name,
@@ -235,4 +158,73 @@ def create(
         el_version=el_version,
     )
 
-    return (version_type, desc)
+
+def version_create_helper(
+    version: str,
+    version_type_name: str,
+    component_refs: list[str],
+    components_paths: list[Path],
+    component_uri_overrides: list[str],
+    distro: str,
+    el_version: int,
+    registry: str,
+    image_name: str,
+    image_tag: str | None,
+    user_name: str,
+    user_email: str,
+) -> VersionDescriptor:
+    if not components_paths:
+        our_comps_path = Path.cwd() / "components"
+        if not our_comps_path.exists():
+            msg = "no components paths provided, nor could any be found!"
+            logger.error(msg)
+            raise VersionError(msg)
+        components_paths.append(our_comps_path)
+
+    comps: dict[str, CoreComponentLoc] = {}
+
+    for comp_path in components_paths:
+        comps.update(load_components(comp_path))
+
+    if not comps:
+        msg = "no components provided, nor could they be found!"
+        logger.error(msg)
+        raise VersionError(msg)
+
+    uri_overrides: dict[str, str] = {}
+    for override in component_uri_overrides:
+        entries = override.split("=", 1)
+        if len(entries) != 2:
+            msg = f"malformed URI override '{override}'"
+            logger.error(msg)
+            raise VersionError(msg)
+        comp, uri = entries
+        uri_overrides[comp] = uri
+        logger.debug(f"overriding component '{comp}' URI with '{uri}'")
+
+    try:
+        version_type = get_version_type(version_type_name)
+    except VersionError as e:
+        msg = f"error validating version type: {e}"
+        logger.error(msg)
+        raise VersionError(msg) from e
+
+    try:
+        return create(
+            version,
+            version_type,
+            component_refs,
+            comps,
+            uri_overrides,
+            distro,
+            el_version,
+            registry,
+            image_name,
+            image_tag,
+            user_name,
+            user_email,
+        )
+    except VersionError as e:
+        msg = f"error creating version descriptor: {e}"
+        logger.error(msg)
+        raise VersionError(msg) from e

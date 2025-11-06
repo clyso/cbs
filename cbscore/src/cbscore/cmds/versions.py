@@ -28,17 +28,19 @@ from cbscore.releases.s3 import list_releases
 from cbscore.utils.git import GitError, get_git_repo_root, get_git_user
 from cbscore.utils.secrets import SecretsVaultMgr
 from cbscore.utils.vault import VaultError
-from cbscore.versions.create import VersionType, create
+from cbscore.versions.create import version_create_helper
 from cbscore.versions.errors import VersionError
+from cbscore.versions.utils import VersionType
 
 logger = parent_logger.getChild("versions")
 
 
 async def version_create(
     version: str,
-    version_types: list[str],
-    components: list[str],
-    component_overrides: list[str],
+    version_type_name: str,
+    component_refs: list[str],
+    components_paths: list[Path],
+    component_uri_overrides: list[str],
     distro: str,
     el_version: int,
     registry: str,
@@ -52,11 +54,12 @@ async def version_create(
         sys.exit(1)
 
     try:
-        version_type, desc = create(
+        desc = version_create_helper(
             version,
-            version_types,
-            components,
-            component_overrides,
+            version_type_name,
+            component_refs,
+            components_paths,
+            component_uri_overrides,
             distro,
             el_version,
             registry,
@@ -67,11 +70,9 @@ async def version_create(
         )
     except VersionError as e:
         click.echo(f"error creating version descriptor: {e}", err=True)
-        sys.exit(1)
+        sys.exit(errno.ENOTRECOVERABLE)
 
-    version_type_dir_name = (
-        "testing" if version_type == VersionType.TESTING else "release"
-    )
+    version_type_dir_name = version_type_name
 
     click.echo(f"version: {desc.version}")
     click.echo(f"version title: {desc.title}")
@@ -149,16 +150,21 @@ def cmd_versions_grp() -> None:
     pass
 
 
-_version_create_help_msg = """Creates a new version descriptor file.
+_version_create_help_msg = f"""Creates a new version descriptor file.
 
 Requires a VERSION to be provided, which this descriptor describes.
-VERSION must include the "CES" prefix if a CES version is intended. Otherwise,
-it can be free-form as long as it starts with a 'v' (such as, 'v18.2.4').
+VERSIONs must follow the format
 
-Requires at least one '--type TYPE=N' pair, specifying which type of release
-the version refers to.
+    [prefix-]vM.m.p[-suffix]
+
+where 'M' is the major version, 'm' is the minor version, and 'p' the
+patch version.
 
 Requires all components to be passed as '--component NAME@VERSION', individually.
+
+The version can be of any of the following build types:
+
+   {VersionType.RELEASE}, {VersionType.DEV}, {VersionType.TEST}, {VersionType.CI}
 """
 
 
@@ -167,12 +173,13 @@ Requires all components to be passed as '--component NAME@VERSION', individually
 @click.option(
     "-t",
     "--type",
-    "build_types",
+    "version_type",
     type=str,
-    multiple=True,
-    help="Type of build, and its iteration",
+    help="Type of version to be built",
     required=False,
-    metavar="TYPE=N",
+    metavar="TYPE",
+    default="dev",
+    show_default=True,
 )
 @click.option(
     "-c",
@@ -185,14 +192,29 @@ Requires all components to be passed as '--component NAME@VERSION', individually
     help="Component's versions (e.g., 'ceph@ces-v24.11.0-ga.1')",
 )
 @click.option(
+    "--components-path",
+    "components_paths",
+    type=click.Path(
+        exists=True,
+        dir_okay=True,
+        file_okay=False,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    multiple=True,
+    required=False,
+    metavar="PATH",
+    help="Path to directory holding component definitions",
+)
+@click.option(
     "-o",
-    "--override-component",
-    "component_overrides",
+    "--override-component-uri",
+    "component_uri_overrides",
     type=str,
     multiple=True,
-    help="Override component's locations",
+    help="Override component's URIs",
     required=False,
-    metavar="COMPONENT=URL",
+    metavar="COMPONENT=URI",
 )
 @click.option(
     "--distro",
@@ -235,9 +257,10 @@ Requires all components to be passed as '--component NAME@VERSION', individually
 )
 def cmd_versions_create(
     version: str,
-    build_types: list[str],
-    components: list[str],
-    component_overrides: list[str],
+    version_type: str,
+    components: tuple[str, ...],
+    components_paths: tuple[Path, ...],
+    component_uri_overrides: tuple[str, ...],
     distro: str,
     el_version: int,
     registry: str,
@@ -247,9 +270,10 @@ def cmd_versions_create(
     asyncio.run(
         version_create(
             version,
-            build_types,
-            components,
-            component_overrides,
+            version_type,
+            list(components),
+            list(components_paths),
+            list(component_uri_overrides),
             distro,
             el_version,
             registry,
@@ -257,8 +281,6 @@ def cmd_versions_create(
             image_tag,
         )
     )
-
-    pass
 
 
 @cmd_versions_grp.command("list", help="List known release versions from S3")

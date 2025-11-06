@@ -11,3 +11,6 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from cbscore.logger import logger as root_logger
+
+logger = root_logger.getChild("versions")
