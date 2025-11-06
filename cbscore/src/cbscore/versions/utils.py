@@ -12,10 +12,31 @@
 # GNU General Public License for more details.
 
 
+import enum
 import re
 from typing import cast
 
 from cbscore.errors import MalformedVersionError
+from cbscore.versions import logger as parent_logger
+from cbscore.versions.errors import VersionError
+
+logger = parent_logger.getChild("utils")
+
+
+class VersionType(enum.StrEnum):
+    RELEASE = "release"
+    DEV = "dev"
+    TEST = "test"
+    CI = "ci"
+
+
+_release_types: dict[str, tuple[VersionType, str]] = {
+    "release": (VersionType.RELEASE, "General Availability"),
+    "dev": (VersionType.DEV, "Development"),
+    "test": (VersionType.TEST, "Testing"),
+    "ci": (VersionType.CI, "CI/CD"),
+}
+
 
 ParseVersionResult = tuple[str | None, str, str | None, str | None, str | None]
 
@@ -101,6 +122,22 @@ def normalize_version(v: str) -> str:
     if suffix:
         res += f"-{suffix}"
     return res
+
+
+def get_version_type(type_name: str) -> VersionType:
+    if v := _release_types.get(type_name.lower(), None):
+        return v[0]
+    msg = f"unknown version type '{type_name}'"
+    logger.error(msg)
+    raise VersionError(msg)
+
+
+def get_version_type_desc(version_type: VersionType) -> str:
+    if version_type.value not in _release_types:
+        msg = f"unknown version type '{version_type.value}'"
+        logger.error(msg)
+        raise VersionError(msg)
+    return _release_types[version_type.value][1]
 
 
 if __name__ == "__main__":
