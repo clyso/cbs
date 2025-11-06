@@ -23,6 +23,7 @@ from cbscore.cmds import (
     advanced,
     builds,
     config,
+    local,
     pass_ctx,
     set_log_level,
     versions,
@@ -81,6 +82,7 @@ cmd_main.add_command(builds.cmd_runner_grp)
 cmd_main.add_command(versions.cmd_versions_grp)
 cmd_main.add_command(config.cmd_config)
 cmd_main.add_command(advanced.cmd_advanced)
+cmd_main.add_command(local.cmd_local_grp)
 
 
 if __name__ == "__main__":

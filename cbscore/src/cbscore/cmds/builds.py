@@ -78,7 +78,7 @@ logger = parent_logger.getChild("builds")
 )
 @click.option(
     "--timeout",
-    help="Specify how long the build should be allowed to take",
+    help="Specify how long the build should be allowed to take, in seconds",
     type=float,
     required=False,
 )

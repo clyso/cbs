@@ -30,7 +30,7 @@ class VersionSignedOffBy(pydantic.BaseModel):
 
 
 class VersionImage(pydantic.BaseModel):
-    registry: str
+    registry: str | None
     name: str
     tag: str
 
