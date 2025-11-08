@@ -69,24 +69,28 @@ class CoreComponentLoc(pydantic.BaseModel):
     comp: CoreComponent
 
 
-def load_components(path: Path) -> dict[str, CoreComponentLoc]:
+def load_components(paths: list[Path]) -> dict[str, CoreComponentLoc]:
     components: dict[str, CoreComponentLoc] = {}
 
-    for entry in path.iterdir():
-        if not entry.is_dir():
-            continue
+    def _do_path(path: Path) -> None:
+        for entry in path.iterdir():
+            if not entry.is_dir():
+                continue
 
-        comp_file = entry / "cbs.component.yaml"
-        if not comp_file.exists() or not comp_file.is_file():
-            logger.warning(f"skipping '{entry}': no cbs.component.yaml found")
-            continue
+            comp_file = entry / "cbs.component.yaml"
+            if not comp_file.exists() or not comp_file.is_file():
+                logger.warning(f"skipping '{entry}': no cbs.component.yaml found")
+                continue
 
-        try:
-            comp = CoreComponent.load(comp_file)
-            logger.debug(f"loaded component '{comp.name}' from '{comp_file}'")
-            components[comp.name] = CoreComponentLoc(path=entry, comp=comp)
-        except CESError as e:
-            logger.error(f"skipping '{entry}': {e}")
-            continue
+            try:
+                comp = CoreComponent.load(comp_file)
+                logger.debug(f"loaded component '{comp.name}' from '{comp_file}'")
+                components[comp.name] = CoreComponentLoc(path=entry, comp=comp)
+            except CESError as e:
+                logger.error(f"skipping '{entry}': {e}")
+                continue
+
+    for path in paths:
+        _do_path(path)
 
     return components

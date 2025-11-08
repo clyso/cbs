@@ -15,7 +15,7 @@ from cbscore.errors import CESError, UnknownRepositoryError
 from cbscore.images import get_image_tag, skopeo
 from cbscore.images import logger as parent_logger
 from cbscore.images.errors import MissingTagError
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("sync")
 
@@ -23,7 +23,9 @@ logger = parent_logger.getChild("sync")
 def sync_image(
     src: str,
     dst: str,
-    secrets: SecretsVaultMgr,
+    dst_registry: str,
+    secrets: SecretsMgr,
+    transit: str,
     *,
     force: bool = False,
     dry_run: bool = False,
@@ -72,7 +74,7 @@ def sync_image(
     try:
         if not dry_run:
             logger.debug(f"copy '{src}' to '{dst}'")
-            skopeo.skopeo_copy(src, dst, secrets)
+            skopeo.skopeo_copy(src, dst, dst_registry, secrets, transit)
         else:
             logger.debug("not copying, dry run specified")
     except CESError as e:

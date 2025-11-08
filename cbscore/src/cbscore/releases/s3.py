@@ -25,7 +25,7 @@ from cbscore.utils.s3 import (
     s3_list,
     s3_upload_json,
 )
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("s3")
 
@@ -34,14 +34,14 @@ _RELEASES_COMPONENT_S3_PATH = f"{RELEASES_S3_PATH}/components"
 
 
 async def check_release_exists(
-    secrets: SecretsVaultMgr, version: str
+    secrets: SecretsMgr, url: str, version: str
 ) -> ReleaseDesc | None:
     """Check whether a given release version exists in S3."""
-    logger.debug(f"check if release '{version}' already exists in S3")
+    logger.debug(f"check if release '{version}' already exists at '{url}'")
 
     location = f"{RELEASES_S3_PATH}/{version}.json"
     try:
-        data = await s3_download_json(secrets, location)
+        data = await s3_download_json(secrets, url, location)
     except ReleaseError as e:
         msg = f"error checking if release '{version}' exists: {e}"
         logger.exception(msg)
@@ -63,15 +63,16 @@ async def check_release_exists(
 
 
 async def release_desc_upload(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    url: str,
     version: str,
     release_build: ReleaseBuildEntry,
 ) -> ReleaseDesc:
     """Upload a release descriptor to S3."""
-    logger.debug(f"upload release desc for version '{version}' to S3")
+    logger.debug(f"upload release desc for version '{version}' to '{url}'")
 
     try:
-        existing_desc = await check_release_exists(secrets, version)
+        existing_desc = await check_release_exists(secrets, url, version)
     except ReleaseError as e:
         logger.error(f"error checking for existing release '{version}': {e}")
         raise e from None
@@ -86,47 +87,50 @@ async def release_desc_upload(
     desc_json = desc.model_dump_json(indent=2)
     location = f"{RELEASES_S3_PATH}/{version}.json"
     try:
-        await s3_upload_json(secrets, location, desc_json)
+        await s3_upload_json(secrets, url, location, desc_json)
     except ReleaseError as e:
         msg = (
             f"error uploading release desc for version '{version}' "
             + f"to '{location}': {e}"
         )
-        logger.exception(msg)
+        logger.error(msg)
         raise ReleaseError(msg) from e
     except Exception as e:
         msg = (
             f"unknown error uploading release desc for version '{version}'"
             + f"to '{location}': {e}"
         )
-        logger.exception(msg)
+        logger.error(msg)
         raise ReleaseError(msg) from e
 
     return desc
 
 
 async def release_upload_components(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    url: str,
     component_releases: dict[str, ReleaseComponent],
 ) -> None:
     """Upload component release descriptors to S3, in parallel."""
-    logger.info(f"upload release for components '{component_releases.keys()}' to S3")
+    logger.info(
+        f"upload release for components '{component_releases.keys()}' to '{url}'"
+    )
 
     async def _put_component(comp_rel: ReleaseComponent) -> str:
-        """Write a component's release descriptor to S3."""
+        """Write a component's release descriptor to the provided S3 url."""
         location = (
             f"{_RELEASES_COMPONENT_S3_PATH}/{comp_rel.name}/{comp_rel.version}.json"
         )
         data = comp_rel.model_dump_json(indent=2)
 
         try:
-            await s3_upload_json(secrets, location, data)
+            await s3_upload_json(secrets, url, location, data)
         except ReleaseError as e:
             msg = (
                 f"error uploading component release desc for '{comp_rel.name}' "
                 + f"to '{location}': {e}"
             )
-            logger.exception(msg)
+            logger.error(msg)
             raise ReleaseError(msg) from e
         return location
 
@@ -149,7 +153,7 @@ async def release_upload_components(
 
 
 async def check_released_components(
-    secrets: SecretsVaultMgr, components: dict[str, str]
+    secrets: SecretsMgr, url: str, components: dict[str, str]
 ) -> dict[str, ReleaseComponent]:
     """
     Check whether the components for a release exist in S3.
@@ -162,19 +166,19 @@ async def check_released_components(
     It's the caller's responsibility to decide whether a component should be built
     or not, regardless of it existing.
     """
-    logger.debug("check if components exist in S3")
+    logger.debug(f"check if components exist in '{url}'")
 
     async def _get_component(name: str, long_version: str) -> ReleaseComponent | None:
         """Obtain `ReleaseComponent` from S3, if available."""
         location = f"{_RELEASES_COMPONENT_S3_PATH}/{name}/{long_version}.json"
         try:
-            data = await s3_download_json(secrets, location)
+            data = await s3_download_json(secrets, url, location)
         except ReleaseError as e:
             msg = (
                 f"error checking if component '{name}' "
                 + f"version '{long_version}' exists in S3: {e}"
             )
-            logger.exception(msg)
+            logger.error(msg)
             raise ReleaseError(msg) from e
 
         if not data:
@@ -184,11 +188,11 @@ async def check_released_components(
             return ReleaseComponent.model_validate_json(data)
         except pydantic.ValidationError:
             msg = f"invalid component release data from '{location}'"
-            logger.exception(msg)
+            logger.error(msg)
             raise ReleaseError(msg) from None
         except Exception as e:
             msg = f"unknown error validating component release data: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise ReleaseError(msg) from e
 
     try:
@@ -216,15 +220,15 @@ async def check_released_components(
     return existing
 
 
-async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
+async def list_releases(secrets: SecretsMgr, url: str) -> dict[str, ReleaseDesc]:
     """List releases from S3."""
     try:
         res = await s3_list(
-            secrets, prefix=f"{RELEASES_S3_PATH}/", prefix_as_directory=True
+            secrets, url, prefix=f"{RELEASES_S3_PATH}/", prefix_as_directory=True
         )
     except S3Error as e:
         msg = "error obtaining release objects"
-        logger.exception(msg)
+        logger.error(msg)
         raise ReleaseError(msg=f"{msg}: {e}") from e
 
     releases: dict[str, ReleaseDesc] = {}
@@ -236,7 +240,9 @@ async def list_releases(secrets: SecretsVaultMgr) -> dict[str, ReleaseDesc]:
         try:
             # FIXME: this is highly inefficient because the 's3_download_str_obj'
             # function will obtain S3 credentials from vault each time.
-            raw_json = await s3_download_str_obj(secrets, entry.key, content_type=None)
+            raw_json = await s3_download_str_obj(
+                secrets, url, entry.key, content_type=None
+            )
         except S3Error as e:
             msg = f"s3 error obtaining JSON object: {e}"
             logger.error(msg)

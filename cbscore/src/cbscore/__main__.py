@@ -51,30 +51,14 @@ logger = parent_logger.getChild("main")
         path_type=Path,
     ),
     required=True,
-    default="cbs-build.config.json",
-)
-@click.option(
-    "--vault",
-    "vault_config_path",
-    help="Path to Vault's configuration file.",
-    type=click.Path(
-        exists=False,
-        dir_okay=False,
-        file_okay=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-    default="cbs-build.vault.json",
+    default="cbs-build.config.yaml",
 )
 @pass_ctx
-def cmd_main(ctx: Ctx, debug: bool, config_path: Path, vault_config_path: Path) -> None:
+def cmd_main(ctx: Ctx, debug: bool, config_path: Path) -> None:
     if debug:
         set_log_level(logging.DEBUG)
 
     ctx.config_path = config_path
-    ctx.vault_config_path = vault_config_path
 
 
 cmd_main.add_command(builds.cmd_build)

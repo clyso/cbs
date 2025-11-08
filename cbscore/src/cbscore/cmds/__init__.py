@@ -28,7 +28,6 @@ logger = root_logger.getChild("cbsbuild")
 
 class Ctx:
     config_path: Path | None = None
-    vault_config_path: Path | None = None
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
@@ -46,7 +45,7 @@ def with_config[R, T, **P](
             logger.error(f"missing context for '{f.__name__}'")
             sys.exit(errno.ENOTRECOVERABLE)
         if not ctx.config_path:
-            logger.error("configuration file path not provided")
+            click.echo("configuration file path not provided", err=True)
             sys.exit(errno.EINVAL)
 
         try:

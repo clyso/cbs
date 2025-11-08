@@ -20,7 +20,7 @@ from cbscore.builder import logger as parent_logger
 from cbscore.builder.rpmbuild import ComponentBuild
 from cbscore.utils import CommandError, async_run_cmd
 from cbscore.utils.s3 import S3Error, S3FileLocator, s3_upload_files
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("upload")
 
@@ -114,7 +114,12 @@ async def _get_repo(
 
 
 async def _upload_component_rpms(
-    secrets: SecretsVaultMgr, name: str, version: str, el_version: int, rpms_path: Path
+    secrets: SecretsMgr,
+    upload_to: str,
+    name: str,
+    version: str,
+    el_version: int,
+    rpms_path: Path,
 ) -> str:
     s3_base_dst = f"{name}/rpm-{version}/el{el_version}.clyso"
 
@@ -132,7 +137,7 @@ async def _upload_component_rpms(
         logger.debug(f"{rpm.name}\n-> SRC: {rpm.src}\n=> DST: {rpm.dst}")
 
     try:
-        await s3_upload_files(secrets, to_upload, public=True)
+        await s3_upload_files(secrets, upload_to, to_upload, public=True)
     except S3Error as e:
         msg = f"error uploading rpms: {e}"
         logger.exception(msg)
@@ -142,7 +147,8 @@ async def _upload_component_rpms(
 
 
 async def s3_upload_rpms(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    upload_to: str,
     components: dict[str, ComponentBuild],
     el_version: int,
 ) -> dict[str, S3ComponentLocation]:
@@ -151,7 +157,7 @@ async def s3_upload_rpms(
             tasks = {
                 name: tg.create_task(
                     _upload_component_rpms(
-                        secrets, name, e.version, el_version, e.rpms_path
+                        secrets, upload_to, name, e.version, el_version, e.rpms_path
                     )
                 )
                 for name, e in components.items()

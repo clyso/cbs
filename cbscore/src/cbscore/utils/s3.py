@@ -21,7 +21,8 @@ from types_aiobotocore_s3.service_resource import S3ServiceResource
 
 from cbscore.errors import CESError
 from cbscore.utils import logger as parent_logger
-from cbscore.utils.secrets import SecretsVaultError, SecretsVaultMgr
+from cbscore.utils.secrets import SecretsMgrError
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 
 class S3Error(CESError):
@@ -70,7 +71,8 @@ logger = parent_logger.getChild("s3")
 
 
 async def s3_upload_str_obj(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    url: str,
     location: str,
     contents: str,
     content_type: str = "application/json",
@@ -81,8 +83,8 @@ async def s3_upload_str_obj(
     If not specified, presumes the object's content is a JSON string.
     """
     try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
+        hostname, access_id, secret_id = secrets.s3_creds(url)
+    except SecretsMgrError as e:
         msg = f"error obtaining S3 credentials: {e}"
         logger.exception(msg)
         raise S3Error(msg) from e
@@ -112,7 +114,8 @@ async def s3_upload_str_obj(
 
 
 async def s3_download_str_obj(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    url: str,
     location: str,
     content_type: str | None = None,
 ) -> str | None:
@@ -122,8 +125,8 @@ async def s3_download_str_obj(
     If not specified, presumes the object's content is JSON.
     """
     try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
+        hostname, access_id, secret_id = secrets.s3_creds(url)
+    except SecretsMgrError as e:
         msg = f"error obtaining S3 credentials: {e}"
         logger.exception(msg)
         raise S3Error(msg) from e
@@ -153,14 +156,25 @@ async def s3_download_str_obj(
         try:
             obj_content_type = await obj.content_type
         except s3.meta.client.exceptions.ClientError as e:
-            logger.error(f"client error: {e.response}")
             if (
                 "ResponseMetadata" in e.response
                 and e.response["ResponseMetadata"]["HTTPStatusCode"] == 404
             ):
                 logger.debug(f"object '{location}' not found")
                 return None
-            raise S3Error("foo") from None
+
+            logger.error(
+                f"unable to obtain content type on object '{location}': {e.response}"
+            )
+            if "Error" in e.response and "Message" in e.response["Error"]:
+                err_msg = e.response["Error"]["Message"]
+                logger.error(f"error message: {err_msg}")
+                raise S3Error(
+                    f"unable to obtain content type on object '{location}': {err_msg}"
+                ) from e
+            raise S3Error(
+                f"unknown error obtaining content type for '{location}'"
+            ) from None
 
         if content_type and obj_content_type != content_type:
             msg = f"unexpected content type '{obj_content_type}' for string object"
@@ -181,19 +195,19 @@ async def s3_download_str_obj(
 
 
 async def s3_upload_json(
-    secrets: SecretsVaultMgr, location: str, contents: str
+    secrets: SecretsMgr, url: str, location: str, contents: str
 ) -> None:
     """Upload a JSON object."""
     return await s3_upload_str_obj(
-        secrets, location, contents, content_type="application/json"
+        secrets, url, location, contents, content_type="application/json"
     )
 
 
-async def s3_download_json(secrets: SecretsVaultMgr, location: str) -> str | None:
+async def s3_download_json(secrets: SecretsMgr, url: str, location: str) -> str | None:
     """Download a JSON object."""
     try:
         return await s3_download_str_obj(
-            secrets, location, content_type="application/json"
+            secrets, url, location, content_type="application/json"
         )
     except Exception as e:
         msg = f"error downloading JSON object: {e}"
@@ -228,12 +242,16 @@ async def _upload_file(
 
 
 async def s3_upload_files(
-    secrets: SecretsVaultMgr, file_locs: list[S3FileLocator], *, public: bool = False
+    secrets: SecretsMgr,
+    url: str,
+    file_locs: list[S3FileLocator],
+    *,
+    public: bool = False,
 ) -> None:
     """Upload a list of files to S3."""
     try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
+        hostname, access_id, secret_id = secrets.s3_creds(url)
+    except SecretsMgrError as e:
         msg = f"error obtaining S3 credentials: {e}"
         logger.exception(msg)
         raise S3Error(msg) from e
@@ -263,7 +281,8 @@ async def s3_upload_files(
 
 
 async def s3_list(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    url: str,
     *,
     prefix: str | None = None,
     prefix_as_directory: bool = False,
@@ -280,8 +299,8 @@ async def s3_list(
     representing those other (logical) sub-directories present in `prefix`.
     """
     try:
-        hostname, access_id, secret_id = secrets.s3_creds()
-    except SecretsVaultError as e:
+        hostname, access_id, secret_id = secrets.s3_creds(url)
+    except SecretsMgrError as e:
         msg = f"error obtaining S3 credentials: {e}"
         logger.exception(msg)
         raise S3Error(msg) from e

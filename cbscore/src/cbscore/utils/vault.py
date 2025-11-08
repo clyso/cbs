@@ -42,13 +42,11 @@ class VaultError(CESError):
 
 class Vault(abc.ABC):
     addr: str
-    transit: str | None
 
-    def __init__(self, addr: str, *, transit: str | None = None) -> None:
+    def __init__(self, addr: str) -> None:
         self.addr = addr
         if not self.addr:
             raise VaultError(msg="missing vault address")
-        self.transit = transit
 
     @abc.abstractmethod
     @contextmanager
@@ -90,10 +88,8 @@ class VaultAppRoleBackend(Vault):
     role_id: str
     secret_id: str
 
-    def __init__(
-        self, addr: str, role_id: str, secret_id: str, *, transit: str | None = None
-    ) -> None:
-        super().__init__(addr, transit=transit)
+    def __init__(self, addr: str, role_id: str, secret_id: str) -> None:
+        super().__init__(addr)
         if not role_id:
             raise VaultError(msg="missing role id")
         if not secret_id:
@@ -124,10 +120,8 @@ class VaultUserPassBackend(Vault):
     username: str
     password: str
 
-    def __init__(
-        self, addr: str, username: str, password: str, *, transit: str | None = None
-    ) -> None:
-        super().__init__(addr, transit=transit)
+    def __init__(self, addr: str, username: str, password: str) -> None:
+        super().__init__(addr)
         if not username:
             raise VaultError(msg="missing username")
         if not password:
@@ -155,8 +149,8 @@ class VaultUserPassBackend(Vault):
 class VaultTokenBackend(Vault):
     token: str
 
-    def __init__(self, addr: str, token: str, *, transit: str | None = None) -> None:
-        super().__init__(addr, transit=transit)
+    def __init__(self, addr: str, token: str) -> None:
+        super().__init__(addr)
         if not token:
             raise VaultError(msg="missing token")
         self.token = token
@@ -174,20 +168,17 @@ def get_vault_from_config(vault_config: VaultConfig) -> Vault:
             addr=vault_config.vault_addr,
             role_id=vault_config.auth_approle.role_id,
             secret_id=vault_config.auth_approle.secret_id,
-            transit=vault_config.vault_transit,
         )
     elif vault_config.auth_user:
         return VaultUserPassBackend(
             addr=vault_config.vault_addr,
             username=vault_config.auth_user.username,
             password=vault_config.auth_user.password,
-            transit=vault_config.vault_transit,
         )
     elif vault_config.auth_token:
         return VaultTokenBackend(
             addr=vault_config.vault_addr,
             token=vault_config.auth_token,
-            transit=vault_config.vault_transit,
         )
     else:
         raise VaultError(msg="no authentication method configured for vault")
