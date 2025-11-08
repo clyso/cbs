@@ -1,4 +1,4 @@
-# cbsbuild - commands - advanced commands
+# CES library - secrets utilities
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,14 +11,19 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+from typing import override
 
-import click
+from cbscore.errors import CESError
+from cbscore.utils import logger as parent_logger
 
-from cbscore.cmds import logger as parent_logger
-
-logger = parent_logger.getChild("advanced")
+logger = parent_logger.getChild("secrets")
 
 
-@click.group(hidden=True)
-def cmd_advanced() -> None:
+class SecretsError(CESError):
+    @override
+    def __str__(self) -> str:
+        return f"Secrets Error: {self.msg}"
+
+
+class SecretsMgrError(SecretsError):
     pass

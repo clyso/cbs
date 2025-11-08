@@ -181,11 +181,7 @@ def version_create_helper(
             raise VersionError(msg)
         components_paths.append(our_comps_path)
 
-    comps: dict[str, CoreComponentLoc] = {}
-
-    for comp_path in components_paths:
-        comps.update(load_components(comp_path))
-
+    comps: dict[str, CoreComponentLoc] = load_components(components_paths)
     if not comps:
         msg = "no components provided, nor could they be found!"
         logger.error(msg)

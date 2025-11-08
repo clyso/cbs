@@ -21,12 +21,14 @@ from cbscore.builder import BuilderError
 from cbscore.builder import logger as parent_logger
 from cbscore.builder.rpmbuild import ComponentBuild
 from cbscore.utils import CmdArgs, CommandError, async_run_cmd
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("signing")
 
 
-async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) -> None:
+async def _sign_rpm(
+    rpm_path: Path, keyring: Path, passphrase: str | None, email: str
+) -> None:
     logger.debug(f"sign rpm '{rpm_path}'")
 
     cmd: CmdArgs = [
@@ -36,10 +38,17 @@ async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) 
         f"_gpg_path {keyring.as_posix()}",
         "--define",
         f"_gpg_name {email}",
-        "--define",
-        f"_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase {passphrase}",
-        rpm_path.as_posix(),
     ]
+    if passphrase:
+        cmd.extend(
+            [
+                "--define",
+                "_gpg_sign_cmd_extra_args --pinentry-mode loopback "
+                + f"--passphrase {passphrase}",
+            ]
+        )
+
+    cmd.append(rpm_path.as_posix())
 
     try:
         rc, _, stderr = await async_run_cmd(cmd)
@@ -62,7 +71,10 @@ async def _sign_rpm(rpm_path: Path, keyring: Path, passphrase: str, email: str) 
 
 
 async def _sign_component_rpms(
-    path: Path, keyring: Path, passphrase: str, email: str
+    path: Path,
+    keyring: Path,
+    passphrase: str | None,
+    email: str,
 ) -> tuple[int, int]:
     logger.info(f"sign component RPMs at '{path}'")
 
@@ -93,11 +105,13 @@ async def _sign_component_rpms(
 
 
 async def sign_rpms(
-    secrets: SecretsVaultMgr, components_rpms_paths: dict[str, ComponentBuild]
+    secrets: SecretsMgr,
+    sign_with_gpg: str,
+    components_rpms_paths: dict[str, ComponentBuild],
 ) -> None:
     logger.info(f"sign rpms for {components_rpms_paths.keys()}")
     try:
-        with secrets.gpg_private_keyring() as keyring:
+        with secrets.gpg_signing_key(sign_with_gpg) as keyring:
             keyring_path = keyring[0]
             passphrase = keyring[1]
             email = keyring[2]

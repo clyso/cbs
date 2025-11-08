@@ -54,9 +54,6 @@ uv --directory "${CBSCORE_PATH}" \
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"
 # shellcheck disable=2048,SC2086
-cbsbuild --vault "${RUNNER_PATH}/cbs-build.vault.json" ${dbg} \
+cbsbuild --config "${RUNNER_PATH}/cbs-build.config.yaml" ${dbg} \
   runner build \
-  --scratch-dir "${RUNNER_PATH}"/scratch \
-  --secrets-path "${RUNNER_PATH}"/secrets.json \
-  --components-dir "${RUNNER_PATH}"/components \
   $* || exit 1

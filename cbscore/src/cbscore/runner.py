@@ -20,9 +20,11 @@ import tempfile
 from pathlib import Path
 from typing import override
 
+from cbscore.config import Config, ConfigError
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
 from cbscore.utils.podman import PodmanError, podman_run, podman_stop
+from cbscore.utils.secrets import SecretsError
 from cbscore.versions.desc import VersionDescriptor
 from cbscore.versions.errors import NoSuchVersionDescriptorError
 
@@ -70,20 +72,18 @@ def _cleanup_components_dir(components_path: Path) -> None:
 async def runner(
     desc_file_path: Path,
     cbscore_path: Path,
-    secrets_path: Path,
-    scratch_path: Path,
-    scratch_containers_path: Path,
-    components_paths: list[Path],
-    vault_config_path: Path,
+    config: Config,
     *,
     run_name: str | None = None,
     replace_run: bool = False,
-    ccache_path: Path | None = None,
     entrypoint_path: Path | None = None,
     timeout: float | None = None,
-    upload: bool = True,
     skip_build: bool = False,
     force: bool = False,
+    upload_to: str | None = None,
+    sign_with_gpg: str | None = None,
+    sign_with_transit: str | None = None,
+    registry: str | None = None,
 ) -> None:
     our_actual_loc = Path(__file__).parent
 
@@ -93,19 +93,72 @@ async def runner(
         else our_actual_loc / "_tools" / "cbscore-entrypoint.sh"
     ).resolve()
 
+    vault_config_path_str = f"{config.vault}" if config.vault else "not using vault"
+    timeout_str = f"{timeout} seconds" if timeout else "no timeout"
+    upload_to_str = (
+        upload_to
+        if upload_to is not None
+        else (
+            config.secrets_config.storage
+            if config.secrets_config is not None
+            and config.secrets_config.storage is not None
+            else "not uploading"
+        )
+    )
+    sign_with_gpg_str = (
+        sign_with_gpg
+        if sign_with_gpg
+        else (
+            config.secrets_config.gpg_signing
+            if config.secrets_config is not None
+            and config.secrets_config.gpg_signing is not None
+            else "not gpg signing"
+        )
+    )
+    sign_with_transit_str = (
+        sign_with_transit
+        if sign_with_transit
+        else (
+            config.secrets_config.transit_signing
+            if config.secrets_config is not None
+            and config.secrets_config.transit_signing is not None
+            else "not transit signing"
+        )
+    )
+    registry_str = (
+        registry
+        if registry
+        else (
+            config.secrets_config.registry
+            if config.secrets_config is not None
+            and config.secrets_config.storage is not None
+            else "not pushing to registry"
+        )
+    )
+
+    secrets_files_str = ", ".join([p.as_posix() for p in config.secrets])
+    component_paths_str = ", ".join([p.as_posix() for p in config.paths.components])
+    ccache_path_str = (
+        config.paths.ccache.as_posix() if config.paths.ccache else "not using ccache"
+    )
+
     logger.info(f"""run the runner:
     desc file path:          {desc_file_path}
     cbscore path:            {cbscore_path}
     entrypoint:              {entrypoint_path}
-    secrets file path:       {secrets_path}
-    scratch path:            {scratch_path}
-    scratch containers path: {scratch_containers_path}
-    components paths:        {components_paths}
-    ccache path:             {ccache_path}
-    vault config path:       {vault_config_path}
-    timeout: {timeout}
-    upload: {upload}, skip_build: {skip_build}, force: {force}
-
+    secrets file path:       {secrets_files_str}
+    scratch path:            {config.paths.scratch}
+    scratch containers path: {config.paths.scratch_containers}
+    components paths:        {component_paths_str}
+    ccache path:             {ccache_path_str}
+    vault config path:       {vault_config_path_str}
+    timeout:                 {timeout_str}
+    upload to:               {upload_to_str}
+    sign with gpg:           {sign_with_gpg_str}
+    sign with transit:       {sign_with_transit_str}
+    registry:                {registry_str}
+    skip build:              {skip_build}
+    force:                   {force}
 """)
 
     if not entrypoint_path.exists() or not entrypoint_path.is_file():
@@ -131,38 +184,84 @@ async def runner(
         desc = VersionDescriptor.read(desc_file_path)
     except CESError as e:
         msg = f"error loading version descriptor: {e}"
-        logger.exception(msg)
+        logger.error(msg)
         raise RunnerError(msg) from e
 
     desc_mount_loc = f"/runner/{desc_file_path.name}"
 
     # propagate exception
-    components_path = _setup_components_dir(components_paths)
+    components_path = _setup_components_dir(config.paths.components)
     logger.debug(f"components contents: {list(components_path.walk())}")
 
+    # create temp file holding the secrets
+    #
+    _, secrets_tmp_file = tempfile.mkstemp(suffix="secrets.yaml", prefix="cbs-build-")
+    secrets_tmp_path = Path(secrets_tmp_file)
+    try:
+        secrets = config.get_secrets()
+        secrets.store(secrets_tmp_path)
+    except (ConfigError, SecretsError) as e:
+        secrets_tmp_path.unlink(missing_ok=True)
+        msg = f"error creating temporary secrets file: {e}"
+        logger.error(msg)
+        raise RunnerError(msg) from e
+
+    # new config to pass to the container, with adjusted paths.
+    #
+    new_config = config.model_copy(deep=True)
+    new_config.secrets = [Path("/runner/cbs-build.secrets.yaml")]
+    new_config.vault = Path("/runner/cbs-build.vault.yaml") if config.vault else None
+    new_config.paths.scratch = Path("/runner/scratch")
+    new_config.paths.scratch_containers = Path("/var/lib/containers")
+    new_config.paths.components = [Path("/runner/components")]
+    new_config.paths.ccache = Path("/runner/ccache") if config.paths.ccache else None
+    _, new_config_tmp_file = tempfile.mkstemp(
+        suffix=".config.yaml", prefix="cbs-build-"
+    )
+    new_config_path = Path(new_config_tmp_file)
+    try:
+        new_config.store(new_config_path)
+    except ConfigError as e:
+        secrets_tmp_path.unlink(missing_ok=True)
+        new_config_path.unlink(missing_ok=True)
+        msg = f"error creating temporary config file: {e}"
+        logger.error(msg)
+        raise RunnerError(msg) from e
+
+    podman_args = ["--desc", desc_mount_loc]
     podman_volumes = {
         desc_file_path.resolve().as_posix(): desc_mount_loc,
         cbscore_path.resolve().as_posix(): "/runner/cbscore",
         entrypoint_path.resolve().as_posix(): "/runner/entrypoint.sh",
-        vault_config_path.resolve().as_posix(): "/runner/cbs-build.vault.json",
-        secrets_path.resolve().as_posix(): "/runner/secrets.json",
-        scratch_path.resolve().as_posix(): "/runner/scratch",
-        scratch_containers_path.resolve().as_posix(): "/var/lib/containers:Z",
+        new_config_path.resolve().as_posix(): "/runner/cbs-build.config.yaml",
+        secrets_tmp_path.resolve().as_posix(): "/runner/cbs-build.secrets.yaml",
+        config.paths.scratch.resolve().as_posix(): "/runner/scratch",
+        config.paths.scratch_containers.resolve().as_posix(): "/var/lib/containers:Z",
         components_path.resolve().as_posix(): "/runner/components",
     }
 
-    podman_args = ["--desc", desc_mount_loc]
+    if config.vault:
+        vault_config_path_loc = config.vault.resolve().as_posix()
+        podman_volumes[vault_config_path_loc] = "/runner/cbs-build.vault.yaml"
 
-    if ccache_path:
-        ccache_path_loc = ccache_path.resolve().as_posix()
+    if config.paths.ccache:
+        ccache_path_loc = config.paths.ccache.resolve().as_posix()
         podman_volumes[ccache_path_loc] = "/runner/ccache"
-        podman_args.extend(["--ccache-path", "/runner/ccache"])
 
     if skip_build:
         podman_args.append("--skip-build")
 
-    if upload:
-        podman_args.append("--upload")
+    if upload_to:
+        podman_args.extend(["--upload-to", upload_to])
+
+    if sign_with_gpg:
+        podman_args.extend(["--sign-with-gpg-id", sign_with_gpg])
+
+    if sign_with_transit:
+        podman_args.extend(["--sign-with-transit", sign_with_transit])
+
+    if registry:
+        podman_args.extend(["--registry", registry])
 
     if force:
         podman_args.append("--force")

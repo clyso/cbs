@@ -1,0 +1,25 @@
+paths:
+  components:
+    - /cbs/components
+    - /cbs/_local/components
+  scratch: /path/to/scratchdir
+  scratch-containers: /path/to/scratchdir/containers
+  ccache: /path/to/scratchdir/ccache # optional
+
+artifacts: # optional
+  s3: # optional
+    s3-artifact-bucket: cbs
+    s3-releases-bucket: cbs-releases
+
+secrets-config: # optional
+  storage: s3.foo.tld # optional
+  gpg-signing: my-gpg # optional
+  transit-signing: my-transit
+  registry: harbor.foo.tld # optional
+
+secrets:
+  # merges list items, latter overrides former
+  - /cbs/_local/secrets.yaml
+  - /cbs/_local/secrets2.yaml
+
+vault: /cbs/_local/cbs.vault.yaml # optional

@@ -24,7 +24,7 @@ from cbscore.builder import logger as parent_logger
 from cbscore.builder.utils import get_component_version
 from cbscore.core.component import CoreComponentLoc
 from cbscore.utils import CommandError, async_run_cmd, git
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionComponent
 from cbscore.versions.utils import get_major_version, get_minor_version
 
@@ -170,7 +170,7 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
 
 
 async def prepare_components(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
     scratch_path: Path,
     components_loc: dict[str, CoreComponentLoc],
     components: list[VersionComponent],

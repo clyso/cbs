@@ -19,7 +19,7 @@ from cbscore.containers.component import ComponentContainer
 from cbscore.core.component import CoreComponentLoc
 from cbscore.releases.desc import ArchType, ReleaseDesc
 from cbscore.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
-from cbscore.utils.secrets import SecretsVaultMgr
+from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionDescriptor
 
 logger = parent_logger.getChild("containers")
@@ -226,7 +226,15 @@ class ContainerBuilder:
             logger.info(f"apply config for component '{comp_name}'")
             await comp_container.apply_config(self.container)
 
-    async def finish(self, secrets: SecretsVaultMgr) -> None:
+    async def finish(
+        self,
+        secrets: SecretsMgr,
+        *,
+        push_to: str | None = None,
+        sign_with_transit: str | None = None,
+    ) -> None:
         logger.info(f"finish container for '{self.version_desc.version}'")
         assert self.container
-        await self.container.finish(secrets)
+        await self.container.finish(
+            secrets, push_to=push_to, sign_with_transit=sign_with_transit
+        )

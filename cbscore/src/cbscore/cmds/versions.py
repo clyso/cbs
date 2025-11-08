@@ -18,16 +18,16 @@ from pathlib import Path
 
 import click
 
-from cbscore.cmds import Ctx, pass_ctx
 from cbscore.cmds import logger as parent_logger
-from cbscore.config import VaultConfig
+from cbscore.cmds import with_config
+from cbscore.config import Config, ConfigError
 from cbscore.errors import CESError, NoSuchVersionError
 from cbscore.images.desc import get_image_desc
 from cbscore.releases import ReleaseError
 from cbscore.releases.s3 import list_releases
 from cbscore.utils.git import GitError, get_git_repo_root, get_git_user
-from cbscore.utils.secrets import SecretsVaultMgr
-from cbscore.utils.vault import VaultError
+from cbscore.utils.secrets import SecretsMgrError
+from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.create import version_create_helper
 from cbscore.versions.errors import VersionError
 from cbscore.versions.utils import VersionType
@@ -112,14 +112,15 @@ async def version_create(
 
 
 async def versions_list(
-    secrets: SecretsVaultMgr,
+    secrets: SecretsMgr,
+    s3_address_url: str,
     verbose: bool,
 ) -> None:
     """List releases from S3."""
     logger.info("listing s3 objects")
 
     try:
-        releases = await list_releases(secrets)
+        releases = await list_releases(secrets, s3_address_url)
     except ReleaseError as e:
         click.echo(f"error obtaining releases: {e}")
         sys.exit(1)
@@ -294,42 +295,34 @@ def cmd_versions_create(
     help="Show additional release information",
 )
 @click.option(
-    "--secrets",
-    "secrets_path",
-    help="Path to 'secrets.json'",
-    envvar="SECRETS_PATH",
-    type=click.Path(
-        exists=True,
-        dir_okay=False,
-        file_okay=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
+    "--from",
+    "s3_address_url",
+    help="Address to the S3 service to list from.",
+    type=str,
     required=True,
+    metavar="ADDRESS",
 )
-@pass_ctx
+@with_config
 def cmd_versions_list(
-    ctx: Ctx,
+    config: Config,
     verbose: bool,
-    secrets_path: Path,
+    s3_address_url: str,
 ) -> None:
-    if not ctx.vault_config_path or not ctx.vault_config_path.exists():
-        logger.error("vault config path not provided or does not exist")
-        sys.exit(errno.ENOENT)
-
     try:
-        vault_config = VaultConfig.load(ctx.vault_config_path)
+        vault_config = config.get_vault_config()
     except Exception as e:
-        logger.error(f"unable to read vault config from '{ctx.vault_config_path}': {e}")
+        logger.error(f"unable to obtain vault config: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        secrets = SecretsVaultMgr(secrets_path, vault_config)
-    except VaultError as e:
+        secrets = SecretsMgr(config.get_secrets(), vault_config=vault_config)
+    except ConfigError as e:
+        click.echo(f"error obtaining secrets: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+    except SecretsMgrError as e:
         logger.error(f"error logging in to vault: {e}")
         sys.exit(errno.EACCES)
 
-    asyncio.run(versions_list(secrets, verbose))
+    asyncio.run(versions_list(secrets, s3_address_url, verbose))
 
     pass

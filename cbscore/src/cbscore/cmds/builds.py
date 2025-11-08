@@ -15,17 +15,19 @@
 import asyncio
 import errno
 import sys
+import tempfile
 from pathlib import Path
 
 import click
 
 from cbscore.builder import BuilderError
 from cbscore.builder.builder import Builder
-from cbscore.cmds import Ctx, pass_ctx
+from cbscore.cmds import Ctx, pass_ctx, with_config
 from cbscore.cmds import logger as parent_logger
-from cbscore.config import Config, VaultConfig
+from cbscore.config import Config, ConfigError
 from cbscore.errors import CESError
 from cbscore.runner import RunnerError, runner
+from cbscore.utils.secrets import SecretsError
 from cbscore.versions.desc import VersionDescriptor
 
 logger = parent_logger.getChild("builds")
@@ -71,16 +73,42 @@ logger = parent_logger.getChild("builds")
     required=False,
 )
 @click.option(
-    "--upload/--no-upload",
-    help="Upload artifacts to Clyso's S3",
-    is_flag=True,
-    default=True,
-)
-@click.option(
     "--timeout",
     help="Specify how long the build should be allowed to take",
     type=float,
     required=False,
+)
+@click.option(
+    "--upload-to",
+    "upload_to",
+    help="Upload artifacts to specified storage.",
+    type=str,
+    required=False,
+    metavar="HOST|ADDRESS",
+)
+@click.option(
+    "--sign-with-gpg-id",
+    "sign_with_gpg_id",
+    help="Sign artifacts with specified gpg secret id.",
+    type=str,
+    required=False,
+    metavar="GPG_SECRET_ID",
+)
+@click.option(
+    "--sign-with-transit",
+    "sign_with_transit",
+    help="Sign container images with specified vault transit secret id.",
+    type=str,
+    required=False,
+    metavar="TRANSIT_SECRET_ID",
+)
+@click.option(
+    "--registry",
+    "registry",
+    help="Push built container images to specified registry.",
+    type=str,
+    required=False,
+    metavar="HOST|ADDRESS",
 )
 @click.option(
     "--skip-build",
@@ -100,18 +128,35 @@ def cmd_build(
     desc_path: Path,
     cbscore_path: Path,
     cbs_entrypoint_path: Path | None,
-    upload: bool,
     timeout: float | None,
+    upload_to: str | None,
+    sign_with_gpg_id: str | None,
+    sign_with_transit: str | None,
+    registry: str | None,
     skip_build: bool,
     force: bool,
 ) -> None:
     assert ctx.config_path
-    assert ctx.vault_config_path
 
     try:
         config = Config.load(ctx.config_path)
     except Exception as e:
-        print(f"error loading config from '{ctx.config_path}': {e}")
+        click.echo(f"error loading config from '{ctx.config_path}': {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        secrets = config.get_secrets()
+    except ConfigError as e:
+        click.echo(f"unable to obtain secrets from config: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    _, secrets_path_str = tempfile.mkstemp(prefix="cbs-build-", suffix=".secrets.yaml")
+    secrets_path = Path(secrets_path_str)
+    try:
+        secrets.store(secrets_path)
+    except SecretsError as e:
+        click.echo(f"unable to store secrets to temp '{secrets_path}': {e}")
+        secrets_path.unlink()
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
@@ -120,15 +165,13 @@ def cmd_build(
             runner(
                 desc_path,
                 cbscore_path,
-                config.secrets_path,
-                config.scratch_path,
-                config.scratch_containers_path,
-                config.components_path,
-                ctx.vault_config_path,
-                ccache_path=config.ccache_path,
+                config,
                 entrypoint_path=cbs_entrypoint_path,
                 timeout=timeout,
-                upload=upload,
+                upload_to=upload_to,
+                sign_with_gpg=sign_with_gpg_id,
+                sign_with_transit=sign_with_transit,
+                registry=registry,
                 skip_build=skip_build,
                 force=force,
             )
@@ -136,6 +179,8 @@ def cmd_build(
     except (RunnerError, Exception):
         logger.exception(f"error building '{desc_path}'")
         sys.exit(1)
+    finally:
+        secrets_path.unlink()
 
 
 @click.group("runner", help="Build Runner related operations.", hidden=True)
@@ -159,59 +204,36 @@ Should not be called by the user directly. Use 'build' instead.
     required=True,
 )
 @click.option(
-    "--scratch-dir",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-)
-@click.option(
-    "--components-dir",
-    "components_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-)
-@click.option(
-    "--secrets-path",
-    type=click.Path(
-        exists=True,
-        dir_okay=False,
-        file_okay=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    required=True,
-)
-@click.option(
-    "--ccache-path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
+    "--upload-to",
+    "upload_to",
+    help="Upload artifacts to specified storage.",
+    type=str,
     required=False,
+    metavar="HOST|ADDRESS",
 )
 @click.option(
-    "--upload/--no-upload",
-    help="Upload artifacts to Clyso's S3",
-    is_flag=True,
-    default=True,
+    "--sign-with-gpg-id",
+    "sign_with_gpg_id",
+    help="Sign artifacts with specified gpg secret id.",
+    type=str,
+    required=False,
+    metavar="GPG_SECRET_ID",
+)
+@click.option(
+    "--sign-with-transit",
+    "sign_with_transit",
+    help="Sign container images with specified vault transit secret id.",
+    type=str,
+    required=False,
+    metavar="TRANSIT_SECRET_ID",
+)
+@click.option(
+    "--registry",
+    "registry",
+    help="Push built container images to specified registry.",
+    type=str,
+    required=False,
+    metavar="HOST|ADDRESS",
 )
 @click.option(
     "--skip-build",
@@ -225,34 +247,50 @@ Should not be called by the user directly. Use 'build' instead.
     is_flag=True,
     default=False,
 )
-@pass_ctx
+@with_config
 def cmd_runner_build(
-    ctx: Ctx,
+    config: Config,
     desc_path: Path,
-    scratch_dir: Path,
-    components_path: Path,
-    secrets_path: Path,
-    ccache_path: Path | None,
-    upload: bool,
+    upload_to: str | None,
+    sign_with_gpg_id: str | None,
+    sign_with_transit: str | None,
+    registry: str | None,
     skip_build: bool,
     force: bool,
 ) -> None:
-    logger.debug(f"desc: {desc_path}")
-    logger.debug(f"vault config: {ctx.vault_config_path}")
-    logger.debug(f"scratch dir: {scratch_dir}")
-    logger.debug(f"secrets path: {secrets_path}")
-    logger.debug(f"components path: {components_path}")
-    logger.debug(f"ccache path: {ccache_path}")
-    logger.debug(f"upload: {upload}")
-    logger.debug(f"skip_build: {skip_build}")
-    logger.debug(f"force: {force}")
+    upload_to = (
+        upload_to or config.secrets_config.storage if config.secrets_config else None
+    )
+    sign_with_gpg_id = (
+        sign_with_gpg_id or config.secrets_config.gpg_signing
+        if config.secrets_config
+        else None
+    )
+    sign_with_transit = (
+        sign_with_transit or config.secrets_config.transit_signing
+        if config.secrets_config
+        else None
+    )
+    registry = (
+        registry or config.secrets_config.registry if config.secrets_config else None
+    )
+
+    logger.debug(f"""runner build called with:
+   desc file path: {desc_path}
+      scratch dir: {config.paths.scratch}
+  components path: {config.paths.components}
+     secrets path: {config.secrets}
+      ccache path: {config.paths.ccache}
+        upload to: {upload_to}
+    sign with gpg: {sign_with_gpg_id}
+sign with transit: {sign_with_transit}
+         registry: {registry}
+       skip build: {skip_build}
+            force: {force}
+""")
 
     if not desc_path.exists():
         logger.error(f"build descriptor does not exist at '{desc_path}'")
-        sys.exit(errno.ENOENT)
-
-    if not ctx.vault_config_path or not ctx.vault_config_path.exists():
-        logger.error("vault config path not provided or does not exist")
         sys.exit(errno.ENOENT)
 
     try:
@@ -262,21 +300,13 @@ def cmd_runner_build(
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        vault_config = VaultConfig.load(ctx.vault_config_path)
-    except Exception as e:
-        logger.error(f"unable to read vault config from '{ctx.vault_config_path}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    print(f"run builder, desc = '{desc_path}'")
-    try:
         builder = Builder(
             desc,
-            vault_config,
-            scratch_dir,
-            secrets_path,
-            components_path,
-            upload=upload,
-            ccache_path=ccache_path,
+            config,
+            upload_to=upload_to,
+            sign_with_gpg=sign_with_gpg_id,
+            sign_with_transit=sign_with_transit,
+            registry=registry,
             skip_build=skip_build,
             force=force,
         )

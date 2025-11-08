@@ -13,23 +13,52 @@
 
 
 import errno
+import json
 import sys
 from pathlib import Path
 from typing import cast
 
 import click
+import yaml
 
 from cbscore.cmds import Ctx, pass_ctx
-from cbscore.config import Config, VaultAppRoleConfig, VaultConfig, VaultUserPassConfig
+from cbscore.config import (
+    ArtifactsConfig,
+    ArtifactsS3Config,
+    Config,
+    ConfigError,
+    DefaultSecretsConfig,
+    PathsConfig,
+    VaultAppRoleConfig,
+    VaultConfig,
+    VaultUserPassConfig,
+)
 
 
-def config_init(
-    config_path: Path,
-    vault_config_path: Path,
-    cwd: Path,
-    vault_addr: str,
-    vault_transit: str,
-) -> None:
+def config_init_vault(cwd: Path, vault_addr: str | None) -> Path:
+    default_vault_config_path = cwd / "cbs-build.vault.yaml"
+    vault_config_path = cast(
+        Path,
+        click.prompt(
+            "Vault config path",
+            default=default_vault_config_path,
+            type=click.Path(path_type=Path, exists=False),
+        ),
+    )
+    if vault_config_path.exists() and not click.confirm(
+        f"Vault config path '{vault_config_path}' already exists. Overwrite?"
+    ):
+        return vault_config_path
+
+    if not vault_addr:
+        vault_addr = cast(
+            str,
+            click.prompt(
+                "Vault address",
+                type=str,
+            ),
+        )
+
     vault_auth_user: VaultUserPassConfig | None = None
     vault_approle: VaultAppRoleConfig | None = None
     vault_token: str | None = None
@@ -51,12 +80,22 @@ def config_init(
 
     vault_config = VaultConfig(
         vault_addr=vault_addr,
-        vault_transit=vault_transit,
         auth_user=vault_auth_user,
         auth_approle=vault_approle,
         auth_token=vault_token,
     )
 
+    try:
+        vault_config.store(vault_config_path)
+    except ConfigError as e:
+        click.echo(
+            f"error writing vault config to '{vault_config_path}': {e}", err=True
+        )
+        sys.exit(errno.EIO)
+    return vault_config_path
+
+
+def config_init_paths(cwd: Path) -> PathsConfig:
     components_paths: list[Path] = []
     default_components_path = cwd / "components"
     if default_components_path.exists() and click.confirm(
@@ -64,7 +103,8 @@ def config_init(
     ):
         components_paths.append(default_components_path)
 
-    if click.confirm("Specify components paths?"):
+    components_confirm_str = "Specify additional" if components_paths else "Specify"
+    if click.confirm(f"{components_confirm_str} paths?"):
         while True:
             comp_path = Path(
                 cast(str, click.prompt("Components path", type=str))
@@ -79,31 +119,6 @@ def config_init(
             if not click.confirm("Add another components path?"):
                 break
 
-    default_secrets_paths = [
-        cwd / "cbs" / "secrets.json",
-        cwd / "_local" / "secrets.json",
-        cwd / "secrets.json",
-    ]
-    secrets_path: Path | None = None
-    for entry in default_secrets_paths:
-        if entry.exists() and entry.is_file():
-            secrets_path = entry
-            break
-
-    secrets_prompt_str = ""
-    if not secrets_path:
-        print("unable to find default 'secrets.json' file")
-    else:
-        print(f"using '{secrets_path}' as default 'secrets.json' file")
-        secrets_prompt_str = "a different "
-
-    if click.confirm(f"Specify {secrets_prompt_str}path to 'secrets.json'?"):
-        secrets_path = Path(cast(str, click.prompt("Path to 'secrets.json'"))).resolve()
-
-    if not secrets_path:
-        print("path to 'secrets.json' not provided, abort")
-        sys.exit(errno.EINVAL)
-
     scratch_path = Path(cast(str, click.prompt("Scratch path", type=str))).resolve()
     scratch_containers_path = Path(
         cast(str, click.prompt("Scratch containers path", type=str))
@@ -112,50 +127,115 @@ def config_init(
     if click.confirm("Specify ccache path?"):
         ccache_path = Path(cast(str, click.prompt("ccache path", type=str))).resolve()
 
-    config = Config(
-        components_path=components_paths,
-        secrets_path=secrets_path,
-        scratch_path=scratch_path,
-        scratch_containers_path=scratch_containers_path,
-        ccache_path=ccache_path,
+    return PathsConfig(
+        components=components_paths,
+        scratch=scratch_path,
+        scratch_containers=scratch_containers_path,
+        ccache=ccache_path,
     )
 
+
+def config_init_artifacts() -> ArtifactsConfig | None:
+    if not click.confirm("Configure S3 artifacts locations?"):
+        return None
+
+    artifact_bucket = cast(str, click.prompt("S3 artifacts bucket", type=str))
+    releases_bucket = cast(str, click.prompt("S3 releases bucket", type=str))
+    return ArtifactsConfig(
+        s3=ArtifactsS3Config(
+            s3_artifact_bucket=artifact_bucket, s3_releases_bucket=releases_bucket
+        )
+    )
+
+
+def config_init_secrets_paths() -> list[Path]:
+    if not click.confirm("Specify paths to secrets file(s)?"):
+        return []
+
+    secrets_paths: list[Path] = []
+    secrets_file_path = Path(cast(str, click.prompt("Path to secrets file"))).resolve()
+    secrets_paths.append(secrets_file_path)
+
+    while True:
+        if not click.confirm("Specify additional secrets files?"):
+            break
+        secrets_file_path = Path(
+            cast(str, click.prompt("Path to secrets file"))
+        ).resolve()
+        secrets_paths.append(secrets_file_path)
+
+    return secrets_paths
+
+
+def config_init_secrets_config() -> DefaultSecretsConfig | None:
+    if not click.confirm("Specify default secrets to use?"):
+        return None
+
+    storage_secret = cast(str, click.prompt("Storage secret", default="", type=str))
+    gpg_signing_secret = cast(
+        str, click.prompt("GPG signing secret", default="", type=str)
+    )
+    transit_signing_secret = cast(
+        str,
+        click.prompt("Transit signing secret", default="", type=str),
+    )
+    registry = cast(str, click.prompt("Registry", default="", type=str))
+    return DefaultSecretsConfig(
+        storage=storage_secret if storage_secret else None,
+        gpg_signing=gpg_signing_secret if gpg_signing_secret else None,
+        transit_signing=transit_signing_secret if transit_signing_secret else None,
+        registry=registry if registry else None,
+    )
+
+
+def config_init(
+    config_path: Path,
+    cwd: Path,
+    vault_addr: str | None,
+) -> None:
+    vault_config_path: Path | None = None
+    if click.confirm("Configure vault authentication?"):
+        vault_config_path = config_init_vault(cwd, vault_addr)
+
+    config_paths = config_init_paths(cwd)
+    artifacts = config_init_artifacts()
+    secrets_paths = config_init_secrets_paths()
+    secrets_config = config_init_secrets_config()
+
+    config = Config(
+        paths=config_paths,
+        artifacts=artifacts,
+        secrets_config=secrets_config,
+        secrets=secrets_paths,
+        vault=vault_config_path,
+    )
+
+    if config_path.suffix != ".yaml":
+        new_config_path = config_path.with_suffix(".yaml")
+        click.echo(
+            f"config at '{config_path}' not YAML, use '{new_config_path}' instead."
+        )
+        config_path = new_config_path
+
     if config_path.exists() and not click.confirm("Config file exists, overwrite?"):
-        print(f"do not write config file to '{config_path}'")
+        click.echo(f"do not write config file to '{config_path}'", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 
-    if vault_config_path.exists() and not click.confirm(
-        "Vault config exists, overwrite?"
-    ):
-        print(f"do not write vault config to '{vault_config_path}'")
-        sys.exit(errno.ENOTRECOVERABLE)
+    click.echo("config:\n")
+    json_dict = json.loads(config.model_dump_json())  # pyright: ignore[reportAny]
+    click.echo(yaml.safe_dump(json_dict, indent=2))
 
-    print(f"""
-==== vault ====
-{vault_config.model_dump_json(indent=2)}
-
-==== config ====
-{config.model_dump_json(indent=2)}
-
-""")
-
-    if not click.confirm("Write config?"):
-        print("do not write config files")
+    if not click.confirm(f"Write config to '{config_path}'?"):
+        click.echo("do not write config files")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        _ = config_path.write_text(config.model_dump_json(indent=2))
-        _ = vault_config_path.write_text(vault_config.model_dump_json(indent=2))
-    except Exception as e:
-        print(f"error writing config file: {e}")
+        config.store(config_path)
+    except ConfigError as e:
+        click.echo(f"error writing config file: {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 
-    print(f"""
-wrote config files
-
-      config: {config_path}
-vault config: {vault_config_path}
-""")
+    click.echo(f"wrote config file to '{config_path}'")
 
 
 @click.group("config", help="Config related operations.")
@@ -168,23 +248,14 @@ def cmd_config() -> None:
     "--vault-addr",
     "vault_addr",
     type=str,
-    required=True,
+    required=False,
     prompt="Vault address",
 )
-@click.option(
-    "--vault-transit",
-    "vault_transit",
-    type=str,
-    required=True,
-    prompt="Vault transit",
-)
 @pass_ctx
-def cmd_config_init(ctx: Ctx, vault_addr: str, vault_transit: str) -> None:
+def cmd_config_init(ctx: Ctx, vault_addr: str | None) -> None:
     assert ctx.config_path
-    assert ctx.vault_config_path
     config_path = ctx.config_path
-    vault_config_path = ctx.vault_config_path
 
     cwd = Path.cwd()
 
-    config_init(config_path, vault_config_path, cwd, vault_addr, vault_transit)
+    config_init(config_path, cwd, vault_addr)
