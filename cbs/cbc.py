@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # CBC - CES Build Service Client
 # Copyright (C) 2025  Clyso GmbH
 #
@@ -26,16 +24,17 @@ from typing import Any, Concatenate, ParamSpec, TypeVar, override
 import click
 import httpx
 import pydantic
-from cbscore.errors import CESError
-from cbscore.logger import logger as parent_logger
-from cbscore.versions.create import version_create_helper
-from cbscore.versions.desc import VersionDescriptor
-from cbscore.versions.errors import VersionError
 from cbslib.auth.users import User
 from cbslib.builds.types import BuildEntry
 from cbslib.config.user import CBSUserConfig
 from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
+
+from cbscore.errors import CESError
+from cbscore.logger import logger as parent_logger
+from cbscore.versions.create import create
+from cbscore.versions.desc import VersionDescriptor
+from cbscore.versions.errors import VersionError
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
@@ -66,8 +65,12 @@ class Ctx:
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
 
+R = TypeVar("R")
+T = TypeVar("T")
+P = ParamSpec("P")
 
-def update_ctx[R, T, **P](
+
+def update_ctx(
     f: Callable[P, R],
 ) -> Callable[P, R]:
     """Update current context, create sub-logger."""
@@ -89,9 +92,7 @@ def update_ctx[R, T, **P](
     return update_wrapper(inner, f)
 
 
-def pass_config[R, T, **P](
-    f: Callable[Concatenate[CBSUserConfig, P], R],
-) -> Callable[P, R]:
+def pass_config(f: Callable[Concatenate[CBSUserConfig, P], R]) -> Callable[P, R]:
     """Pass the user's config to the function. If not set, exit with error."""
 
     def inner(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -110,9 +111,7 @@ def pass_config[R, T, **P](
     return update_wrapper(inner, f)
 
 
-def pass_logger[R, T, **P](
-    f: Callable[Concatenate[logging.Logger, P], R],
-) -> Callable[P, R]:
+def pass_logger(f: Callable[Concatenate[logging.Logger, P], R]) -> Callable[P, R]:
     """Pass a sub-logger to the function. If not set, exit with error."""
 
     def inner(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -213,9 +212,6 @@ class CBCClient:
             raise CBCError(msg) from e
         return res
 
-
-R = TypeVar("R")
-P = ParamSpec("P")
 
 _WithEPFn = Callable[Concatenate[logging.Logger, CBCClient, str, P], R]
 _WithClientFn = Callable[Concatenate[logging.Logger, CBSUserConfig, P], R]
@@ -431,17 +427,6 @@ def build() -> None:
 @build.command("new", help="Create new build")
 @click.argument("version", type=str, metavar="VERSION", required=True)
 @click.option(
-    "-t",
-    "--type",
-    "version_type",
-    type=str,
-    required=False,
-    metavar="TYPE",
-    default="dev",
-    show_default=True,
-    help="Type of build, including its iteration",
-)
-@click.option(
     "-c",
     "--component",
     "components",
@@ -452,21 +437,12 @@ def build() -> None:
     help="Component's version (e.g., 'ceph@abcde1234')",
 )
 @click.option(
-    "--components-path",
-    "components_paths",
-    type=Path,
-    multiple=True,
-    required=False,
-    metavar="PATH",
-    help="Path to directory holding component definitions",
-)
-@click.option(
-    "--override-component-uri",
-    "component_uri_overrides",
+    "--override-component",
+    "component_overrides",
     type=str,
     multiple=True,
     required=False,
-    metavar="COMPONENT=URI",
+    metavar="COMPONENT=URL",
     help="Override component's location",
 )
 @click.option(
@@ -515,10 +491,8 @@ def new_build(
     config: CBSUserConfig,
     logger: logging.Logger,
     version: str,
-    version_type: str,
-    components: tuple[str, ...],
-    components_paths: tuple[Path, ...],
-    component_uri_overrides: tuple[str, ...],
+    components: list[str],
+    component_overrides: list[str],
     distro: str,
     el_version: int,
     registry: str,
@@ -532,12 +506,11 @@ def new_build(
         sys.exit(1)
 
     try:
-        desc = version_create_helper(
+        version_type, desc = create(
             version,
-            version_type,
-            list(components),
-            list(components_paths),
-            list(component_uri_overrides),
+            version_types,
+            components,
+            component_overrides,
             distro,
             el_version,
             registry,
@@ -556,7 +529,7 @@ def new_build(
         click.echo(f"error triggering build: {e}")
         sys.exit(1)
 
-    click.echo(f"version type: {version_type}")
+    click.echo(f"version type: {version_type.name}")
     click.echo(f"     task id: {res.task_id}")
     click.echo(f"       state: {res.state}")
 
