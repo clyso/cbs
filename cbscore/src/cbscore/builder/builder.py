@@ -72,20 +72,25 @@ class Builder:
         desc: VersionDescriptor,
         config: Config,
         *,
-        upload_to: str | None = None,
-        sign_with_gpg: str | None = None,
-        sign_with_transit: str | None = None,
-        registry: str | None = None,
         skip_build: bool = False,
         force: bool = False,
     ) -> None:
         self.desc = desc
         self.config = config
         self.scratch_path = config.paths.scratch
-        self.upload_to = upload_to
-        self.sign_with_gpg = sign_with_gpg
-        self.sign_with_transit = sign_with_transit
-        self.registry = registry
+
+        self.upload_to = (
+            config.secrets_config.storage if config.secrets_config else None
+        )
+        self.sign_with_gpg = (
+            config.secrets_config.gpg_signing if config.secrets_config else None
+        )
+        self.sign_with_transit = (
+            config.secrets_config.transit_signing if config.secrets_config else None
+        )
+        self.registry = (
+            config.secrets_config.registry if config.secrets_config else None
+        )
         self.ccache_path = config.paths.ccache
         self.skip_build = skip_build
         self.force = force

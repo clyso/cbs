@@ -24,7 +24,7 @@ from cbscore.builder import BuilderError
 from cbscore.builder.builder import Builder
 from cbscore.cmds import Ctx, pass_ctx, with_config
 from cbscore.cmds import logger as parent_logger
-from cbscore.config import Config, ConfigError
+from cbscore.config import Config, ConfigError, DefaultSecretsConfig
 from cbscore.errors import CESError
 from cbscore.runner import RunnerError, runner
 from cbscore.utils.secrets import SecretsError
@@ -144,6 +144,18 @@ def cmd_build(
         click.echo(f"error loading config from '{ctx.config_path}': {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 
+    if not config.secrets_config:
+        config.secrets_config = DefaultSecretsConfig()
+
+    config.secrets_config.storage = upload_to or config.secrets_config.storage
+    config.secrets_config.gpg_signing = (
+        sign_with_gpg_id or config.secrets_config.gpg_signing
+    )
+    config.secrets_config.transit_signing = (
+        sign_with_transit or config.secrets_config.transit_signing
+    )
+    config.secrets_config.registry = registry or config.secrets_config.registry
+
     try:
         secrets = config.get_secrets()
     except ConfigError as e:
@@ -168,10 +180,6 @@ def cmd_build(
                 config,
                 entrypoint_path=cbs_entrypoint_path,
                 timeout=timeout,
-                upload_to=upload_to,
-                sign_with_gpg=sign_with_gpg_id,
-                sign_with_transit=sign_with_transit,
-                registry=registry,
                 skip_build=skip_build,
                 force=force,
             )
@@ -204,38 +212,6 @@ Should not be called by the user directly. Use 'build' instead.
     required=True,
 )
 @click.option(
-    "--upload-to",
-    "upload_to",
-    help="Upload artifacts to specified storage.",
-    type=str,
-    required=False,
-    metavar="HOST|ADDRESS",
-)
-@click.option(
-    "--sign-with-gpg-id",
-    "sign_with_gpg_id",
-    help="Sign artifacts with specified gpg secret id.",
-    type=str,
-    required=False,
-    metavar="GPG_SECRET_ID",
-)
-@click.option(
-    "--sign-with-transit",
-    "sign_with_transit",
-    help="Sign container images with specified vault transit secret id.",
-    type=str,
-    required=False,
-    metavar="TRANSIT_SECRET_ID",
-)
-@click.option(
-    "--registry",
-    "registry",
-    help="Push built container images to specified registry.",
-    type=str,
-    required=False,
-    metavar="HOST|ADDRESS",
-)
-@click.option(
     "--skip-build",
     help="Skip building RPMs for components",
     is_flag=True,
@@ -251,28 +227,28 @@ Should not be called by the user directly. Use 'build' instead.
 def cmd_runner_build(
     config: Config,
     desc_path: Path,
-    upload_to: str | None,
-    sign_with_gpg_id: str | None,
-    sign_with_transit: str | None,
-    registry: str | None,
     skip_build: bool,
     force: bool,
 ) -> None:
-    upload_to = (
-        upload_to or config.secrets_config.storage if config.secrets_config else None
+    upload_to_str = (
+        config.secrets_config.storage
+        if config.secrets_config and config.secrets_config.storage
+        else "not uploading"
     )
-    sign_with_gpg_id = (
-        sign_with_gpg_id or config.secrets_config.gpg_signing
-        if config.secrets_config
-        else None
+    gpg_signing_str = (
+        config.secrets_config.gpg_signing
+        if config.secrets_config and config.secrets_config.gpg_signing
+        else "not signing with gpg"
     )
-    sign_with_transit = (
-        sign_with_transit or config.secrets_config.transit_signing
-        if config.secrets_config
-        else None
+    transit_signing_str = (
+        config.secrets_config.transit_signing
+        if config.secrets_config and config.secrets_config.transit_signing
+        else "not signing with transit"
     )
-    registry = (
-        registry or config.secrets_config.registry if config.secrets_config else None
+    registry_str = (
+        config.secrets_config.registry
+        if config.secrets_config and config.secrets_config.registry
+        else "not pushing to registry"
     )
 
     logger.debug(f"""runner build called with:
@@ -281,10 +257,10 @@ def cmd_runner_build(
   components path: {config.paths.components}
      secrets path: {config.secrets}
       ccache path: {config.paths.ccache}
-        upload to: {upload_to}
-    sign with gpg: {sign_with_gpg_id}
-sign with transit: {sign_with_transit}
-         registry: {registry}
+        upload to: {upload_to_str}
+    sign with gpg: {gpg_signing_str}
+sign with transit: {transit_signing_str}
+         registry: {registry_str}
        skip build: {skip_build}
             force: {force}
 """)
@@ -303,10 +279,6 @@ sign with transit: {sign_with_transit}
         builder = Builder(
             desc,
             config,
-            upload_to=upload_to,
-            sign_with_gpg=sign_with_gpg_id,
-            sign_with_transit=sign_with_transit,
-            registry=registry,
             skip_build=skip_build,
             force=force,
         )

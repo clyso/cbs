@@ -80,10 +80,6 @@ async def runner(
     timeout: float | None = None,
     skip_build: bool = False,
     force: bool = False,
-    upload_to: str | None = None,
-    sign_with_gpg: str | None = None,
-    sign_with_transit: str | None = None,
-    registry: str | None = None,
 ) -> None:
     our_actual_loc = Path(__file__).parent
 
@@ -96,44 +92,28 @@ async def runner(
     vault_config_path_str = f"{config.vault}" if config.vault else "not using vault"
     timeout_str = f"{timeout} seconds" if timeout else "no timeout"
     upload_to_str = (
-        upload_to
-        if upload_to is not None
-        else (
-            config.secrets_config.storage
-            if config.secrets_config is not None
-            and config.secrets_config.storage is not None
-            else "not uploading"
-        )
+        config.secrets_config.storage
+        if config.secrets_config is not None
+        and config.secrets_config.storage is not None
+        else "not uploading"
     )
     sign_with_gpg_str = (
-        sign_with_gpg
-        if sign_with_gpg
-        else (
-            config.secrets_config.gpg_signing
-            if config.secrets_config is not None
-            and config.secrets_config.gpg_signing is not None
-            else "not gpg signing"
-        )
+        config.secrets_config.gpg_signing
+        if config.secrets_config is not None
+        and config.secrets_config.gpg_signing is not None
+        else "not gpg signing"
     )
     sign_with_transit_str = (
-        sign_with_transit
-        if sign_with_transit
-        else (
-            config.secrets_config.transit_signing
-            if config.secrets_config is not None
-            and config.secrets_config.transit_signing is not None
-            else "not transit signing"
-        )
+        config.secrets_config.transit_signing
+        if config.secrets_config is not None
+        and config.secrets_config.transit_signing is not None
+        else "not transit signing"
     )
     registry_str = (
-        registry
-        if registry
-        else (
-            config.secrets_config.registry
-            if config.secrets_config is not None
-            and config.secrets_config.storage is not None
-            else "not pushing to registry"
-        )
+        config.secrets_config.registry
+        if config.secrets_config is not None
+        and config.secrets_config.registry is not None
+        else "not pushing to registry"
     )
 
     secrets_files_str = ", ".join([p.as_posix() for p in config.secrets])
@@ -250,18 +230,6 @@ async def runner(
 
     if skip_build:
         podman_args.append("--skip-build")
-
-    if upload_to:
-        podman_args.extend(["--upload-to", upload_to])
-
-    if sign_with_gpg:
-        podman_args.extend(["--sign-with-gpg-id", sign_with_gpg])
-
-    if sign_with_transit:
-        podman_args.extend(["--sign-with-transit", sign_with_transit])
-
-    if registry:
-        podman_args.extend(["--registry", registry])
 
     if force:
         podman_args.append("--force")

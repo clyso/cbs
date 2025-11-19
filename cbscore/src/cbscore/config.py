@@ -138,10 +138,10 @@ class DefaultSecretsConfig(pydantic.BaseModel):
     storage: str | None = None
     gpg_signing: Annotated[
         str | None, pydantic.Field(alias="gpg-signing", default=None)
-    ]
+    ] = None
     transit_signing: Annotated[
         str | None, pydantic.Field(alias="transit-signing", default=None)
-    ]
+    ] = None
     registry: str | None = None
 
 
