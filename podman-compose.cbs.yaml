@@ -20,11 +20,9 @@ services:
     entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
     privileged: true
     volumes:
-      - ./_local/cbs/cbs.config.worker.json:/cbs/config/cbs-config.json
-      - ./_local/cbs/cbs.vault.json:/cbs/config/cbs.vault.json
+      - ./_local/cbs/config/worker:/cbs/config
       - ./cbscore:/cbs/src
 
-      - ./_local/secrets.json:/cbs/config/secrets.json
       - ./_local/cbs/scratch:/cbs/scratch
       - ./_local/cbs/scratch/containers:/var/lib/containers
       - ./_local/cbs/scratch/ccache:/cbs/ccache
@@ -37,7 +35,7 @@ services:
       - label=disable
       - seccomp=unconfined
     environment:
-      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_CONFIG: /cbs/config/cbs.worker.config.yaml
       CBS_DEBUG: 1
     # We require the host network to be able to properly access interfaces
     # such as those of a vpn. This means the cbs worker is not in the same
@@ -52,26 +50,21 @@ services:
     build:
       context: .
       dockerfile: ./ContainerFile.cbs
-    container_name: clyso-cbs
+    container_name: clyso-cbs-server
     ports:
       - "8080:8080"
     restart: "no"
     privileged: true
     volumes:
-      - ./_local/cbs/cbs.config.server.json:/cbs/config/cbs-config.json
-      - ./_local/cbs/cbs.vault.json:/cbs/config/cbs.vault.json
+      - ./_local/cbs/config/server:/cbs/config
 
-      - ./_local/cbs/google-client-cbs.json:/cbs/config/google-client-cbs.json
-      - ./_local/secrets.json:/cbs/config/secrets.json
       - ./_local/cbs/data:/cbs/data
-      - ./_local/cbs/cbs-cert.pem:/cbs/config/cbs-cert.pem
-      - ./_local/cbs/cbs-key.pem:/cbs/config/cbs-key.pem
       # - ./cbs:/cbs/tools
     security_opt:
       - label=disable
       - seccomp=unconfined
     environment:
-      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_CONFIG: /cbs/config/cbs.server.config.yaml
       CBS_DEBUG: 1
     depends_on:
       - redis
@@ -85,9 +78,10 @@ services:
     ports:
       - "5555:5555"
     volumes:
-      - ./_local/cbs/cbs.config.worker.json:/cbs/config/cbs-config.json
+      - ./_local/cbs/config/worker/cbs.worker.config.yaml:/cbs/config/cbs-config.yaml
+      - ./_local/cbs/config/worker/cbscore.config.yaml:/cbs/config/cbscore.config.yaml
     environment:
-      CBS_CONFIG: /cbs/config/cbs-config.json
+      CBS_CONFIG: /cbs/config/cbs-config.yaml
       CBS_DEBUG: 1
     security_opt:
       - label=disable

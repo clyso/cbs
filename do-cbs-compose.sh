@@ -5,14 +5,17 @@ components=()
 ourdir="$(dirname "$(realpath "$0")")"
 localdir="${ourdir}/_local"
 rundir="${localdir}/cbs"
+configdir="${rundir}/config"
+worker_cfg_dir="${configdir}/worker"
+server_cfg_dir="${configdir}/server"
 
 components_dir="${rundir}/components"
-vault_cfg="${rundir}/cbs.vault.json"
-server_cfg="${rundir}/cbs.config.server.json"
-worker_cfg="${rundir}/cbs.config.worker.json"
-google_client_secrets="${rundir}/google-client-cbs.json"
-cbs_cert="${rundir}/cbs-cert.pem"
-cbs_key="${rundir}/cbs-key.pem"
+cbscore_cfg="${worker_cfg_dir}/cbscore.config.yaml"
+worker_cfg="${worker_cfg_dir}/cbs.worker.config.yaml"
+server_cfg="${server_cfg_dir}/cbs.server.config.yaml"
+google_client_secrets="${server_cfg_dir}/google-client-cbs.json"
+cbs_cert="${server_cfg_dir}/cbs.cert.pem"
+cbs_key="${server_cfg_dir}/cbs.key.pem"
 
 down() {
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose \
@@ -43,8 +46,8 @@ set_server_keys() {
   local srv_key="${3}"
   local tkn_key="${4}"
 
-  (jq ".server.secrets.session_secret_key = \"${srv_key}\" |
-    .server.secrets.token_secret_key = \"${tkn_key}\"" \
+  (yq ".server.secrets.session-secret-key = \"${srv_key}\" |
+    .server.secrets.token-secret-key = \"${tkn_key}\"" \
     "${src_template}" >"${tgt_file}") || (
     echo "error: failed to set keys in ${tgt_file}" >/dev/stderr && exit 1
   )
@@ -53,6 +56,7 @@ set_server_keys() {
 prepare() {
   local scratch_dir="${1}"
   local google_client_secrets_src="${2}"
+  local secrets_file_src="${3}"
 
   [[ -z "${scratch_dir}" ]] &&
     echo "error: missing scratch dir argument" >/dev/stderr &&
@@ -61,6 +65,15 @@ prepare() {
   [[ -z "${google_client_secrets_src}" ]] &&
     echo "error: missing google client secrets source argument" >/dev/stderr &&
     exit 1
+
+  [[ -z "${secrets_file_src}" ]] &&
+    echo "error: missing secrets file source argument" >/dev/stderr &&
+    exit 1
+
+  if ! cbsbuild --help >&/dev/null; then
+    echo "error: 'cbsbuild' tool not found in PATH" >/dev/stderr
+    exit 1
+  fi
 
   [[ ! -d "${localdir}" ]] && mkdir -p "${localdir}"
 
@@ -80,6 +93,42 @@ prepare() {
   [[ ! -e "${rundir}"/data ]] &&
     mkdir "${rundir}"/data
 
+  [[ ! -e "${configdir}" ]] &&
+    mkdir -p "${configdir}"
+
+  [[ ! -e "${worker_cfg_dir}" ]] &&
+    mkdir -p "${worker_cfg_dir}"
+
+  [[ ! -e "${server_cfg_dir}" ]] &&
+    mkdir -p "${server_cfg_dir}"
+
+  if ! yq --help 2>/dev/null; then
+    echo "error: 'yq' not available in PATH" >/dev/stderr
+    exit 1
+  fi
+
+  cbsbuild config init-vault --vault "${configdir}/cbs.vault.yaml" || (
+    echo "error: unable to init vault config" >/dev/stderr && exit 1
+  )
+
+  cbsbuild -c "${cbscore_cfg}" config init \
+    --components /cbs/components \
+    --scratch /cbs/scratch \
+    --containers-scratch /var/lib/containers \
+    --ccache /cbs/ccache \
+    --vault /cbs/config/cbs.vault.yaml \
+    --secrets /cbs/config/secrets.yaml || (
+    echo "error: unable to init cbscore config at '${cbscore_cfg}'" >/dev/stderr &&
+      exit 1
+  )
+
+  [[ ! -e "${worker_cfg_dir}/secrets.yaml" ]] && (
+    cp "${secrets_file_src}" "${worker_cfg_dir}/secrets.yaml" || (
+      echo "error: unable to copy secrets file to worker config dir" >/dev/stderr &&
+        exit 1
+    )
+  ) && echo "=> copied secrets file to worker config dir"
+
   gen_server_keys
 
   if [[ ! -e "${server_cfg}" ]] || [[ ! -e "${worker_cfg}" ]]; then
@@ -88,13 +137,13 @@ prepare() {
 
     tmp_server_cfg=$(mktemp)
 
-    set_server_keys "${ourdir}"/cbs/cbs.config.server.example.json \
+    set_server_keys "${ourdir}"/cbs/cbs.server.config.example.yaml \
       "${tmp_server_cfg}" "${srv_key}" "${tkn_key}"
 
     cp "${tmp_server_cfg}" "${server_cfg}" || (
       echo "error: unable to copy server config" >/dev/stderr && exit 1
     )
-    cp "${ourdir}"/cbs/cbs.config.worker.example.json "${worker_cfg}" || (
+    cp "${ourdir}"/cbs/cbs.worker.config.example.yaml "${worker_cfg}" || (
       echo "error: unable to copy worker config" >/dev/stderr && exit 1
     )
   fi
@@ -103,19 +152,6 @@ prepare() {
     echo "error: unable to copy google client secrets" >/dev/stderr &&
       exit 1
   )
-
-  if [[ ! -e "${vault_cfg}" ]]; then
-    cp "${ourdir}"/cbs/cbs.vault.example.json "${vault_cfg}" || (
-      echo "error: unable to copy vault config" >/dev/stderr && exit 1
-    )
-    cat <<EOF >/dev/stdout
-
-!! please configure the vault access credentials at
-  -> ${vault_cfg} <-
-!! keep in mind that only one authentication method will be used!
-
-EOF
-  fi
 
   [[ -e "${components_dir}" ]] && (rm -rf "${components_dir}" || (
     echo "error: unable to remove old components dir" >/dev/stderr && exit 1
@@ -167,7 +203,7 @@ Commands:
   down                            bring down a CBS podman-compose environment
 
 Options:
-  -h | --help               Show this message
+  -h | --help                     Show this message
 
 Options for 'prepare':
   -f | --force                    force preparing from scratch
@@ -175,6 +211,7 @@ Options for 'prepare':
                                   [required]
   --components <PATH>             path to a directory with components
                                   [multiple] (default: ./components)
+  --secrets <PATH>                path to secrets.yaml file [required]
 
 EOF
 }
@@ -183,7 +220,7 @@ EOF
 
 force=0
 google_client_secrets_src=
-vault_env_src=
+secrets_file_src=
 
 args=()
 cmd="${1}"
@@ -215,6 +252,17 @@ while [[ $# -gt 0 ]]; do
         echo "error: components directory at '${2}' not found" >/dev/stderr &&
         exit 1
       components+=("${2}")
+      shift 1
+      ;;
+    --secrets)
+      [[ -z $2 ]] &&
+        echo "error: missing 'secrets' argument" >/dev/stderr &&
+        usage &&
+        exit 1
+      [[ ! -e $2 ]] &&
+        echo "error: secrets file at '${2}' not found" >/dev/stderr &&
+        exit 1
+      secrets_file_src="${2}"
       shift 1
       ;;
     -h | --help)
@@ -255,7 +303,7 @@ case ${cmd} in
       echo "=> using default components from './components'" &&
       components=("./components")
 
-    prepare "${args[0]}" "${google_client_secrets_src}"
+    prepare "${args[0]}" "${google_client_secrets_src}" "${secrets_file_src}"
     ;;
   up)
     check

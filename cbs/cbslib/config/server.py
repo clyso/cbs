@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated, ClassVar
 
 import pydantic
 
@@ -40,37 +41,55 @@ class _GoogleOAuthSecrets(pydantic.BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> GoogleOAuthSecrets:
-        if not path.exists():
-            raise CESError(msg=f"oauth2 config not found at '{path}'")
+        if not path.exists() or not path.is_file():
+            msg = f"oauth2 config file not found at '{path}'"
+            logger.error(msg)
+            raise CESError(msg)
+
+        if path.suffix.lower() != ".json":
+            msg = f"oauth2 config file at '{path}' is not a json file"
+            logger.error(msg)
+            raise CESError(msg)
 
         try:
-            with path.open("r") as f:
-                contents = _GoogleOAuthSecrets.model_validate_json(f.read())
-        except pydantic.ValidationError:
-            raise CESError(msg=f"malformed oauth2 config at '{path}'") from None
+            contents = _GoogleOAuthSecrets.model_validate_json(path.read_text())
+        except pydantic.ValidationError as e:
+            msg = f"malformed oauth2 config at '{path}': {e}"
+            logger.error(msg)
+            raise CESError(msg) from None
         except Exception as e:
-            raise CESError(msg=f"error loading oauth2 config from '{path}': {e}") from e
+            msg = f"unexpected error loading oauth2 config from '{path}': {e}"
+            logger.error(msg)
+            raise CESError(msg) from e
         return contents.web
 
 
 class ServerSecretsConfig(pydantic.BaseModel):
-    oauth2_secrets_file: str
+    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    oauth2_secrets_file: Annotated[str, pydantic.Field(alias="oauth2-secrets-file")]
     # secrets generated with
     #   openssl rand -hex 32
-    session_secret_key: str
-    token_secret_key: str
-    token_secret_ttl_minutes: int
+    session_secret_key: Annotated[str, pydantic.Field(alias="session-secret-key")]
+    token_secret_key: Annotated[str, pydantic.Field(alias="token-secret-key")]
+    token_secret_ttl_minutes: Annotated[
+        int, pydantic.Field(alias="token-secret-ttl-minutes")
+    ]
 
 
 class ServerConfig(pydantic.BaseModel):
     # ssl certs
     #
-    cert_path: Path
-    key_path: Path
+    cert: Path
+    key: Path
 
     # database path
     #
-    db_path: Path
+    db: Path
 
     # server secrets
     #

@@ -1,0 +1,21 @@
+# Example vault configuration
+#
+
+# vault address
+vault-addr: https://vault.foo.tld
+
+# only one of 'auth-approle', 'auth-token', or 'auth-user' required.
+#
+
+# authenticate to vault using the approle method
+auth-approle:
+  role-id: <approle-role-id>
+  secret-id: <approle-secret-id>
+
+# authenticate to vault using a token
+auth-token: <my-token>
+
+# authenticate to vault using userpass method
+auth-user:
+  password: <my-password>
+  username: <my-username>

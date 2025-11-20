@@ -45,7 +45,7 @@ class VaultAppRoleConfig(pydantic.BaseModel):
     )
 
     role_id: Annotated[str, pydantic.Field(alias="role-id")]
-    secret_id: Annotated[str, pydantic.Field(alias="secred-id")]
+    secret_id: Annotated[str, pydantic.Field(alias="secret-id")]
 
 
 class VaultConfig(pydantic.BaseModel):

@@ -26,7 +26,7 @@ from fastapi.security import (
 )
 
 from cbslib.auth import logger as parent_logger
-from cbslib.config import get_config
+from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("auth")
 

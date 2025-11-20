@@ -35,30 +35,38 @@ from cbscore.config import (
 )
 
 
-def config_init_vault(cwd: Path, vault_addr: str | None) -> Path:
-    default_vault_config_path = cwd / "cbs-build.vault.yaml"
-    vault_config_path = cast(
-        Path,
-        click.prompt(
-            "Vault config path",
-            default=default_vault_config_path,
-            type=click.Path(path_type=Path, exists=False),
-        ),
-    )
+def config_init_vault(cwd: Path, vault_config_path: Path | None) -> Path | None:
+    """Initialize vault config interactively."""
+    if vault_config_path and vault_config_path.exists():
+        return vault_config_path
+
+    if not click.confirm("Configure vault authentication?"):
+        click.echo("skipping vault configuration")
+        return None
+
+    if not vault_config_path:
+        default_vault_config_path = cwd / "cbs-build.vault.yaml"
+        vault_config_path = cast(
+            Path,
+            click.prompt(
+                "Vault config path",
+                default=default_vault_config_path,
+                type=click.Path(path_type=Path, exists=False),
+            ),
+        )
+
     if vault_config_path.exists() and not click.confirm(
         f"Vault config path '{vault_config_path}' already exists. Overwrite?"
     ):
         return vault_config_path
 
-    if not vault_addr:
-        vault_addr = cast(
-            str,
-            click.prompt(
-                "Vault address",
-                type=str,
-            ),
-        )
-
+    vault_addr = cast(
+        str,
+        click.prompt(
+            "Vault address",
+            type=str,
+        ),
+    )
     vault_auth_user: VaultUserPassConfig | None = None
     vault_approle: VaultAppRoleConfig | None = None
     vault_token: str | None = None
@@ -95,48 +103,65 @@ def config_init_vault(cwd: Path, vault_addr: str | None) -> Path:
     return vault_config_path
 
 
-def config_init_paths(cwd: Path) -> PathsConfig:
-    components_paths: list[Path] = []
-    default_components_path = cwd / "components"
-    if default_components_path.exists() and click.confirm(
-        f"Use '{default_components_path}' as components path?"
-    ):
-        components_paths.append(default_components_path)
+def config_init_paths(
+    cwd: Path,
+    *,
+    components_paths: list[Path] | None = None,
+    scratch_path: Path | None = None,
+    containers_scratch_path: Path | None = None,
+    ccache_path: Path | None = None,
+) -> PathsConfig:
+    """Initialize paths config interactively."""
+    components_paths = components_paths if components_paths else []
 
-    components_confirm_str = "Specify additional" if components_paths else "Specify"
-    if click.confirm(f"{components_confirm_str} paths?"):
-        while True:
-            comp_path = Path(
-                cast(str, click.prompt("Components path", type=str))
-            ).resolve()
-            if not comp_path.exists() or not comp_path.is_dir():
-                print(
-                    f"provided path '{comp_path}' does not exist or is not a directory"
-                )
-            else:
-                components_paths.append(comp_path)
+    if not components_paths:
+        default_components_path = cwd / "components"
+        if default_components_path.exists() and click.confirm(
+            f"Use '{default_components_path}' as components path?"
+        ):
+            components_paths.append(default_components_path)
 
-            if not click.confirm("Add another components path?"):
-                break
+        components_confirm_str = "Specify additional" if components_paths else "Specify"
+        if click.confirm(f"{components_confirm_str} paths?"):
+            while True:
+                comp_path = Path(
+                    cast(str, click.prompt("Components path", type=str))
+                ).resolve()
+                if not comp_path.exists() or not comp_path.is_dir():
+                    print(
+                        f"provided path '{comp_path}' does not exist "
+                        + "or is not a directory"
+                    )
+                else:
+                    components_paths.append(comp_path)
 
-    scratch_path = Path(cast(str, click.prompt("Scratch path", type=str))).resolve()
-    scratch_containers_path = Path(
-        cast(str, click.prompt("Scratch containers path", type=str))
-    ).resolve()
-    ccache_path: Path | None = None
-    if click.confirm("Specify ccache path?"):
+                if not click.confirm("Add another components path?"):
+                    break
+
+    if not scratch_path:
+        scratch_path = Path(cast(str, click.prompt("Scratch path", type=str))).resolve()
+
+    if not containers_scratch_path:
+        containers_scratch_path = Path(
+            cast(str, click.prompt("Scratch containers path", type=str))
+        ).resolve()
+
+    if not ccache_path and click.confirm("Specify ccache path?"):
         ccache_path = Path(cast(str, click.prompt("ccache path", type=str))).resolve()
 
     return PathsConfig(
         components=components_paths,
         scratch=scratch_path,
-        scratch_containers=scratch_containers_path,
+        scratch_containers=containers_scratch_path,
         ccache=ccache_path,
     )
 
 
 def config_init_artifacts() -> ArtifactsConfig | None:
+    """Initialize artifacts S3 locations config interactively."""
     if not click.confirm("Configure S3 artifacts locations?"):
+        click.echo("skipping artifacts configuration")
+        click.echo("these should be manually configured later if S3 is being used")
         return None
 
     artifact_bucket = cast(str, click.prompt("S3 artifacts bucket", type=str))
@@ -148,8 +173,14 @@ def config_init_artifacts() -> ArtifactsConfig | None:
     )
 
 
-def config_init_secrets_paths() -> list[Path]:
+def config_init_secrets_paths(secrets_files_paths: list[Path] | None) -> list[Path]:
+    """Return a list of paths for files containing secrets."""
+    if secrets_files_paths:
+        return secrets_files_paths
+
     if not click.confirm("Specify paths to secrets file(s)?"):
+        click.echo("skipping secrets files configuration")
+        click.echo("these should be manually configured later")
         return []
 
     secrets_paths: list[Path] = []
@@ -168,7 +199,10 @@ def config_init_secrets_paths() -> list[Path]:
 
 
 def config_init_secrets_config() -> DefaultSecretsConfig | None:
+    """Specify default secrets to use."""
     if not click.confirm("Specify default secrets to use?"):
+        click.echo("skipping default secrets configuration")
+        click.echo("it is recommended to manually configure these later")
         return None
 
     storage_secret = cast(str, click.prompt("Storage secret", default="", type=str))
@@ -191,15 +225,24 @@ def config_init_secrets_config() -> DefaultSecretsConfig | None:
 def config_init(
     config_path: Path,
     cwd: Path,
-    vault_addr: str | None,
+    *,
+    components_paths: list[Path] | None = None,
+    scratch_path: Path | None = None,
+    containers_scratch_path: Path | None = None,
+    ccache_path: Path | None = None,
+    vault_config_path: Path | None = None,
+    secrets_files_paths: list[Path] | None = None,
 ) -> None:
-    vault_config_path: Path | None = None
-    if click.confirm("Configure vault authentication?"):
-        vault_config_path = config_init_vault(cwd, vault_addr)
-
-    config_paths = config_init_paths(cwd)
+    """Initialize config interactively and store to config_path."""
+    config_paths = config_init_paths(
+        cwd,
+        components_paths=components_paths,
+        scratch_path=scratch_path,
+        containers_scratch_path=containers_scratch_path,
+        ccache_path=ccache_path,
+    )
     artifacts = config_init_artifacts()
-    secrets_paths = config_init_secrets_paths()
+    secrets_paths = config_init_secrets_paths(secrets_files_paths)
     secrets_config = config_init_secrets_config()
 
     config = Config(
@@ -245,17 +288,123 @@ def cmd_config() -> None:
 
 @cmd_config.command("init", help="Initialize the configuration file.")
 @click.option(
-    "--vault-addr",
-    "vault_addr",
-    type=str,
+    "--components",
+    "components_paths",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+    ),
     required=False,
-    prompt="Vault address",
+    multiple=True,
+    help="Specify components path.",
+)
+@click.option(
+    "--scratch",
+    "scratch_path",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+    ),
+    required=False,
+    help="Specify scratch path.",
+)
+@click.option(
+    "--containers-scratch",
+    "containers_scratch_path",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+    ),
+    required=False,
+    help="Specify containers scratch path.",
+)
+@click.option(
+    "--ccache",
+    "ccache_path",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+    ),
+    required=False,
+    help="Specify ccache path.",
+)
+@click.option(
+    "--vault",
+    "vault_config_path",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    required=False,
+    help="Specify vault config path.",
+)
+@click.option(
+    "--secrets",
+    "secrets_files_paths",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    multiple=True,
+    required=False,
+    help="Specify secrets files paths.",
 )
 @pass_ctx
-def cmd_config_init(ctx: Ctx, vault_addr: str | None) -> None:
+def cmd_config_init(
+    ctx: Ctx,
+    components_paths: tuple[Path, ...] | None,
+    scratch_path: Path | None,
+    containers_scratch_path: Path | None,
+    ccache_path: Path | None,
+    vault_config_path: Path | None,
+    secrets_files_paths: tuple[Path, ...] | None,
+) -> None:
     assert ctx.config_path
     config_path = ctx.config_path
 
     cwd = Path.cwd()
 
-    config_init(config_path, cwd, vault_addr)
+    config_init(
+        config_path,
+        cwd,
+        components_paths=list(components_paths) if components_paths else None,
+        scratch_path=scratch_path,
+        containers_scratch_path=containers_scratch_path,
+        ccache_path=ccache_path,
+        vault_config_path=vault_config_path,
+        secrets_files_paths=list(secrets_files_paths) if secrets_files_paths else None,
+    )
+
+
+@cmd_config.command("init-vault", help="Initialize the vault configuration file.")
+@click.option(
+    "--vault",
+    "vault_config_path",
+    type=click.Path(
+        path_type=Path,
+        exists=False,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    required=False,
+    help="Specify vault config path.",
+)
+def cmd_config_init_vault(vault_config_path: Path | None) -> None:
+    cwd = Path.cwd()
+    path = config_init_vault(cwd, vault_config_path)
+    if not path:
+        click.echo("vault configuration not initialized")
+    else:
+        click.echo(f"vault configuration available at '{path}'")

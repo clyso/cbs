@@ -12,18 +12,35 @@
 # GNU Affero General Public License for more details.
 
 from pathlib import Path
+from typing import Annotated, ClassVar
 
 import pydantic
 
+from cbscore.config import Config as CBSCoreConfig
+from cbscore.config import ConfigError as CBSCoreConfigError
+from cbscore.errors import CESError
+from cbslib.config import logger as parent_logger
 
-class PathsConfig(pydantic.BaseModel):
-    cbs_path: Path
-    scratch_path: Path
-    scratch_container_path: Path
-    components_path: list[Path]
-    ccache_path: Path
+logger = parent_logger.getChild("worker")
 
 
 class WorkerConfig(pydantic.BaseModel):
-    paths: PathsConfig
-    build_timeout_seconds: int | None
+    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    config: Path
+    cbscore_path: Annotated[Path, pydantic.Field(alias="cbscore-path")]
+    build_timeout_seconds: Annotated[
+        int | None, pydantic.Field(alias="build-timeout-seconds", default=None)
+    ] = None
+
+    def get_cbscore_config(self) -> CBSCoreConfig:
+        try:
+            return CBSCoreConfig.load(self.config)
+        except CBSCoreConfigError as e:
+            msg = f"error loading cbscore config from '{self.config}': {e}"
+            logger.error(msg)
+            raise CESError(msg) from e

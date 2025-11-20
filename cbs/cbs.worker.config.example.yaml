@@ -1,0 +1,18 @@
+# CBS worker configuration
+# example provided for usage with 'podman-compose.cbs.yaml' in the repository's root.
+#
+
+# broker-url and results-backend-url point to the redis instance deployed by our
+# podman-compose. However, the worker will be running on the host's network, and
+# thus we need to point to the localhost's open port for redis, instead of its
+# podman's internal network name.
+broker-url: redis://127.0.0.1:6379/0
+results-backend-url: redis://127.0.0.1:6379/0
+worker:
+  # we rely on cbscore's config to set up paths, and consume both the vault and
+  # secrets files.
+  config: /cbs/config/cbscore.config.yaml
+  # path to the cbscore package's directory. We need this on the worker to be
+  # able to install (and thus use) the package.
+  cbscore-path: /cbs/src
+  build-timeout-seconds: 7200 # 2 hours

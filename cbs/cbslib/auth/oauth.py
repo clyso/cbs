@@ -24,7 +24,7 @@ from authlib.integrations.starlette_client import OAuth
 from fastapi import Depends
 
 from cbslib.auth import AuthError
-from cbslib.config import get_config
+from cbslib.config.config import get_config
 from cbslib.config.server import GoogleOAuthSecrets
 
 _SCOPES = [
