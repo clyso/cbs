@@ -90,9 +90,9 @@ class SecretsMgr:
         """Obtain transit key information for the specified ID, if any."""
         return signing_transit(id, self.secrets.sign)
 
-    def registry_creds(self, id: str) -> tuple[str, str, str]:
+    def registry_creds(self, uri: str) -> tuple[str, str, str]:
         """Obtain registry credentials for the specified registry ID, if any."""
-        return registry_get_creds(id, self.secrets.registry, self.vault)
+        return registry_get_creds(uri, self.secrets.registry, self.vault)
 
     def has_vault(self) -> bool:
         """Check whether a vault is configured."""

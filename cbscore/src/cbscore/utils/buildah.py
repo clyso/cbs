@@ -24,7 +24,10 @@ from cbscore.errors import CESError
 from cbscore.images.signing import SigningError, async_sign
 from cbscore.utils import CmdArgs, CommandError, Password, async_run_cmd
 from cbscore.utils import logger as parent_logger
-from cbscore.utils.containers import get_container_canonical_uri
+from cbscore.utils.containers import (
+    get_container_canonical_uri,
+    get_container_image_base_uri,
+)
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionDescriptor
@@ -176,7 +179,6 @@ class BuildahContainer:
         self,
         secrets: SecretsMgr,
         *,
-        push_to: str | None = None,
         sign_with_transit: str | None = None,
     ) -> None:
         # output to logger
@@ -226,36 +228,36 @@ class BuildahContainer:
             logger.error(msg)
             raise BuildahError(msg)
 
-        if not push_to:
-            logger.warning("no registry to push to provided, skipping image push")
-            return
-
         # obtain registry credentials
         try:
-            _, username, password = secrets.registry_creds(push_to)
-            pass
+            _, username, password = secrets.registry_creds(
+                get_container_image_base_uri(self.version_desc)
+            )
+        except ValueError as e:
+            logger.warning(f"unable to obtain registry credentials to push: {e}")
+            logger.warning("assume unauthenticated registry access")
+            username = password = ""
         except SecretsMgrError as e:
-            msg = f"error obtaining harbor credentials to push '{uri}': {e}"
+            msg = f"error obtaining registry credentials to push '{uri}': {e}"
             logger.error(msg)
             raise BuildahError(msg) from e
 
         # push to registry
         #
-        logger.info(f"pushing image '{uri}' to '{push_to}'")
+        logger.info(f"pushing image '{uri}' to '{self.version_desc.image.registry}'")
 
         digest_file_fd, digest_file = tempfile.mkstemp(text=True)
-        try:
-            rc, _, stderr = await _buildah_run(
-                [
-                    "push",
-                    "--creds",
-                    Password(f"{username}:{password}"),
-                    "--digestfile",
-                    digest_file,
-                    uri,
-                ],
-                outcb=_out,
+        push_cmd: CmdArgs = (
+            ["push", "--digestfile", digest_file]
+            + (
+                ["--creds", Password(f"{username}:{password}")]
+                if username and password
+                else []
             )
+            + [uri]
+        )
+        try:
+            rc, _, stderr = await _buildah_run(push_cmd, outcb=_out)
 
             with Path(digest_file).open("r") as f:
                 image_digest = f.read().strip()
@@ -280,7 +282,7 @@ class BuildahContainer:
             self.version_desc, digest=image_digest
         )
         try:
-            await async_sign(push_to, img_to_sign, secrets, sign_with_transit)
+            await async_sign(img_to_sign, secrets, sign_with_transit)
         except (SigningError, Exception) as e:
             msg = f"error signing image '{uri}': {e}"
             logger.error(msg)

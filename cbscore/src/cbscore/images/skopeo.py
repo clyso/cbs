@@ -26,6 +26,7 @@ from cbscore.images import logger as parent_logger
 from cbscore.images.errors import ImageNotFoundError, SkopeoError
 from cbscore.images.signing import sign
 from cbscore.utils import CmdArgs, Password, run_cmd
+from cbscore.utils.containers import get_container_image_base_uri
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
 
@@ -111,11 +112,18 @@ def skopeo_copy(
     logger.info(f"signed image '{dst}': {out}")
 
 
-def skopeo_inspect(registry: str, img: str, secrets: SecretsMgr) -> str:
+def skopeo_inspect(img: str, secrets: SecretsMgr) -> str:
     logger.debug(f"inspect image '{img}'")
 
     try:
-        _, user, passwd = secrets.registry_creds(registry)
+        uri = get_container_image_base_uri(img)
+    except ValueError as e:
+        msg = f"error obtaining base image URI: {e}"
+        logger.error(msg)
+        raise SkopeoError(msg) from e
+
+    try:
+        _, user, passwd = secrets.registry_creds(uri)
     except SecretsMgrError as e:
         logger.error(f"error obtaining registry credentials: {e}")
         raise e from None
@@ -143,11 +151,11 @@ def skopeo_inspect(registry: str, img: str, secrets: SecretsMgr) -> str:
     return raw_out
 
 
-def skopeo_image_exists(registry: str, img: str, secrets: SecretsMgr) -> bool:
+def skopeo_image_exists(img: str, secrets: SecretsMgr) -> bool:
     logger.debug(f"check if image '{img}' exists")
 
     try:
-        _ = skopeo_inspect(registry, img, secrets)
+        _ = skopeo_inspect(img, secrets)
     except ImageNotFoundError:
         logger.debug(f"image '{img}' does not exist")
         return False

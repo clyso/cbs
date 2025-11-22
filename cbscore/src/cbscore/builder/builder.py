@@ -61,7 +61,6 @@ class Builder:
     upload_to: str | None
     sign_with_gpg: str | None
     sign_with_transit: str | None
-    registry: str | None
     secrets: SecretsMgr
     ccache_path: Path | None
     skip_build: bool
@@ -87,9 +86,6 @@ class Builder:
         )
         self.sign_with_transit = (
             config.secrets_config.transit_signing if config.secrets_config else None
-        )
-        self.registry = (
-            config.secrets_config.registry if config.secrets_config else None
         )
         self.ccache_path = config.paths.ccache
         self.skip_build = skip_build
@@ -120,16 +116,14 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg=msg) from e
 
-        if self.registry:
-            container_img_uri = get_container_canonical_uri(self.desc)
-            if skopeo_image_exists(self.registry, container_img_uri, self.secrets):
-                logger.info(
-                    f"image '{container_img_uri}' already exists -- do not build!"
-                )
-                return
+        container_img_uri = get_container_canonical_uri(self.desc)
+        if skopeo_image_exists(container_img_uri, self.secrets):
+            logger.info(f"image '{container_img_uri}' already exists -- do not build!")
+            return
         else:
-            logger.warning("no registry provided, skip checking for existing image")
+            logger.info(f"image '{container_img_uri}' not found in registry, build")
 
+        release_desc: ReleaseDesc | None = None
         if self.upload_to:
             release_desc = await check_release_exists(
                 self.secrets, self.upload_to, self.desc.version
@@ -142,9 +136,8 @@ class Builder:
                     logger.info(
                         "found existing x86_64 release for "
                         + f"version '{self.desc.version}', "
-                        + "not building"
+                        + "reuse release"
                     )
-                    return
                 else:
                     logger.warning(
                         "force flag set, rebuild existing x86_64 release"
@@ -155,12 +148,13 @@ class Builder:
                 "no upload location provided, skip checking for existing release"
             )
 
-        try:
-            release_desc = await self._build_release()
-        except (BuilderError, Exception) as e:
-            msg = f"error building components: {e}"
-            logger.error(msg)
-            raise BuilderError(msg) from e
+        if not release_desc:
+            try:
+                release_desc = await self._build_release()
+            except (BuilderError, Exception) as e:
+                msg = f"error building components: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
 
         if not release_desc:
             if self.upload_to:
@@ -177,7 +171,6 @@ class Builder:
             await ctr_builder.build()
             await ctr_builder.finish(
                 self.secrets,
-                push_to=self.registry,
                 sign_with_transit=self.sign_with_transit,
             )
         except (ContainerError, Exception) as e:

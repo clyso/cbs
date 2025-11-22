@@ -18,6 +18,7 @@ from cbscore.utils.secrets.models import (
     RegistrySecret,
     RegistryVaultSecret,
 )
+from cbscore.utils.secrets.utils import find_best_secret_candidate
 from cbscore.utils.vault import Vault, VaultError
 
 logger = parent_logger.getChild("registry")
@@ -47,19 +48,22 @@ def _get_registry_from_vault(
 
 
 def registry_get_creds(
-    id: str, secrets: dict[str, RegistrySecret], vault: Vault | None
+    uri: str,
+    secrets: dict[str, RegistrySecret],
+    vault: Vault | None,
 ) -> tuple[str, str, str]:
     """
     Obtain registry credentials for a given id.
 
     Returns a tuple with (address, username, password).
     """
-    secret = secrets.get(id)
-    if not secret:
-        msg = f"registry secret '{id}' not found"
-        logger.error(msg)
+    best_entry = find_best_secret_candidate(list(secrets.keys()), uri)
+    if not best_entry:
+        msg = f"secret for uri '{uri}' not found"
+        logger.warning(msg)
         raise ValueError(msg)
 
+    secret = secrets[best_entry]
     assert isinstance(secret, RegistryPlainSecret | RegistryVaultSecret)
 
     if isinstance(secret, RegistryPlainSecret):

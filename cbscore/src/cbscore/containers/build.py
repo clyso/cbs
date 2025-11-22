@@ -230,11 +230,8 @@ class ContainerBuilder:
         self,
         secrets: SecretsMgr,
         *,
-        push_to: str | None = None,
         sign_with_transit: str | None = None,
     ) -> None:
         logger.info(f"finish container for '{self.version_desc.version}'")
         assert self.container
-        await self.container.finish(
-            secrets, push_to=push_to, sign_with_transit=sign_with_transit
-        )
+        await self.container.finish(secrets, sign_with_transit=sign_with_transit)

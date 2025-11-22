@@ -31,6 +31,7 @@ from cbscore.utils.secrets.models import (
     GitVaultHTTPSSecret,
     GitVaultSSHSecret,
 )
+from cbscore.utils.secrets.utils import find_best_secret_candidate
 from cbscore.utils.vault import Vault, VaultError
 
 logger = parent_logger.getChild("git")
@@ -229,65 +230,6 @@ def _token_git_url_for(url: str, entry: GitTokenSecret) -> MaybeSecure:
     )
 
 
-# partially adapted from a github copilot generated pattern to validate git urls
-def _matches_git_address(pattern: str, url: str) -> tuple[bool, bool, str | None]:
-    """
-    Match a given pattern against the provided URL.
-
-    Returns a tuple of bools, indicating whether the pattern is a match, and whether
-    it is a full match on the path. Additionally, if it's a partial match, return the
-    remainder path.
-    """
-    git_addr_re = re.compile(
-        r"^(?:(?P<protocol>git|https?|ssh)://)?(?P<host>[\w\.\-]+)(?P<path>(?:/[\w\.\-]+)*)?/?$"
-    )
-
-    # drop '.git' suffix from both pattern and url for matching purposes
-    pattern = re.sub(r"\.git$", "", pattern)
-    url = re.sub(r"\.git$", "", url)
-
-    pattern_m = git_addr_re.match(pattern)
-    url_m = git_addr_re.match(url)
-    if not pattern_m or not url_m:
-        return (False, False, None)
-
-    if (
-        pattern_m.group("protocol")
-        and url_m.group("protocol")
-        and pattern_m.group("protocol") != url_m.group("protocol")
-    ):
-        return (False, False, None)
-
-    if pattern_m.group("host") != url_m.group("host"):
-        return (False, False, None)
-
-    pattern_path = pattern_m.group("path") or ""
-    url_path = url_m.group("path") or ""
-    if not pattern_path:
-        return (True, False, url_path)
-
-    # Ensure pattern path is a prefix of target path, and matches full segments
-    if pattern_path == url_path:
-        return (True, True, None)
-
-    adjusted_pattern_path = pattern_path.rstrip("/")
-    path_pattern_re = re.compile(rf"^{adjusted_pattern_path}(?:/|$)(?P<remainder>.*)$")
-    remainder_m = path_pattern_re.match(url_path)
-    if not remainder_m:
-        # did not match at all, must not match.
-        return (False, False, None)
-
-    if not remainder_m.group("remainder"):
-        msg = (
-            f"unexpected empty remainder when matching git url '{url}' "
-            + f"against pattern '{pattern}'"
-        )
-        logger.error(msg)
-        raise SecretsMgrError(msg)
-
-    return (True, False, remainder_m.group("remainder"))
-
-
 @contextmanager
 def git_url_for(
     url: str, secrets: dict[str, GitSecret], vault: Vault | None
@@ -299,44 +241,18 @@ def git_url_for(
         logger.error(msg)
         raise SecretsMgrError(msg)
 
-    entry: GitSecret | None = None
-    best_candidate: tuple[GitSecret, str] | None = None
-    for target, secrets_entry in secrets.items():
-        matches, full_match, remainder = _matches_git_address(target, url)
-        if not matches:
-            continue
-        if full_match:
-            entry = secrets_entry
-            break
-
-        if not remainder:
-            msg = (
-                f"unepected empty remainder when matching git url '{url}' "
-                + f"against '{target}'"
-            )
-            logger.error(msg)
-            raise SecretsMgrError(msg)
-
-        if not best_candidate:
-            best_candidate = (secrets_entry, remainder)
-            continue
-
-        if best_candidate[1].count("/") > remainder.count("/"):
-            best_candidate = (secrets_entry, remainder)
-
-    if best_candidate and not entry:
-        entry = best_candidate[0]
-
-    if not entry:
+    best_entry = find_best_secret_candidate(list(secrets.keys()), url)
+    if not best_entry:
         m = re.match(GIT_URL_PATTERN, url)
         if not m:
             msg = f"no git secret found for url '{url}'"
-            logger.error(msg)
+            logger.warning(msg)
             raise SecretsMgrError(msg)
 
         yield SecureURL(url)
         return
 
+    entry = secrets[best_entry]
     if isinstance(entry, GitSSHSecret | GitVaultSSHSecret):
         with _ssh_git_url_for(url, entry, vault) as ssh_url:
             yield ssh_url

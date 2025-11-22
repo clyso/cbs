@@ -17,6 +17,7 @@ from typing import override
 from cbscore.errors import CESError
 from cbscore.images import logger as parent_logger
 from cbscore.utils import CmdArgs, CommandError, PasswordArg, async_run_cmd, run_cmd
+from cbscore.utils.containers import get_container_image_base_uri
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
 
@@ -83,9 +84,7 @@ def sign(
     return run_cmd(cmd, env=env)
 
 
-async def async_sign(
-    registry: str, img: str, secrets: SecretsMgr, transit: str
-) -> None:
+async def async_sign(img: str, secrets: SecretsMgr, transit: str) -> None:
     def _out(s: str) -> None:
         logger.debug(s)
 
@@ -102,9 +101,20 @@ async def async_sign(
         raise SigningError(msg)
 
     try:
-        _, username, password = secrets.registry_creds(registry)
+        img_uri = get_container_image_base_uri(img)
+    except ValueError as e:
+        msg = f"error obtaining image base URI: {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
+
+    try:
+        _, username, password = secrets.registry_creds(img_uri)
+    except ValueError as e:
+        logger.warning(f"unable to obtain registry credentials for '{img_uri}': {e}")
+        logger.warning("assume unauthenticated registry access")
+        username = password = ""
     except SecretsMgrError as e:
-        msg = f"unable to obtain registry credentials for '{registry}': {e}"
+        msg = f"error obtaining registry credentials for '{img_uri}': {e}"
         logger.error(msg)
         raise SigningError(msg) from e
 
@@ -115,16 +125,22 @@ async def async_sign(
         logger.error(msg)
         raise SigningError(msg) from e
 
-    cmd: CmdArgs = [
-        "cosign",
-        "sign",
-        f"--key=hashivault://{transit_key}",
-        PasswordArg("--registry-username", username),
-        PasswordArg("--registry-password", password),
-        "--tlog-upload=false",
-        "--upload=true",
-        img,
-    ]
+    cmd: CmdArgs = (
+        ["cosign", "sign", f"--key=hashivault://{transit_key}"]
+        + (
+            [
+                PasswordArg("--registry-username", username),
+                PasswordArg("--registry-password", password),
+            ]
+            if username and password
+            else []
+        )
+        + [
+            "--tlog-upload=false",
+            "--upload=true",
+            img,
+        ]
+    )
 
     with secrets.vault.client() as client:
         vault_token = client.token
