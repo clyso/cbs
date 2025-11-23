@@ -16,7 +16,13 @@ from typing import override
 
 from cbscore.errors import CESError
 from cbscore.images import logger as parent_logger
-from cbscore.utils import CmdArgs, CommandError, PasswordArg, async_run_cmd, run_cmd
+from cbscore.utils import (
+    CmdArgs,
+    CommandError,
+    PasswordArg,
+    async_run_cmd,
+    run_cmd,
+)
 from cbscore.utils.containers import get_container_image_base_uri
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
@@ -125,17 +131,17 @@ async def async_sign(img: str, secrets: SecretsMgr, transit: str) -> None:
         logger.error(msg)
         raise SigningError(msg) from e
 
-    cmd: CmdArgs = (
-        ["cosign", "sign", f"--key=hashivault://{transit_key}"]
-        + (
-            [
-                PasswordArg("--registry-username", username),
-                PasswordArg("--registry-password", password),
-            ]
-            if username and password
-            else []
-        )
-        + [
+    cmd: CmdArgs = ["cosign", "sign", f"--key=hashivault://{transit_key}"]
+    cmd.extend(
+        [
+            PasswordArg("--registry-username", username),
+            PasswordArg("--registry-password", password),
+        ]
+        if username and password
+        else []
+    )
+    cmd.extend(
+        [
             "--tlog-upload=false",
             "--upload=true",
             img,

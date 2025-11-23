@@ -247,15 +247,13 @@ class BuildahContainer:
         logger.info(f"pushing image '{uri}' to '{self.version_desc.image.registry}'")
 
         digest_file_fd, digest_file = tempfile.mkstemp(text=True)
-        push_cmd: CmdArgs = (
-            ["push", "--digestfile", digest_file]
-            + (
-                ["--creds", Password(f"{username}:{password}")]
-                if username and password
-                else []
-            )
-            + [uri]
+        push_cmd: CmdArgs = ["push", "--digestfile", digest_file]
+        push_cmd.extend(
+            ["--creds", Password(f"{username}:{password}")]
+            if username and password
+            else []
         )
+        push_cmd.append(uri)
         try:
             rc, _, stderr = await _buildah_run(push_cmd, outcb=_out)
 
