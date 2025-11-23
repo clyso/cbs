@@ -48,8 +48,8 @@ ENTRYPOINT [ "uv", "run", "--no-sync", \
   "--factory", \
   "--host", "0.0.0.0", \
   "--port", "8080", \ 
-  "--ssl-keyfile", "/cbs/config/cbs-key.pem", \
-  "--ssl-certfile", "/cbs/config/cbs-cert.pem", \
+  "--ssl-keyfile", "/cbs/config/cbs.key.pem", \
+  "--ssl-certfile", "/cbs/config/cbs.cert.pem", \
   "cbs-server:factory" \
   ]
 

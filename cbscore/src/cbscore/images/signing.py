@@ -17,7 +17,9 @@ from typing import override
 from cbscore.errors import CESError
 from cbscore.images import logger as parent_logger
 from cbscore.utils import CmdArgs, CommandError, PasswordArg, async_run_cmd, run_cmd
-from cbscore.utils.secrets import SecretsVaultError, SecretsVaultMgr
+from cbscore.utils.containers import get_container_image_base_uri
+from cbscore.utils.secrets import SecretsMgrError
+from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("sign")
 
@@ -28,26 +30,45 @@ class SigningError(CESError):
         return f"Signing Error: {self.msg}"
 
 
-def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
+def sign(
+    registry: str, img: str, secrets: SecretsMgr, transit: str
+) -> tuple[int, str, str]:
+    if not secrets.has_vault():
+        msg = "no vault configured, can't sign image"
+        logger.error(msg)
+        raise SigningError(msg)
+
+    assert secrets.vault is not None
+
+    if not secrets.has_transit_key(transit):
+        msg = f"vault transit key '{transit}' not found, can't sign image"
+        logger.error(msg)
+        raise SigningError(msg)
+
     try:
-        _, username, password = secrets.harbor_creds()
-    except SecretsVaultError as e:
-        logger.exception("error obtaining harbor credentials")
-        raise e  # noqa: TRY201
+        _, username, password = secrets.registry_creds(registry)
+    except SecretsMgrError as e:
+        msg = f"unable to obtain registry credentials for '{registry}': {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
+
+    try:
+        transit_mount, transit_key = secrets.transit(transit)
+    except SecretsMgrError as e:
+        msg = f"unable to obtain transit key '{transit}': {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
 
     cmd: CmdArgs = [
         "cosign",
         "sign",
-        "--key=hashivault://container-image-key",
+        f"--key=hashivault://{transit_key}",
         PasswordArg("--registry-username", username),
         PasswordArg("--registry-password", password),
         "--tlog-upload=false",
         "--upload=true",
         img,
     ]
-
-    vault_transit = secrets.vault.transit
-    assert vault_transit is not None
 
     with secrets.vault.client() as client:
         vault_token = client.token
@@ -57,54 +78,87 @@ def sign(img: str, secrets: SecretsVaultMgr) -> tuple[int, str, str]:
         {
             "VAULT_ADDR": secrets.vault.addr,
             "VAULT_TOKEN": vault_token,
-            "TRANSIT_SECRET_ENGINE_PATH": vault_transit,
+            "TRANSIT_SECRET_ENGINE_PATH": transit_mount,
         }
     )
     return run_cmd(cmd, env=env)
 
 
-async def async_sign(img: str, secrets: SecretsVaultMgr) -> None:
+async def async_sign(img: str, secrets: SecretsMgr, transit: str) -> None:
     def _out(s: str) -> None:
         logger.debug(s)
 
-    try:
-        _, username, password = secrets.harbor_creds()
-    except SecretsVaultError as e:
-        msg = f"error obtaining harbor credentials: {e}"
-        logger.exception(msg)
-        raise SigningError(msg) from e
-
-    cmd: CmdArgs = [
-        "cosign",
-        "sign",
-        "--key=hashivault://ces-image-key",
-        PasswordArg("--registry-username", username),
-        PasswordArg("--registry-password", password),
-        "--tlog-upload=false",
-        "--upload=true",
-        img,
-    ]
-
-    vault_transit = secrets.vault.transit
-    if not vault_transit:
-        msg = "vault transit unset, can't sign"
+    if not secrets.has_vault():
+        msg = "no vault configured, can't sign image"
         logger.error(msg)
         raise SigningError(msg)
+
+    assert secrets.vault is not None
+
+    if not secrets.has_transit_key(transit):
+        msg = f"vault transit key '{transit}' not found, can't sign image"
+        logger.error(msg)
+        raise SigningError(msg)
+
+    try:
+        img_uri = get_container_image_base_uri(img)
+    except ValueError as e:
+        msg = f"error obtaining image base URI: {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
+
+    try:
+        _, username, password = secrets.registry_creds(img_uri)
+    except ValueError as e:
+        logger.warning(f"unable to obtain registry credentials for '{img_uri}': {e}")
+        logger.warning("assume unauthenticated registry access")
+        username = password = ""
+    except SecretsMgrError as e:
+        msg = f"error obtaining registry credentials for '{img_uri}': {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
+
+    try:
+        transit_mount, transit_key = secrets.transit(transit)
+    except SecretsMgrError as e:
+        msg = f"unable to obtain transit key '{transit}': {e}"
+        logger.error(msg)
+        raise SigningError(msg) from e
+
+    cmd: CmdArgs = (
+        ["cosign", "sign", f"--key=hashivault://{transit_key}"]
+        + (
+            [
+                PasswordArg("--registry-username", username),
+                PasswordArg("--registry-password", password),
+            ]
+            if username and password
+            else []
+        )
+        + [
+            "--tlog-upload=false",
+            "--upload=true",
+            img,
+        ]
+    )
 
     with secrets.vault.client() as client:
         vault_token = client.token
 
-    env = {
-        "VAULT_ADDR": secrets.vault.addr,
-        "VAULT_TOKEN": vault_token,
-        "TRANSIT_SECRET_ENGINE_PATH": vault_transit,
-    }
+    env = os.environ.copy()
+    env.update(
+        {
+            "VAULT_ADDR": secrets.vault.addr,
+            "VAULT_TOKEN": vault_token,
+            "TRANSIT_SECRET_ENGINE_PATH": transit_mount,
+        }
+    )
 
     try:
         rc, _, stderr = await async_run_cmd(cmd, outcb=_out, extra_env=env)
     except (CommandError, Exception) as e:
         msg = f"error signing image '{img}': {e}"
-        logger.exception(msg)
+        logger.error(msg)
         raise SigningError(msg) from e
 
     if rc != 0:

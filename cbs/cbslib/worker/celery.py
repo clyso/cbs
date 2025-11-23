@@ -11,6 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+import errno
 import logging
 import os
 import sys
@@ -20,7 +21,7 @@ from celery import Celery, signals
 from kombu.serialization import register
 
 from cbscore.errors import CESError
-from cbslib.config import config_init
+from cbslib.config.config import config_init
 from cbslib.worker.serializer import pydantic_dumps
 
 celery_app = Celery(
@@ -35,12 +36,12 @@ logger = celery_app.log.get_default_logger(__name__)
 def _init() -> None:
     try:
         config = config_init()
-    except (CESError, Exception):
-        logger.exception("unable to init config")
-        sys.exit(1)
+    except (CESError, Exception) as e:
+        logger.error(f"unable to init config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     celery_app.conf.broker_url = config.broker_url
-    celery_app.conf.result_backend = config.result_backend_url
+    celery_app.conf.result_backend = config.results_backend_url
 
     register(
         "pydantic",
@@ -67,7 +68,7 @@ def setup_task_logger(
     **kwargs,
 ) -> None:
     if os.environ.get("CBS_DEBUG"):
-        logging.getLogger("ces").setLevel(logging.DEBUG)
+        logging.getLogger("cbscore").setLevel(logging.DEBUG)
 
 
 _init()

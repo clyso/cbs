@@ -19,9 +19,10 @@ from typing import override
 
 import pydantic
 
+from cbscore.config import Config as CBSCoreConfig
 from cbscore.runner import gen_run_name, runner, stop
 from cbscore.versions.desc import VersionDescriptor
-from cbslib.config import Config, get_config
+from cbslib.config.config import Config, get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger
 
@@ -47,16 +48,23 @@ class _WorkerBuildEntry(pydantic.BaseModel):
 
 class WorkerBuilder:
     _config: Config
+    _cbscore_config: CBSCoreConfig
     _build: _WorkerBuildEntry | None
     _name: str
 
     def __init__(self) -> None:
         self._config = get_config()
+        if not self._config.worker:
+            msg = "unexpected missing worker config"
+            logger.error(msg)
+            raise WorkerBuilderError(msg)
+
+        self._cbscore_config = self._config.worker.get_cbscore_config()
         self._build = None
         self._name = gen_run_name("cbs_worker_")
         logger.info(f"init builder, name: {self._name}")
 
-        if not self._config.broker_url or not self._config.result_backend_url:
+        if not self._config.broker_url or not self._config.results_backend_url:
             msg = "broker or result backend url missing from config"
             logger.error(msg)
             raise WorkerBuilderError(msg)
@@ -77,8 +85,6 @@ class WorkerBuilder:
         if self._build:
             raise WorkerBuilderError(msg="build already exists?")
 
-        assert self._config.worker, "unexpected missing worker config"
-
         _, desc_file = tempfile.mkstemp(prefix="cbs_worker_")
         desc_file_path = Path(desc_file)
 
@@ -90,15 +96,10 @@ class WorkerBuilder:
         try:
             await runner(
                 desc_file_path,
-                self._config.worker.paths.cbs_path,
-                self._config.secrets_file_path,
-                self._config.worker.paths.scratch_path,
-                self._config.worker.paths.scratch_container_path,
-                self._config.worker.paths.components_path,
-                self._config.vault_config,
+                self._config.worker.cbscore_path,
+                self._cbscore_config,
                 run_name=self._name,
                 replace_run=True,
-                ccache_path=self._config.worker.paths.ccache_path,
                 timeout=(
                     self._config.worker.build_timeout_seconds
                     if self._config.worker.build_timeout_seconds

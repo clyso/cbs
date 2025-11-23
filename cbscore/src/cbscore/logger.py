@@ -14,4 +14,4 @@
 import logging
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ces")
+logger = logging.getLogger("cbscore")

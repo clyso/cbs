@@ -29,7 +29,7 @@ import uvicorn
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.builds.tracker import get_builds_tracker
-from cbslib.config import config_init
+from cbslib.config.config import config_init
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds
@@ -124,8 +124,8 @@ def main() -> None:
         port=8080,
         factory=True,
         log_config=uvicorn_logging_config(),
-        ssl_certfile=config.server.cert_path,
-        ssl_keyfile=config.server.key_path,
+        ssl_certfile=config.server.cert,
+        ssl_keyfile=config.server.key,
     )
 
 

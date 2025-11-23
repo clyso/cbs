@@ -22,7 +22,7 @@ from cbscore.errors import CESError
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
-from cbslib.config import get_config
+from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("users")
 
@@ -116,7 +116,7 @@ async def auth_users_init() -> None:
     global _auth_users
     config = get_config()
     assert config.server, "unexpected missing server config"
-    _auth_users = Users(config.server.db_path)
+    _auth_users = Users(config.server.db)
     await _auth_users.load()
 
 

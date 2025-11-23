@@ -12,15 +12,37 @@
 # GNU General Public License for more details.
 
 
+import re
+from typing import cast
+
 from cbscore.versions.desc import VersionDescriptor
+
+
+def get_container_image_base_uri(desc: VersionDescriptor | str) -> str:
+    """Return the container's registry URI including path."""
+    if isinstance(desc, VersionDescriptor):
+        return f"{desc.image.registry}/{desc.image.name}"
+
+    assert isinstance(desc, str)
+    uri_m = re.match(
+        r"""
+        ^
+        (?P<base>[^:@]+)
+        (?:[:@].*)?
+        $""",
+        desc,
+        re.VERBOSE,
+    )
+    if not uri_m:
+        raise ValueError(f"malformed container image uri '{desc}'")
+
+    return cast(str, uri_m.group("base"))
 
 
 def get_container_canonical_uri(
     desc: VersionDescriptor, *, digest: str | None = None
 ) -> str:
     """Return the container image's canonical URI (minus transport)."""
-    registry = desc.image.registry
-    name = desc.image.name
     tag = desc.image.tag
 
-    return f"{registry}/{name}" + (f"@{digest}" if digest else f":{tag}")
+    return get_container_image_base_uri(desc) + (f"@{digest}" if digest else f":{tag}")

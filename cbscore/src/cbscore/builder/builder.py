@@ -23,7 +23,7 @@ from cbscore.builder.prepare import (
 from cbscore.builder.rpmbuild import ComponentBuild, build_rpms
 from cbscore.builder.signing import sign_rpms
 from cbscore.builder.upload import s3_upload_rpms
-from cbscore.config import VaultConfig
+from cbscore.config import Config, ConfigError
 from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
 from cbscore.core.component import CoreComponentLoc, load_components
@@ -46,8 +46,8 @@ from cbscore.releases.s3 import (
 )
 from cbscore.releases.utils import get_component_release_rpm
 from cbscore.utils.containers import get_container_canonical_uri
-from cbscore.utils.secrets import SecretsVaultMgr
-from cbscore.utils.vault import VaultError
+from cbscore.utils.secrets import SecretsMgrError
+from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionDescriptor
 
 logger = parent_logger.getChild("builder")
@@ -55,10 +55,13 @@ logger = parent_logger.getChild("builder")
 
 class Builder:
     desc: VersionDescriptor
+    config: Config
     scratch_path: Path
     components: dict[str, CoreComponentLoc]
-    upload: bool
-    secrets: SecretsVaultMgr
+    upload_to: str | None
+    sign_with_gpg: str | None
+    sign_with_transit: str | None
+    secrets: SecretsMgr
     ccache_path: Path | None
     skip_build: bool
     force: bool
@@ -66,33 +69,41 @@ class Builder:
     def __init__(
         self,
         desc: VersionDescriptor,
-        vault_config: VaultConfig,
-        scratch_path: Path,
-        secrets_path: Path,
-        components_path: Path,
+        config: Config,
         *,
-        ccache_path: Path | None = None,
-        upload: bool = True,
         skip_build: bool = False,
         force: bool = False,
     ) -> None:
         self.desc = desc
-        self.scratch_path = scratch_path
-        self.upload = upload
-        self.ccache_path = ccache_path
+        self.config = config
+        self.scratch_path = config.paths.scratch
+
+        self.upload_to = (
+            config.secrets_config.storage if config.secrets_config else None
+        )
+        self.sign_with_gpg = (
+            config.secrets_config.gpg_signing if config.secrets_config else None
+        )
+        self.sign_with_transit = (
+            config.secrets_config.transit_signing if config.secrets_config else None
+        )
+        self.ccache_path = config.paths.ccache
         self.skip_build = skip_build
         self.force = force
 
         try:
-            self.secrets = SecretsVaultMgr(secrets_path, vault_config)
-        except VaultError as e:
-            msg = f"error logging in to vault: {e}"
+            vault_config = self.config.get_vault_config()
+            self.secrets = SecretsMgr(
+                self.config.get_secrets(), vault_config=vault_config
+            )
+        except (ConfigError, SecretsMgrError) as e:
+            msg = f"error setting up secrets: {e}"
             logger.error(msg)
             raise BuilderError(msg) from e
 
-        self.components = load_components(components_path)
+        self.components = load_components(self.config.paths.components)
         if not self.components:
-            msg = f"no components found in '{components_path}'"
+            msg = f"no components found in '{self.config.paths.components}'"
             logger.error(msg)
             raise BuilderError(msg)
 
@@ -109,33 +120,44 @@ class Builder:
         if skopeo_image_exists(container_img_uri, self.secrets):
             logger.info(f"image '{container_img_uri}' already exists -- do not build!")
             return
+        else:
+            logger.info(f"image '{container_img_uri}' not found in registry, build")
 
-        release_desc = await check_release_exists(self.secrets, self.desc.version)
+        release_desc: ReleaseDesc | None = None
+        if self.upload_to:
+            release_desc = await check_release_exists(
+                self.secrets, self.upload_to, self.desc.version
+            )
 
-        # FIXME: checking for arch must be done agaisnt the version descriptor,
-        # instead of hardcoded.
-        if release_desc and release_desc.builds.get(ArchType.x86_64):
-            if not self.force:
-                logger.info(
-                    f"found existing x86_64 release for version '{self.desc.version}', "
-                    + "not building"
-                )
-                return
-            else:
-                logger.warning(
-                    "force flag set, rebuild existing x86_64 release"
-                    + f"'{self.desc.version}'"
-                )
-
-        try:
-            release_desc = await self._build_release()
-        except (BuilderError, Exception) as e:
-            msg = f"error building components: {e}"
-            logger.error(msg)
-            raise BuilderError(msg) from e
+            # FIXME: checking for arch must be done agaisnt the version descriptor,
+            # instead of hardcoded.
+            if release_desc and release_desc.builds.get(ArchType.x86_64):
+                if not self.force:
+                    logger.info(
+                        "found existing x86_64 release for "
+                        + f"version '{self.desc.version}', "
+                        + "reuse release"
+                    )
+                else:
+                    logger.warning(
+                        "force flag set, rebuild existing x86_64 release"
+                        + f"'{self.desc.version}'"
+                    )
+        else:
+            logger.warning(
+                "no upload location provided, skip checking for existing release"
+            )
 
         if not release_desc:
-            if self.upload:
+            try:
+                release_desc = await self._build_release()
+            except (BuilderError, Exception) as e:
+                msg = f"error building components: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
+
+        if not release_desc:
+            if self.upload_to:
                 # this should not happen!
                 msg = "unexpected missing release descriptor!"
                 logger.error(msg)
@@ -147,7 +169,10 @@ class Builder:
         try:
             ctr_builder = ContainerBuilder(self.desc, release_desc, self.components)
             await ctr_builder.build()
-            await ctr_builder.finish(self.secrets)
+            await ctr_builder.finish(
+                self.secrets,
+                sign_with_transit=self.sign_with_transit,
+            )
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
             logger.error(msg)
@@ -181,7 +206,7 @@ class Builder:
             )
         except BuilderError as e:
             msg = f"error preparing components: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         # Check if any of the components have been previously built, and, if so,
@@ -192,15 +217,17 @@ class Builder:
         #
         existing: dict[str, ReleaseComponentVersion] = {}
 
-        if not self.force:
+        if self.upload_to and not self.force:
             try:
                 to_check = {
                     comp.name: comp.long_version for comp in components.values()
                 }
-                found = await check_released_components(self.secrets, to_check)
+                found = await check_released_components(
+                    self.secrets, self.upload_to, to_check
+                )
             except (BuilderError, Exception) as e:
                 msg = f"error checking released components: {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise BuilderError(msg) from e
 
             # from the found components, do they match the required architecture,
@@ -227,10 +254,10 @@ class Builder:
                 built = await self._build(to_build)
             except (BuilderError, Exception) as e:
                 msg = f"error building components '{to_build.keys()}': {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise BuilderError(msg) from e
 
-        if not self.upload:
+        if not self.upload_to:
             logger.warning("not uploading per config, stop release build")
             return None
 
@@ -252,20 +279,16 @@ class Builder:
             components=comp_versions,
         )
 
-        # release = ReleaseDesc(
-        #     version=self.desc.version,
-        #     el_version=self.desc.el_version,
-        #     components=comp_releases,
-        # )
-
-        try:
-            release = await release_desc_upload(
-                self.secrets, self.desc.version, release_build
-            )
-        except (BuilderError, Exception) as e:
-            msg = f"error uploading release desc to S3: {e}"
-            logger.exception(msg)
-            raise BuilderError(msg) from e
+        release: ReleaseDesc | None = None
+        if self.upload_to:
+            try:
+                release = await release_desc_upload(
+                    self.secrets, self.upload_to, self.desc.version, release_build
+                )
+            except (BuilderError, Exception) as e:
+                msg = f"error uploading release desc to S3: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
 
         return release
 
@@ -289,17 +312,17 @@ class Builder:
             comp_builds = await self._build_rpms(components)
         except (BuilderError, Exception) as e:
             msg = f"error building RPMs for '{components.keys()}: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
-        if not self.upload:
+        if not self.upload_to:
             return {}
 
         try:
             comp_versions = await self._upload(components, comp_builds)
         except (BuilderError, Exception) as e:
             msg = f"error uploading component builds '{comp_builds.keys()}': {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         return comp_versions
@@ -332,20 +355,23 @@ class Builder:
             )
         except (BuilderError, Exception) as e:
             msg = f"error building components ({components.keys()}): {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
-        logger.info("sign RPMs")
-        try:
-            await sign_rpms(self.secrets, comp_builds)
-        except BuilderError as e:
-            msg = f"error signing component RPMs: {e}"
-            logger.exception(msg)
-            raise BuilderError(msg) from e
-        except Exception as e:
-            msg = f"unknown error signing component RPMs: {e}"
-            logger.exception(msg)
-            raise BuilderError(msg) from e
+        if not self.sign_with_gpg:
+            logger.warning("no signing method provided, skip signing RPMs")
+        else:
+            logger.info(f"signing RPMs with gpg key '{self.sign_with_gpg}'")
+            try:
+                await sign_rpms(self.secrets, self.sign_with_gpg, comp_builds)
+            except BuilderError as e:
+                msg = f"error signing component RPMs: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
+            except Exception as e:
+                msg = f"unknown error signing component RPMs: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
 
         return comp_builds
 
@@ -361,9 +387,13 @@ class Builder:
         Returns a dict of component names to their corresponding component release
         descriptor.
         """  # noqa: D205
-        logger.info(f"upload RPMs: {self.upload}, components: {comp_builds.keys()}")
-        if not self.upload:
+        if not self.upload_to:
+            logger.warning("no upload location provided, skip upload")
             return {}
+
+        logger.info(
+            f"upload RPMs to: {self.upload_to}, components: {comp_builds.keys()}"
+        )
 
         if not comp_builds:
             msg = "unexpected empty 'components' builds dict, can't upload"
@@ -377,11 +407,11 @@ class Builder:
 
         try:
             s3_comp_loc = await s3_upload_rpms(
-                self.secrets, comp_builds, self.desc.el_version
+                self.secrets, self.upload_to, comp_builds, self.desc.el_version
             )
         except (BuilderError, Exception) as e:
             msg = f"error uploading RPMs to S3: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         # obtain existing released components at their versions.
@@ -389,7 +419,7 @@ class Builder:
         comp_versions = {name: info.long_version for name, info in comp_infos.items()}
         try:
             existing_components = await check_released_components(
-                self.secrets, comp_versions
+                self.secrets, self.upload_to, comp_versions
             )
         except ReleaseError as e:
             msg = f"error checking existing released components: {e}"
@@ -453,33 +483,16 @@ class Builder:
             )
             comp_release.versions.append(comp_release_ver)
             comp_rel_versions[name] = comp_release_ver
-
-            # comp_release = await release_component_desc(
-            #     component_loc=self.components[name],
-            #     component_name=name,
-            #     repo_url=infos.repo_url,
-            #     long_version=infos.long_version,
-            #     sha1=infos.sha1,
-            #     s3_location=s3_comp_loc[name].location,
-            #     build_el_version=self.desc.el_version,
-            # )
-            # if not comp_release:
-            #     logger.error(
-            #         f"unable to obtain component '{name}' "
-            #         + "release descriptor, ignore"
-            #     )
-            #     continue
-
             comp_releases[name] = comp_release
 
         # Upload the components' release descriptors. This operation will be performed
         # in parallel, hence why we are doing it outside of the loop above.
         #
         try:
-            await release_upload_components(self.secrets, comp_releases)
+            await release_upload_components(self.secrets, self.upload_to, comp_releases)
         except (BuilderError, Exception) as e:
             msg = f"error uploading release descriptors for components: {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         return comp_rel_versions

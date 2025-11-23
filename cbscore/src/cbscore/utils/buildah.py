@@ -24,8 +24,12 @@ from cbscore.errors import CESError
 from cbscore.images.signing import SigningError, async_sign
 from cbscore.utils import CmdArgs, CommandError, Password, async_run_cmd
 from cbscore.utils import logger as parent_logger
-from cbscore.utils.containers import get_container_canonical_uri
-from cbscore.utils.secrets import SecretsVaultError, SecretsVaultMgr
+from cbscore.utils.containers import (
+    get_container_canonical_uri,
+    get_container_image_base_uri,
+)
+from cbscore.utils.secrets import SecretsMgrError
+from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionDescriptor
 
 logger = parent_logger.getChild("buildah")
@@ -171,7 +175,12 @@ class BuildahContainer:
 
         pass
 
-    async def finish(self, secrets: SecretsVaultMgr) -> None:
+    async def finish(
+        self,
+        secrets: SecretsMgr,
+        *,
+        sign_with_transit: str | None = None,
+    ) -> None:
         # output to logger
         def _out(s: str) -> None:
             logger.debug(s)
@@ -193,7 +202,7 @@ class BuildahContainer:
                 f"error setting final config on '{self.cid}' "
                 + f"for '{self.version_desc.version}': {e}"
             )
-            logger.exception(msg)
+            logger.error(msg)
             raise BuildahError(msg) from e
 
         # commit container as image
@@ -208,7 +217,7 @@ class BuildahContainer:
                 f"error committing container '{self.cid}' for "
                 + f"'{self.version_desc.version}': {e}"
             )
-            logger.exception(msg)
+            logger.error(msg)
             raise BuildahError(msg) from e
 
         if rc != 0:
@@ -221,30 +230,34 @@ class BuildahContainer:
 
         # obtain registry credentials
         try:
-            _, username, password = secrets.harbor_creds()
-            pass
-        except SecretsVaultError as e:
-            msg = f"error obtaining harbor credentials to push '{uri}': {e}"
-            logger.exception(msg)
+            _, username, password = secrets.registry_creds(
+                get_container_image_base_uri(self.version_desc)
+            )
+        except ValueError as e:
+            logger.warning(f"unable to obtain registry credentials to push: {e}")
+            logger.warning("assume unauthenticated registry access")
+            username = password = ""
+        except SecretsMgrError as e:
+            msg = f"error obtaining registry credentials to push '{uri}': {e}"
+            logger.error(msg)
             raise BuildahError(msg) from e
 
         # push to registry
         #
-        logger.info(f"pushing image '{uri}'")
+        logger.info(f"pushing image '{uri}' to '{self.version_desc.image.registry}'")
 
         digest_file_fd, digest_file = tempfile.mkstemp(text=True)
-        try:
-            rc, _, stderr = await _buildah_run(
-                [
-                    "push",
-                    "--creds",
-                    Password(f"{username}:{password}"),
-                    "--digestfile",
-                    digest_file,
-                    uri,
-                ],
-                outcb=_out,
+        push_cmd: CmdArgs = (
+            ["push", "--digestfile", digest_file]
+            + (
+                ["--creds", Password(f"{username}:{password}")]
+                if username and password
+                else []
             )
+            + [uri]
+        )
+        try:
+            rc, _, stderr = await _buildah_run(push_cmd, outcb=_out)
 
             with Path(digest_file).open("r") as f:
                 image_digest = f.read().strip()
@@ -253,11 +266,15 @@ class BuildahContainer:
 
         except BuildahError as e:
             msg = f"error pushing image '{uri}': {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuildahError(msg) from e
         finally:
             os.close(digest_file_fd)
             os.unlink(digest_file)
+
+        if not sign_with_transit:
+            logger.warning("no transit key provided, skipping image signing")
+            return
 
         # sign image
         #
@@ -265,10 +282,10 @@ class BuildahContainer:
             self.version_desc, digest=image_digest
         )
         try:
-            await async_sign(img_to_sign, secrets)
+            await async_sign(img_to_sign, secrets, sign_with_transit)
         except (SigningError, Exception) as e:
             msg = f"error signing image '{uri}': {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuildahError(msg) from e
 
         if rc != 0:

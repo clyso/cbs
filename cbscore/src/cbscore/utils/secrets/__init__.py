@@ -1,4 +1,4 @@
-# CES library - versions
+# CES library - secrets utilities
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,6 +11,19 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-from cbscore.logger import logger as root_logger
+from typing import override
 
-logger = root_logger.getChild("versions")
+from cbscore.errors import CESError
+from cbscore.utils import logger as parent_logger
+
+logger = parent_logger.getChild("secrets")
+
+
+class SecretsError(CESError):
+    @override
+    def __str__(self) -> str:
+        return f"Secrets Error: {self.msg}"
+
+
+class SecretsMgrError(SecretsError):
+    pass

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # CBC - CES Build Service Client
 # Copyright (C) 2025  Clyso GmbH
 #
@@ -429,16 +427,6 @@ def build() -> None:
 @build.command("new", help="Create new build")
 @click.argument("version", type=str, metavar="VERSION", required=True)
 @click.option(
-    "-t",
-    "--type",
-    "version_types",
-    type=str,
-    multiple=True,
-    required=False,
-    metavar="TYPE=N",
-    help="Type of build, including its iteration",
-)
-@click.option(
     "-c",
     "--component",
     "components",
@@ -503,7 +491,6 @@ def new_build(
     config: CBSUserConfig,
     logger: logging.Logger,
     version: str,
-    version_types: list[str],
     components: list[str],
     component_overrides: list[str],
     distro: str,

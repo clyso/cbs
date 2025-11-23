@@ -17,7 +17,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from io import StringIO
 from pathlib import Path
 from typing import override
@@ -109,7 +109,7 @@ class SecureURL(SecureArg):
 
 
 MaybeSecure = str | SecureArg
-CmdArgs = list[MaybeSecure]
+CmdArgs = Sequence[MaybeSecure]
 # CmdArgs = list[str | Password | PasswordArg | MaybeSecureURL]
 
 

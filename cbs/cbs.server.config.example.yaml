@@ -1,0 +1,23 @@
+# CBS server configuration
+# example provided for usage with 'podman-compose.cbs.yaml' in the repository's root.
+#
+
+# broker-url and results-backend-url point to the redis instance deployed by our
+# podman-compose. The server will share the same network as the redis deployment,
+# so we can reference it by its instance name.
+broker-url: redis://cbs-redis:6379/0
+results-backend-url: redis://cbs-redis:6379/0
+server:
+  # ssl certificates for SSL/TLS
+  cert: /cbs/config/cbs.cert.pem
+  key: /cbs/config/cbs.key.pem
+  # database for persistent storage
+  db: /cbs/data/cbs.db
+  secrets:
+    # config file for google's oauth2 application (currently mandatory).
+    oauth2-secrets-file: /cbs/config/google-client-cbs.json
+    # session secret key and token secret key can be generated with
+    #   openssl rand -hex 32
+    session-secret-key: <your-session-secret-key>
+    token-secret-key: <your-token-secret-key>
+    token-secret-ttl-minutes: 30
