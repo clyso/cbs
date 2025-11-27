@@ -197,18 +197,35 @@ class Builder:
         logger.info(f"build release for '{self.desc.version}'")
         logger.info(f"prepare components for version '{self.desc.version}'")
         try:
-            components = await prepare_components(
+            async with prepare_components(
                 self.secrets,
                 self.scratch_path,
                 self.components,
                 self.desc.components,
                 self.desc.version,
-            )
+            ) as components:
+                return await self._do_build_release(components)
         except BuilderError as e:
             msg = f"error preparing components: {e}"
             logger.error(msg)
             raise BuilderError(msg) from e
 
+    async def _do_build_release(
+        self, components: dict[str, BuildComponentInfo]
+    ) -> ReleaseDesc | None:
+        """
+        Build a release, returning a `ReleaseDesc`.
+
+        This function will first prepare the builder, assess which components need to
+        be built and which already exist in S3, and then build (and sign) those that
+        can't be found otherwise.
+
+        Returns a `ReleaseDesc`, composed of all the components that belong to the
+        wanted version, composing it from the already existing components (if any) and
+        the built components (if any needed to be built).
+
+        Will return `None` if `self.upload` is `False`.
+        """
         # Check if any of the components have been previously built, and, if so,
         # reuse them instead of building them.
         #

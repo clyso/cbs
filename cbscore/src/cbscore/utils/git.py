@@ -14,6 +14,8 @@
 
 import errno
 import re
+import secrets
+import shutil
 from pathlib import Path
 from typing import override
 
@@ -58,7 +60,7 @@ async def run_git(args: CmdArgs, *, path: Path | None = None) -> str:
         rc, stdout, stderr = await async_run_cmd(cmd)
     except Exception as e:
         msg = f"unexpected error running command: {e}"
-        logger.exception(msg)
+        logger.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
     if rc != 0:
@@ -125,7 +127,7 @@ async def get_git_modified_paths(
 
         val = await run_git(cmd, path=repo_path)
     except GitError as e:
-        logger.exception("error: unable to obtain latest patch")
+        logger.error(f"error: unable to obtain latest patch: {e}")
         raise GitError(
             errno.ENOTRECOVERABLE,
             f"unable to obtain patches between {base_sha} and {ref}",
@@ -173,12 +175,19 @@ async def get_git_modified_paths(
 async def _clone(repo: MaybeSecure, dest_path: Path) -> None:
     """Clones a repository from `repo` to `dest_path`."""
     try:
-        _ = await run_git(["clone", "--quiet", repo, dest_path.resolve().as_posix()])
+        _ = await run_git(
+            [
+                "clone",
+                "--mirror",
+                "--quiet",
+                repo,
+                dest_path.resolve().as_posix(),
+            ]
+        )
     except GitError as e:
-        logger.exception(f"unable to clone '{repo}' to '{dest_path}'")
-        raise GitError(
-            errno.ENOTRECOVERABLE, f"unable to clone '{repo}' to '{dest_path}'"
-        ) from e
+        msg = f"unable to clone '{repo}' to '{dest_path}': {e}"
+        logger.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
 
 async def _update(repo: MaybeSecure, repo_path: Path) -> None:
@@ -188,29 +197,61 @@ async def _update(repo: MaybeSecure, repo_path: Path) -> None:
         _ = await run_git(["remote", "update"], path=repo_path)
     except GitError as e:
         msg = f"unable to update '{repo_path}': {e}'"
-        logger.exception(msg)
+        logger.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
 
-async def _clean(repo_path: Path) -> None:
-    """Clean up the git repository in `repo_path`, including submodules."""
+async def git_checkout(repo_path: Path, ref: str, worktrees_base_path: Path) -> Path:
+    """
+    Checkout a reference pointed to by `ref`, in repository `repo_path`.
+
+    Uses git worktrees to checkout the reference into a new worktree under
+    `worktrees_base_path`.
+
+    Returns the path to the checked out worktree.
+    """
     try:
-        _ = await run_git(["reset", "--hard"], path=repo_path)
-        _ = await run_git(["submodule", "foreach", "git clean -fdx"], path=repo_path)
-        _ = await run_git(["clean", "-fdx"], path=repo_path)
-    except GitError as e:
-        msg = f"unable to clean '{repo_path}': {e}"
-        logger.exception(msg)
+        worktrees_base_path.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        msg = f"unable to create worktrees base path at '{worktrees_base_path}': {e}"
+        logger.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
+    worktree_rnd_suffix = secrets.token_hex(5)
+    worktree_name = ref.replace("/", "--") + f".{worktree_rnd_suffix}"
+    worktree_path = worktrees_base_path / worktree_name
+    logger.info(f"checkout ref '{ref}' into worktree at '{worktree_path}'")
 
-async def git_checkout(ref: str, repo_path: Path) -> None:
-    """Checkout a reference pointed to by `ref`, in repository `repo_path`."""
     try:
-        _ = await run_git(["checkout", "--quiet", ref], path=repo_path)
+        _ = await run_git(
+            [
+                "worktree",
+                "add",
+                "--quiet",
+                worktree_path.resolve().as_posix(),
+                ref,
+            ],
+            path=repo_path,
+        )
     except GitError as e:
         msg = f"unable to checkout ref '{ref}' in repository '{repo_path}': {e}"
-        logger.exception(msg)
+        logger.error(msg)
+        raise GitError(errno.ENOTRECOVERABLE, msg) from e
+
+    return worktree_path
+
+
+async def git_remove_worktree(repo_path: Path, worktree_path: Path) -> None:
+    """Remove a git worktree at `worktree_path` from repository `repo_path`."""
+    logger.info(f"removing worktree at '{worktree_path}' from repository '{repo_path}'")
+    try:
+        _ = await run_git(
+            ["worktree", "remove", "--force", worktree_path.resolve().as_posix()],
+            path=repo_path,
+        )
+    except GitError as e:
+        msg = f"unable to remove worktree at '{worktree_path}': {e}"
+        logger.error(msg)
         raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
 
@@ -278,72 +319,47 @@ async def git_cherry_pick(
         raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
 
-async def git_clone(
-    repo: MaybeSecure,
-    dest: Path,
-    name: str,
-    *,
-    ref: str | None = None,
-    update_if_exists: bool = False,
-    clean_if_exists: bool = False,
-) -> Path:
+async def git_clone(repo: MaybeSecure, base_path: Path, repo_name: str) -> Path:
     """
-    Clone a git repository, if it doesn't currently exist.
+    Clone a mirror git repository if it doesn't exist; update otherwise.
 
-    Clone a git repository from `repo` to `dest`, using `name` for the repository, if
-    it doesn't currently exist.
-    If a `ref` is provided, checkout said reference.
-    If `update_if_exists` is True, update the repository if it already exists.
-    If `clean_if_exists` is True, clean up the existing repository.
+    Clone a git repository from `repo` to a directory `repo_name` in `base_path`. If a
+    git repository exists at the destination, ensure the repository is updated instead.
 
     Returns the path to the repository.
     """
-    if not dest.exists():
-        logger.error(f"destination path at '{dest}' does not exist")
-        raise GitError(errno.ENOENT, f"path at '{dest}' does not exist")
-
-    repo_path = dest.resolve().joinpath(f"{name}.git")
-
-    if repo_path.exists() and not update_if_exists:
-        logger.error(f"destination repo path at '{repo_path}' exists")
-        raise GitError(errno.EEXIST, f"path at '{repo_path}' already exists")
-
-    elif repo_path.exists() and update_if_exists:
-        logger.info(f"destination repo at '{repo_path}' exists, update instead")
-
+    logger.info(f"cloning '{repo}' to new destination '{base_path}' name '{repo_name}'")
+    if not base_path.exists():
+        logger.warning(f"base path at '{base_path}' does not exist -- creating")
         try:
-            await _update(repo, repo_path)
-
-            if clean_if_exists:
-                await _clean(repo_path)
-
-        except GitError as e:
-            msg = f"unable to update '{repo}' at '{repo_path}': {e}"
-            logger.exception(msg)
+            base_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            msg = f"unable to create base path at '{base_path}': {e}"
+            logger.error(msg)
             raise GitError(errno.ENOTRECOVERABLE, msg) from e
 
-    else:
-        logger.info(f"cloning '{repo}' to new destination '{repo_path}'")
+    dest_path = base_path / f"{repo_name}.git"
+
+    if dest_path.exists():
+        if not dest_path.is_dir() or not dest_path.joinpath("HEAD").exists():
+            logger.warning(
+                f"destination path at '{dest_path}' exists, "
+                + "but is not a valid git repository -- nuke it!"
+            )
+            try:
+                shutil.rmtree(dest_path)
+            except Exception as e:
+                msg = f"unable to remove invalid git repository at '{dest_path}': {e}"
+                logger.error(msg)
+                raise GitError(errno.ENOTRECOVERABLE, msg) from e
+
         # propagate exception to caller
-        await _clone(repo, repo_path)
+        await _update(repo, dest_path)
+        return dest_path
 
-    if ref is not None:
-        try:
-            await git_checkout(ref, repo_path)
-
-            cur_branch = await git_get_current_branch(repo_path)
-            if cur_branch == ref:
-                # must pull in new updates
-                logger.info(f"pull in updates for branch '{ref}'")
-                await git_pull(
-                    repo, from_branch=ref, to_branch=ref, repo_path=repo_path
-                )
-        except GitError as e:
-            msg = f"error cloning repository: {e}"
-            logger.exception(msg)
-            raise GitError(errno.ENOTRECOVERABLE, msg) from e
-
-    return repo_path
+    # propagate exception to caller
+    await _clone(repo, dest_path)
+    return dest_path
 
 
 async def git_apply(repo_path: Path, patch_path: Path) -> None:
