@@ -1,0 +1,151 @@
+config:
+  env:
+    CEPH_IS_DEVEL: "False"
+    CEPH_REF: "{git_ref}"
+    CEPH_VERSION: "{git_ref}"
+    CEPH_OSD_FLAVOR: default
+    FROM_IMAGE: "{distro}"
+  labels:
+    ceph: "True"
+    CEPH_REF: "{git_ref}"
+    CEPH_SHA1: "{git_sha1}"
+    CEPH_GIT_REPO: "{git_repo_url}"
+    GANESHA_REPO_BASEURL: https://buildlogs.centos.org/centos/$releasever-stream/storage/$basearch/nfsganesha-5/
+    OSD_FLAVOR: default
+  annotations:
+    com.clyso.ces.ceph.version: "{git_ref}"
+
+pre:
+  keys:
+    - https://ces-packages.s3.clyso.com/keys/release.asc
+
+  packages:
+    - epel-release
+    - jq
+    - dnf-plugins-core
+    - https://ces-packages.s3.clyso.com/ceph/rpm-{version}/el{el}.clyso/noarch/ceph-release-2-1.el{el}.clyso.noarch.rpm
+
+  repos:
+    - name: ganesha
+      source: file://ganesha.repo
+      dest: /etc/yum.repos.d/ganesha.repo
+
+    - name: tcmu-runner
+      source: https://shaman.ceph.com/api/repos/tcmu-runner/main/latest/centos/9/repo?arch=x86_64
+      dest: /etc/yum.repos.d/tcmu-runner.repo
+
+    - name: ceph-iscsi
+      source: https://download.ceph.com/ceph-iscsi/3/rpm/el9/ceph-iscsi.repo
+      dest: /etc/yum.repos.d/ceph-iscsi.repo
+
+    - name: python-scikit-learn
+      source: copr://tchaikov/python-scikit-learn
+
+  scripts:
+    - name: disable rpm docs install
+      run: setup-no-docs.sh
+
+packages:
+  required:
+    - section: general
+      packages:
+        - ca-certificates
+
+    - section: ceph
+      packages:
+        - ceph-common
+        - ceph-exporter
+        - ceph-grafana-dashboards
+        - ceph-immutable-object-cache
+        - ceph-mds
+        - ceph-mgr-cephadm
+        - ceph-mgr-dashboard
+        # diskprediction_local is broken due to the model being pickled with a
+        # really old version of scikit-learn, so we disable it for now, maybe
+        # remove it in the future.
+        # - ceph-mgr-diskprediction-local
+        - ceph-mgr-k8sevents
+        - ceph-mgr-rook
+        - ceph-mgr
+        - ceph-mon
+        - ceph-osd
+        - ceph-radosgw
+        - lua-devel
+        - luarocks
+        - ceph-volume
+        - cephfs-mirror
+        - cephfs-top
+        - kmod
+        - libcephfs-daemon
+        - libradosstriper1
+        - rbd-mirror
+
+    - section: recommends
+      packages:
+        - nvme-cli
+        - python3-saml
+        - smartmontools
+
+    - section: nfs-ganesha
+      packages:
+        - dbus-daemon
+        - nfs-ganesha-ceph
+        - nfs-ganesha-rados-grace
+        - nfs-ganesha-rados-urls
+        - nfs-ganesha-rgw
+        - nfs-ganesha
+        - rpcbind
+        - sssd-client
+
+    - section: iscsi
+      packages:
+        - ceph-iscsi
+        - tcmu-runner
+        - python3-rtslib
+
+    - section: ceph-iscsi
+      packages:
+        - attr
+        - ceph-fuse
+        - rbd-nbd
+
+    - section: rook
+      packages:
+        - systemd-udev
+
+    - section: util
+      packages:
+        - gdisk
+        - hostname
+        - procps-ng
+        - sg3_utils
+        - e2fsprogs
+        - lvm2
+        - gcc
+
+    - section: scikit-learn
+      packages:
+        - python3-scikit-learn
+
+    - section: ceph-node-proxy
+      packages:
+        - ceph-node-proxy
+
+  optional:
+    - section: crimson
+      cond: with_crimson
+      packages:
+        - ceph-crimson-osd
+
+post:
+  - name: ganesha-fixes
+    run: fix-ganesha.sh
+
+  - name: fix-jaraco
+    run: fix-jaraco.sh
+
+  - name: disable-sync-udev
+    run: disable-sync-udev.sh
+
+  - name: cleanup
+    run: cleanup.sh
