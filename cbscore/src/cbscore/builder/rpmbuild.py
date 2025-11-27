@@ -141,7 +141,7 @@ async def _install_deps(
         def _comp_out(s: str) -> None:
             clog.debug(s)  # noqa: B023
 
-        repo_path = comp.repo_path.resolve()
+        repo_path = comp.worktree_path.resolve()
         cmd: CmdArgs = [
             install_deps_script.resolve().as_posix(),
             repo_path.as_posix(),
@@ -241,7 +241,7 @@ async def build_rpms(
                         el_version,
                         name,
                         to_build[name].build_script,
-                        components[name].repo_path,
+                        components[name].worktree_path,
                         to_build[name].version,
                         ccache_path=ccache_path,
                         skip_build=skip_build,

@@ -41,6 +41,10 @@ pre:
     - name: python-scikit-learn
       source: copr://tchaikov/python-scikit-learn
 
+  scripts:
+    - name: disable rpm docs install
+      run: setup-no-docs.sh
+
 packages:
   required:
     - section: general
@@ -72,6 +76,7 @@ packages:
         - cephfs-mirror
         - cephfs-top
         - kmod
+        - libcephfs-daemon
         - libradosstriper1
         - rbd-mirror
 

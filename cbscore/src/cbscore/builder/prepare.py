@@ -12,8 +12,10 @@
 # GNU General Public License for more details.
 
 import asyncio
+import contextlib
 import datetime
 import re
+from collections.abc import AsyncGenerator
 from datetime import datetime as dt
 from pathlib import Path
 
@@ -36,6 +38,7 @@ class BuildComponentInfo(pydantic.BaseModel):
 
     name: str
     repo_path: Path
+    worktree_path: Path
     repo_url: str
     base_ref: str
     sha1: str
@@ -169,13 +172,14 @@ def _get_patch_list(patches_path: Path, version: str) -> list[Path]:
     return patch_list_order
 
 
+@contextlib.asynccontextmanager
 async def prepare_components(
     secrets: SecretsMgr,
     scratch_path: Path,
     components_loc: dict[str, CoreComponentLoc],
     components: list[VersionComponent],
     version: str,
-) -> dict[str, BuildComponentInfo]:
+) -> AsyncGenerator[dict[str, BuildComponentInfo]]:
     """
     Prepare all components by cloning them and applying required patches.
 
@@ -184,10 +188,17 @@ async def prepare_components(
     The `components_path` argument refers to the directory under which we can find the
     components supported.
 
-    Returns a `dict` of `BuildComponentInfo` per component name, containing the
+    Yields a `dict` of `BuildComponentInfo` per component name, containing the
     component's git repository, version, and SHA1, alongside the `Path` on which the
     repository has been cloned.
+
+    Before exiting, this function will cleanup all prepared components.
     """
+    git_repos_path = scratch_path / "git" / "repos"
+    git_worktrees_path = scratch_path / "git" / "worktrees"
+
+    git_repos_path.mkdir(parents=True, exist_ok=True)
+    git_worktrees_path.mkdir(parents=True, exist_ok=True)
 
     async def _clone_repo(comp: VersionComponent) -> Path:
         """
@@ -198,7 +209,7 @@ async def prepare_components(
         the `version` being cloned, and the `SHA1` of said version.
         """
         logger.debug(
-            f"clone repo '{comp.repo}' to '{scratch_path}', "
+            f"clone repo '{comp.repo}' to '{git_repos_path}', "
             + f"name: '{comp.name}', ref: '{comp.ref}'"
         )
         start = dt.now(tz=datetime.UTC)
@@ -206,25 +217,37 @@ async def prepare_components(
             with secrets.git_url_for(comp.repo) as comp_url:
                 cloned_path = await git.git_clone(
                     comp_url,
-                    scratch_path,
+                    git_repos_path,
                     comp.name,
-                    ref=comp.ref,
-                    update_if_exists=True,
-                    clean_if_exists=True,
                 )
         except git.GitError as e:
-            logger.exception(
-                f"error cloning '{comp.repo}' to '{scratch_path}', ref: {comp.ref}"
-            )
-            raise BuilderError(msg=f"error cloning '{comp.repo}': {e}") from e
+            msg = f"error cloning '{comp.repo}' to '{git_repos_path}': {e}"
+            logger.error(msg)
+            raise BuilderError(msg) from e
         except Exception as e:
-            logger.exception(f"unknown exception cloning '{comp.repo}'")
+            logger.error(f"unknown exception cloning '{comp.repo}': {e}")
             raise BuilderError(msg=f"error cloning '{comp.repo}': {e}") from e
 
         delta = dt.now(tz=datetime.UTC) - start
-        logger.info(f"component '{comp.name}' cloned in {delta.seconds}")
+        logger.info(f"component '{comp.name}' cloned in {delta.seconds} seconds")
 
         return cloned_path
+
+    async def _checkout_ref(repo: Path, ref: str) -> Path:
+        """Checkout given ref in repository located at `repo`."""
+        logger.info(f"checkout ref '{ref}' in repository at '{repo}'")
+        try:
+            worktree_path = await git.git_checkout(
+                repo,
+                ref,
+                git_worktrees_path / comp.name,
+            )
+        except git.GitError as e:
+            msg = f"unable to checkout ref '{ref}' in repository at '{repo}': {e}"
+            logger.exception(msg)
+            raise BuilderError(msg) from e
+
+        return worktree_path
 
     async def _apply_patches(comp: VersionComponent, repo: Path) -> None:
         """Apply required patches to component's repository."""
@@ -266,7 +289,9 @@ async def prepare_components(
         patches_lst = sorted(patches_lst, key=lambda item: item[0])
 
     async def _get_component_info(
-        comp: VersionComponent, repo_path: Path
+        comp: VersionComponent,
+        repo_path: Path,
+        worktree_path: Path,
     ) -> BuildComponentInfo:
         """
         Obtain `BuildComponentInfo`.
@@ -275,24 +300,26 @@ async def prepare_components(
         component.
         """
         try:
-            sha1 = await git.git_get_sha1(repo_path)
+            sha1 = await git.git_get_sha1(worktree_path)
         except (git.GitError, Exception) as e:
-            msg = f"error obtaining SHA1 for repository '{repo_path}': {e}"
-            logger.exception(msg)
+            msg = f"error obtaining SHA1 for worktree '{worktree_path}': {e}"
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         try:
             long_version = await get_component_version(
-                components_loc[comp.name], repo_path
+                components_loc[comp.name],
+                worktree_path,
             )
         except (BuilderError, Exception) as e:
             msg = f"error obtaining version for component '{comp.name}': {e}"
-            logger.exception(msg)
+            logger.error(msg)
             raise BuilderError(msg) from e
 
         return BuildComponentInfo(
             name=comp.name,
             repo_path=repo_path,
+            worktree_path=worktree_path,
             repo_url=comp.repo,
             base_ref=comp.ref,
             sha1=sha1,
@@ -309,26 +336,69 @@ async def prepare_components(
         try:
             repo_path = await _clone_repo(comp)
         except BuilderError as e:
-            logger.exception(f"error cloning component '{comp.name}'")
-            raise e  # noqa: TRY201
-
-        try:
-            await _apply_patches(comp, repo_path)
-        except BuilderError as e:
-            logger.exception("error applying component patches")
-            raise e  # noqa: TRY201
-        except Exception as e:
-            logger.exception("error applying component patches")
-            raise e  # noqa: TRY201
-
-        try:
-            info = await _get_component_info(comp, repo_path)
-        except (BuilderError, Exception) as e:
-            msg = f"error obtaining version for component '{comp.name}': {e}"
-            logger.exception(msg)
+            msg = f"error cloning component '{comp.name}': {e}"
+            logger.error(msg)
             raise BuilderError(msg) from e
 
-        return info
+        try:
+            worktree_path = await _checkout_ref(repo_path, comp.ref)
+        except BuilderError as e:
+            msg = (
+                f"unable to checkout ref '{comp.ref}' for component '{comp.name}': {e}"
+            )
+            logger.error(msg)
+            raise BuilderError(msg) from e
+
+        async def _finalize() -> BuildComponentInfo:
+            try:
+                await _apply_patches(comp, worktree_path)
+            except (BuilderError, Exception) as e:
+                msg = f"error applying component patches: {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
+
+            try:
+                info = await _get_component_info(
+                    comp,
+                    repo_path,
+                    worktree_path,
+                )
+            except (BuilderError, Exception) as e:
+                msg = f"error obtaining version for component '{comp.name}': {e}"
+                logger.error(msg)
+                raise BuilderError(msg) from e
+
+            return info
+
+        try:
+            return await _finalize()
+        except BuilderError as e:
+            # remove worktree
+            await git.git_remove_worktree(repo_path, worktree_path)
+            # propagate exception
+            raise e from None
+
+    async def _run_component_tasks() -> dict[str, BuildComponentInfo]:
+        """
+        Run `_do_component()` for all components in parallel.
+
+        Returns a `dict` of `BuildComponentInfo` per component name.
+        """
+        try:
+            async with asyncio.TaskGroup() as tg:
+                task_dict = {
+                    comp.name: tg.create_task(_do_component(comp))
+                    for comp in components
+                }
+        except ExceptionGroup as e:
+            logger.error("error preparing components:")
+            excs = e.subgroup(BuilderError)
+            if excs is not None:
+                for exc in excs.exceptions:
+                    logger.error(f"- {exc}")
+            raise BuilderError(msg="error preparing components") from e
+
+        return {name: task.result() for name, task in task_dict.items()}
 
     # ensure all components to build have corresponding core components defined.
     for comp in components:
@@ -337,17 +407,26 @@ async def prepare_components(
             logger.error(msg)
             raise BuilderError(msg=msg)
 
+    comp_infos: dict[str, BuildComponentInfo] | None = None
     try:
-        async with asyncio.TaskGroup() as tg:
-            task_dict = {
-                comp.name: tg.create_task(_do_component(comp)) for comp in components
-            }
-    except ExceptionGroup as e:
-        logger.error("error preparing components:")
-        excs = e.subgroup(BuilderError)
-        if excs is not None:
-            for exc in excs.exceptions:
-                logger.error(f"- {exc}")
-        raise BuilderError(msg="error preparing components") from e
+        comp_infos = await _run_component_tasks()
+        yield comp_infos
+    except BuilderError as e:
+        # propagate exception
+        raise e from None
+    finally:
+        if comp_infos:
+            await cleanup_components(comp_infos)
 
-    return {name: task.result() for name, task in task_dict.items()}
+
+async def cleanup_components(components: dict[str, BuildComponentInfo]) -> None:
+    """Cleanup all component repositories."""
+    for comp_name, comp in components.items():
+        logger.info(f"cleanup component '{comp_name}'")
+        try:
+            await git.git_remove_worktree(comp.repo_path, comp.worktree_path)
+        except git.GitError as e:
+            logger.warning(
+                f"unable to cleanup component '{comp_name}' at "
+                + f"'{comp.worktree_path}' and '{comp.repo_path}': {e}"
+            )
