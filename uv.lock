@@ -8,7 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "cbs",
+    "cbs-svc",
     "cbscore",
     "clyso-cbs",
     "crt",
@@ -280,9 +280,9 @@ wheels = [
 ]
 
 [[package]]
-name = "cbs"
+name = "cbs-svc"
 version = "0.1.0"
-source = { virtual = "cbs" }
+source = { virtual = "cbs-svc" }
 dependencies = [
     { name = "aioboto3" },
     { name = "aiohttp" },

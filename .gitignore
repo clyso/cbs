@@ -9,3 +9,4 @@ cbs-build.vault.json
 node_modules
 package.json
 yarn.lock
+.venv/

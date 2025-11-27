@@ -1,8 +1,10 @@
 [project]
-name = "cbs"
+name = "cbsd"
 version = "0.1.0"
-description = "CES Build Service"
+description = "CBS service daemon"
 authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
     "aioboto3==13.3.0",
