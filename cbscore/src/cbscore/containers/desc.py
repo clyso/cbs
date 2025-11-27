@@ -32,6 +32,11 @@ from cbscore.containers import logger as parent_logger
 logger = parent_logger.getChild("descriptor")
 
 
+class ContainerScript(pydantic.BaseModel):
+    name: str
+    run: str
+
+
 class ContainerPre(pydantic.BaseModel):
     keys: list[str] = pydantic.Field(default=[])
     packages: list[str] = pydantic.Field(default=[])
@@ -48,6 +53,7 @@ class ContainerPre(pydantic.BaseModel):
         pydantic.Field(default=[]),
         pydantic.Field(default=[]),
     ]
+    scripts: list[ContainerScript] = pydantic.Field(default=[])
 
 
 class ContainerPackagesEntry(pydantic.BaseModel):
@@ -61,11 +67,6 @@ class ContainerPackages(pydantic.BaseModel):
     optional: list[ContainerPackagesEntry] = pydantic.Field(default=[])
 
 
-class ContainerPostScript(pydantic.BaseModel):
-    name: str
-    run: str
-
-
 class ContainerConfig(pydantic.BaseModel):
     env: dict[str, str] = pydantic.Field(default={})
     labels: dict[str, str] = pydantic.Field(default={})
@@ -76,7 +77,7 @@ class ContainerDescriptor(pydantic.BaseModel):
     config: ContainerConfig | None = pydantic.Field(default=None)
     pre: ContainerPre
     packages: ContainerPackages
-    post: list[ContainerPostScript] = pydantic.Field(default=[])
+    post: list[ContainerScript] = pydantic.Field(default=[])
 
     @classmethod
     def load(

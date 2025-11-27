@@ -18,7 +18,7 @@ from typing import Any
 
 from cbscore.containers import ContainerError, find_path_relative_to
 from cbscore.containers import logger as parent_logger
-from cbscore.containers.desc import ContainerDescriptor
+from cbscore.containers.desc import ContainerDescriptor, ContainerScript
 from cbscore.core.component import CoreComponentLoc
 from cbscore.utils.buildah import BuildahContainer, BuildahError
 from cbscore.versions.utils import (
@@ -165,6 +165,16 @@ class ComponentContainer:
         return self.component_loc.path / self.component_loc.comp.containers.path
 
     async def apply_pre(self, container: BuildahContainer) -> None:
+        # run pre scripts
+        #
+        for entry in self.desc.pre.scripts:
+            try:
+                await self._run_script(container, entry)
+            except ContainerError as e:
+                msg = f"error running PRE script '{entry.name}': {e}"
+                logger.error(msg)
+                raise ContainerError(msg) from e
+
         # import keys
         #
         for key in self.desc.pre.keys:
@@ -173,7 +183,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error importing key '{key}': {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise ContainerError(msg) from e
 
         # install required packages
@@ -200,7 +210,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing PRE packages: {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise ContainerError(msg) from e
 
         # then install packages from URLs
@@ -211,7 +221,7 @@ class ComponentContainer:
                 await container.run(cmd)
             except (BuildahError, Exception) as e:
                 msg = f"error installing RPM package '{package}': {e}"
-                logger.exception(msg)
+                logger.error(msg)
                 raise ContainerError(msg) from e
 
         # install repositories, if any
@@ -226,9 +236,8 @@ class ComponentContainer:
                     )
                 except (ContainerError, Exception) as e:
                     msg = f"error installing repository '{repo.name}': {e}"
-                    logger.exception(msg)
+                    logger.error(msg)
                     raise ContainerError(msg) from e
-        pass
 
     def get_packages(self, *, optional: bool = False) -> list[str]:
         packages: list[str] = []
@@ -246,30 +255,42 @@ class ComponentContainer:
         logger.debug(f"got {len(packages)} packages")
         return packages
 
-    async def apply_post(self, container: BuildahContainer) -> None:
-        for entry in self.desc.post:
-            p = find_path_relative_to(
-                entry.run,
-                self.container_file_path,
-                self._container_path,
+    async def _run_script(
+        self, container: BuildahContainer, script: ContainerScript
+    ) -> None:
+        p = find_path_relative_to(
+            script.run,
+            self.container_file_path,
+            self._container_path,
+        )
+        if not p:
+            logger.warning(
+                f"unable to find script '{script.run}' for '{script.name}', "
+                + f"searched '{self.container_file_path}' and '{self._container_path}'"
             )
-            if not p:
-                logger.warning(f"unable to find script for '{entry.name}'")
-                continue
+            return
 
-            logger.debug(f"run script '{entry.name}' from '{p}")
-            dest = f"/{p.name}"
+        logger.debug(f"run script '{script.name}' from '{p}")
+        dest = f"/{p.name}"
 
+        try:
+            await container.copy(p, dest)
+            await container.run([dest])
+            await container.run(["rm", "-f", dest])
+        except (BuildahError, Exception) as e:
+            msg = f"error running script '{script.name}': {e}"
+            logger.error(msg)
+            raise ContainerError(msg) from e
+
+    async def apply_post(self, container: BuildahContainer) -> None:
+        """Apply post scripts to the container."""
+        for entry in self.desc.post:
             try:
-                await container.copy(p, dest)
-                await container.run([dest])
-                await container.run(["rm", "-f", dest])
-            except (BuildahError, Exception) as e:
-                msg = f"error running script '{entry.name}': {e}"
-                logger.exception(msg)
+                await self._run_script(container, entry)
+            except ContainerError as e:
+                msg = f"error running POST script '{entry.name}': {e}"
+                logger.error(msg)
                 raise ContainerError(msg) from e
-
-        pass
 
     async def apply_config(self, container: BuildahContainer) -> None:
         if not self.desc.config:
