@@ -9,6 +9,7 @@ dependencies = ["basedpyright>=1.29.5"]
 [tool.uv.workspace]
 members = [
     "cbscore",
+    "cbsdcore",
     "cbsd",
     "crt",
 ]

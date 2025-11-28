@@ -19,9 +19,11 @@ import pydantic
 from fastapi import Depends, HTTPException, status
 
 from cbscore.errors import CESError
+from cbsdcore.auth.token import Token
+from cbsdcore.auth.user import User
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
-from cbslib.auth.auth import AuthTokenInfo, CBSToken, token_create
+from cbslib.auth.auth import AuthTokenInfo, token_create
 from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("users")
@@ -40,23 +42,17 @@ class UsersDBError(CESError):
         return "Users DB Error" + (f": {self.msg}" if self.msg else "")
 
 
-class User(pydantic.BaseModel):
-    email: str
-    name: str
-    token: CBSToken
-
-
 class Users:
     _db_path: Path
     _users_db: dict[str, User]
-    _tokens_db: dict[bytes, CBSToken]
+    _tokens_db: dict[bytes, Token]
 
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._users_db = {}
         self._tokens_db = {}
 
-    async def create(self, email: str, name: str) -> CBSToken:
+    async def create(self, email: str, name: str) -> Token:
         logger.info(f"create user '{email}' name '{name}'")
         if email in self._users_db:
             logger.debug(f"user '{email}' already exists, return")
@@ -70,7 +66,7 @@ class Users:
         await self.save()
         return token
 
-    async def get_user_token(self, email: str) -> CBSToken:
+    async def get_user_token(self, email: str) -> Token:
         if email not in self._users_db:
             raise AuthNoSuchUserError(email)
         user = self._users_db[email]

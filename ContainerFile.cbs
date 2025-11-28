@@ -26,15 +26,19 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \
 
 WORKDIR /cbs/server
 
-COPY ./cbsd/pyproject.toml ./
+COPY ./pyproject.toml ./
+COPY ./cbsd/pyproject.toml ./cbsd/
 COPY ./cbsd/cbs-server.py ./
-COPY ./cbscore/ ./cbscore/
 COPY ./cbsd/cbslib/ ./cbslib/
+COPY ./cbsdcore/ ./cbsdcore/
+COPY ./cbscore/ ./cbscore/
 
 RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+RUN ( find . \(-type f --name uv.lock \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
 
-RUN uv add --no-cache ./cbscore
-RUN uv sync --no-cache --no-dev
+RUN uv add --workspace --no-cache ./cbscore || exit 1
+RUN uv add --workspace --no-cache ./cbsdcore || exit 1
+RUN uv sync --all-packages --no-cache --no-dev || exit 1
 
 VOLUME [ "/cbs/scratch" ]
 VOLUME [ "/cbs/config" ]

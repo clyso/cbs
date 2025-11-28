@@ -1,4 +1,4 @@
-# CBS server library - routes - models
+# CBS service daemon core library
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,13 +11,3 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-import pydantic
-
-
-class BaseErrorModel(pydantic.BaseModel):
-    detail: str
-
-
-class NewBuildResponse(pydantic.BaseModel):
-    task_id: str
-    state: str

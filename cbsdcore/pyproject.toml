@@ -1,0 +1,21 @@
+[project]
+name = "cbsdcore"
+version = "0.1.0"
+description = "CBS service daemon core library"
+readme = "README.md"
+authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+
+dependencies = [
+    "cbscore",
+    "pydantic>=2.12.3",
+]
+
+[tool.uv.sources]
+cbscore = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9.1,<0.10.0"]
+build-backend = "uv_build"

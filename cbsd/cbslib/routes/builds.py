@@ -19,15 +19,15 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
 from cbscore.versions.desc import VersionDescriptor
+from cbsdcore.api.responses import BaseErrorModel, NewBuildResponse
+from cbsdcore.builds.types import BuildEntry
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
     CBSBuildsTracker,
     UnauthorizedTrackerError,
 )
-from cbslib.builds.types import BuildEntry
 from cbslib.routes import logger as parent_logger
-from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from cbslib.worker.celery import celery_app
 
 logger = parent_logger.getChild("builds")

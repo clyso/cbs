@@ -8,8 +8,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "cbs-svc",
     "cbscore",
+    "cbsd",
+    "cbsdcore",
     "clyso-cbs",
     "crt",
 ]
@@ -280,14 +281,38 @@ wheels = [
 ]
 
 [[package]]
-name = "cbs-svc"
+name = "cbscore"
 version = "0.1.0"
-source = { virtual = "cbs-svc" }
+source = { editable = "cbscore" }
+dependencies = [
+    { name = "aioboto3" },
+    { name = "click" },
+    { name = "hvac" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "types-aioboto3", extra = ["full"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aioboto3", specifier = "==13.3.0" },
+    { name = "click", specifier = ">=8.1.8" },
+    { name = "hvac", specifier = ">=2.3.0" },
+    { name = "pydantic", specifier = ">=2.11.6" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "types-aioboto3", extras = ["full"], specifier = "==13.3.0.post1" },
+]
+
+[[package]]
+name = "cbsd"
+version = "0.1.0"
+source = { virtual = "cbsd" }
 dependencies = [
     { name = "aioboto3" },
     { name = "aiohttp" },
     { name = "authlib" },
     { name = "cbscore" },
+    { name = "cbsdcore" },
     { name = "celery" },
     { name = "click" },
     { name = "fastapi" },
@@ -316,6 +341,7 @@ requires-dist = [
     { name = "aiohttp", specifier = "==3.12.14" },
     { name = "authlib", specifier = "==1.6.5" },
     { name = "cbscore", editable = "cbscore" },
+    { name = "cbsdcore", editable = "cbsdcore" },
     { name = "celery", specifier = "==5.5.0rc5" },
     { name = "click", specifier = "==8.1.8" },
     { name = "fastapi", specifier = "==0.115.11" },
@@ -339,26 +365,18 @@ dev = [
 ]
 
 [[package]]
-name = "cbscore"
+name = "cbsdcore"
 version = "0.1.0"
-source = { editable = "cbscore" }
+source = { editable = "cbsdcore" }
 dependencies = [
-    { name = "aioboto3" },
-    { name = "click" },
-    { name = "hvac" },
+    { name = "cbscore" },
     { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "types-aioboto3", extra = ["full"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aioboto3", specifier = "==13.3.0" },
-    { name = "click", specifier = ">=8.1.8" },
-    { name = "hvac", specifier = ">=2.3.0" },
-    { name = "pydantic", specifier = ">=2.11.6" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "types-aioboto3", extras = ["full"], specifier = "==13.3.0.post1" },
+    { name = "cbscore", editable = "cbscore" },
+    { name = "pydantic", specifier = ">=2.12.3" },
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-# CBS server library - server config - user config
+# CBS service daemon core library - auth
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -18,21 +18,27 @@ from pathlib import Path
 import pydantic
 
 from cbscore.errors import CESError
-from cbslib.auth.auth import CBSToken
+from cbsdcore.auth.token import Token
 
 
-class CBSUserConfig(pydantic.BaseModel):
+class User(pydantic.BaseModel):
+    email: str
+    name: str
+    token: Token
+
+
+class UserConfig(pydantic.BaseModel):
     host: str
-    login_info: CBSToken
+    login_info: Token
 
     @classmethod
-    def load(cls, path: Path) -> CBSUserConfig:
+    def load(cls, path: Path) -> UserConfig:
         if not path.exists():
             raise CESError(msg=f"missing config file  at '{path}'")
 
         try:
             with path.open("r") as f:
-                return CBSUserConfig.model_validate_json(f.read())
+                return UserConfig.model_validate_json(f.read())
         except pydantic.ValidationError:
             raise CESError(msg=f"invalid config at '{path}'") from None
         except Exception as e:

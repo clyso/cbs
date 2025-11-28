@@ -24,10 +24,6 @@ from typing import Any, Concatenate, ParamSpec, TypeVar, override
 import click
 import httpx
 import pydantic
-from cbslib.auth.users import User
-from cbslib.builds.types import BuildEntry
-from cbslib.config.user import CBSUserConfig
-from cbslib.routes.models import BaseErrorModel, NewBuildResponse
 from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
 
 from cbscore.errors import CESError
@@ -35,6 +31,9 @@ from cbscore.logger import logger as parent_logger
 from cbscore.versions.create import create
 from cbscore.versions.desc import VersionDescriptor
 from cbscore.versions.errors import VersionError
+from cbsdcore.api.responses import BaseErrorModel, NewBuildResponse
+from cbsdcore.auth.user import User, UserConfig
+from cbsdcore.builds.types import BuildEntry
 
 _DEFAULT_CONFIG_PATH = Path.cwd().joinpath("cbc-config.json")
 
@@ -55,7 +54,7 @@ class CBCConnectionError(CBCError):
 
 
 class Ctx:
-    config: CBSUserConfig | None
+    config: UserConfig | None
     logger: logging.Logger | None
 
     def __init__(self) -> None:
@@ -92,7 +91,7 @@ def update_ctx(
     return update_wrapper(inner, f)
 
 
-def pass_config(f: Callable[Concatenate[CBSUserConfig, P], R]) -> Callable[P, R]:
+def pass_config(f: Callable[Concatenate[UserConfig, P], R]) -> Callable[P, R]:
     """Pass the user's config to the function. If not set, exit with error."""
 
     def inner(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -214,7 +213,7 @@ class CBCClient:
 
 
 _WithEPFn = Callable[Concatenate[logging.Logger, CBCClient, str, P], R]
-_WithClientFn = Callable[Concatenate[logging.Logger, CBSUserConfig, P], R]
+_WithClientFn = Callable[Concatenate[logging.Logger, UserConfig, P], R]
 _EPFnWrapper = Callable[[_WithEPFn[P, R]], _WithClientFn[P, R]]
 
 
@@ -227,7 +226,7 @@ def endpoint(ep: str, *, verify: bool = False) -> _EPFnWrapper[P, R]:
         @wraps(fn)
         def wrapper(
             logger: logging.Logger,
-            cfg: CBSUserConfig,
+            cfg: UserConfig,
             *args: P.args,
             **kwargs: P.kwargs,
         ) -> R:
@@ -376,7 +375,7 @@ def main(ctx: Ctx, debug: bool, config_path: Path | None) -> None:
         user_config_path = config_path
 
     if user_config_path.exists() and user_config_path.is_file():
-        ctx.config = CBSUserConfig.load(user_config_path)
+        ctx.config = UserConfig.load(user_config_path)
 
 
 @main.group(help="auth related commands")
@@ -407,7 +406,7 @@ def login(logger: logging.Logger, host: str) -> None:
 @update_ctx
 @pass_logger
 @pass_config
-def whoami(config: CBSUserConfig, logger: logging.Logger) -> None:
+def whoami(config: UserConfig, logger: logging.Logger) -> None:
     logger.debug(f"config: {config}")
     try:
         email, name = _auth_whoami(logger, config)
@@ -488,7 +487,7 @@ def build() -> None:
 @pass_logger
 @pass_config
 def new_build(
-    config: CBSUserConfig,
+    config: UserConfig,
     logger: logging.Logger,
     version: str,
     components: list[str],
@@ -539,7 +538,7 @@ def new_build(
 @update_ctx
 @pass_logger
 @pass_config
-def build_list(config: CBSUserConfig, logger: logging.Logger, all: bool) -> None:
+def build_list(config: UserConfig, logger: logging.Logger, all: bool) -> None:
     try:
         lst = _build_list(logger, config, all)
     except CBCError as e:
@@ -574,7 +573,7 @@ def build_list(config: CBSUserConfig, logger: logging.Logger, all: bool) -> None
 @pass_logger
 @pass_config
 def build_abort(
-    config: CBSUserConfig, logger: logging.Logger, build_id: str, force: bool
+    config: UserConfig, logger: logging.Logger, build_id: str, force: bool
 ) -> None:
     try:
         _build_abort(logger, config, build_id, force)

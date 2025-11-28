@@ -21,8 +21,8 @@ from fastapi import Depends
 
 from cbscore.errors import CESError
 from cbscore.versions.desc import VersionDescriptor
+from cbsdcore.builds.types import BuildEntry, EntryState
 from cbslib.builds import logger as parent_logger
-from cbslib.builds.types import BuildEntry, EntryState
 from cbslib.worker import tasks
 
 logger = parent_logger.getChild("tracker")

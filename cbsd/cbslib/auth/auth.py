@@ -25,23 +25,14 @@ from fastapi.security import (
     HTTPBearer,
 )
 
+from cbsdcore.auth.token import Token, TokenInfo
 from cbslib.auth import logger as parent_logger
 from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("auth")
 
 
-class CBSTokenInfo(pydantic.BaseModel):
-    user: str
-    expires: dt | None
-
-
-class CBSToken(pydantic.BaseModel):
-    token: bytes
-    info: CBSTokenInfo
-
-
-def token_create(user: str) -> CBSToken:
+def token_create(user: str) -> Token:
     """Create a new CBSToken, including its paseto token, for the given user."""
     config = get_config()
     assert config.server, "unexpected server config missing"
@@ -51,7 +42,7 @@ def token_create(user: str) -> CBSToken:
         else dt.now(datetime.UTC)
         + td(minutes=config.server.secrets.token_secret_ttl_minutes)
     )
-    info = CBSTokenInfo(user=user, expires=expiration)
+    info = TokenInfo(user=user, expires=expiration)
     info_payload = pydantic_core.to_jsonable_python(info)  # pyright: ignore[reportAny]
 
     key = pyseto.Key.new(
@@ -61,7 +52,7 @@ def token_create(user: str) -> CBSToken:
         key,
         payload=info_payload,  # pyright: ignore[reportAny]
     )
-    return CBSToken(token=token, info=info)
+    return Token(token=token, info=info)
 
 
 _http_bearer = HTTPBearer()
@@ -85,7 +76,7 @@ def _token_auth(
 _AuthToken = Annotated[str, Depends(_token_auth)]
 
 
-def token_decode(token: _AuthToken) -> CBSTokenInfo:
+def token_decode(token: _AuthToken) -> TokenInfo:
     print(f"token_decode, token: {token}")
 
     config = get_config()
@@ -102,11 +93,11 @@ def token_decode(token: _AuthToken) -> CBSTokenInfo:
         ) from e
 
     try:
-        return CBSTokenInfo.model_validate_json(cast(bytes, decoded_token.payload))
+        return TokenInfo.model_validate_json(cast(bytes, decoded_token.payload))
     except pydantic.ValidationError:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
         ) from None
 
 
-AuthTokenInfo = Annotated[CBSTokenInfo, Depends(token_decode)]
+AuthTokenInfo = Annotated[TokenInfo, Depends(token_decode)]

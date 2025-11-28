@@ -17,14 +17,23 @@ google_client_secrets="${server_cfg_dir}/google-client-cbs.json"
 cbs_cert="${server_cfg_dir}/cbs.cert.pem"
 cbs_key="${server_cfg_dir}/cbs.key.pem"
 
+rebuild=
+
 down() {
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose \
     -f ./podman-compose.cbs.yaml down
 }
 
 up() {
+  extra_args=
+  [[ -n "${rebuild}" ]] &&
+    extra_args="--pull --no-cache --force-recreate"
+
+  # shellcheck disable=SC2086
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose --verbose \
-    --podman-run-args="--rm" -f ./podman-compose.cbs.yaml up --build
+    --podman-run-args="--rm" -f ./podman-compose.cbs.yaml up \
+    --build --remove-orphans ${extra_args}
+
 }
 
 gen_server_keys() {
@@ -213,6 +222,9 @@ Options for 'prepare':
                                   [multiple] (default: ./components)
   --secrets <PATH>                path to secrets.yaml file [required]
 
+Options for 'up':
+  --rebuild                       Ensure images are rebuild. Useful on upgrade.
+
 EOF
 }
 
@@ -264,6 +276,9 @@ while [[ $# -gt 0 ]]; do
         exit 1
       secrets_file_src="${2}"
       shift 1
+      ;;
+    --rebuild)
+      rebuild=1
       ;;
     -h | --help)
       usage

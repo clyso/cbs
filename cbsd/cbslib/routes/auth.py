@@ -21,10 +21,10 @@ from typing import cast
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
+from cbsdcore.auth.user import User, UserConfig
 from cbslib.auth import AuthError
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
-from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB, User
-from cbslib.config.user import CBSUserConfig
+from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB
 from cbslib.routes import logger as parent_logger
 
 logger = parent_logger.getChild("auth")
@@ -83,7 +83,7 @@ async def auth_callback(
         ) from e
 
     user = await users.create(user_info.email, user_info.name)
-    user_config = CBSUserConfig(host=str(req.base_url), login_info=user)
+    user_config = UserConfig(host=str(req.base_url), login_info=user)
 
     return Response(
         user_config.model_dump_json(indent=2),

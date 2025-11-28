@@ -12,6 +12,7 @@ dependencies = [
     "authlib==1.6.5",
     "celery==5.5.0rc5",
     "cbscore",
+    "cbsdcore",
     "click==8.1.8",
     "fastapi==0.115.11",
     "flower==2.0.1",
@@ -35,6 +36,7 @@ dev = [
 
 [tool.uv.sources]
 cbscore = { workspace = true }
+cbsdcore = { workspace = true }
 
 # [build-system]
 # requires = ["hatchling"]
