@@ -331,7 +331,7 @@ def _build_abort(
 
 _cbc_help_message = """CES Build Service Client
 
-Interacts with a CES Build Service, allowing the user to perform various
+Interacts with a CBS service, allowing the user to perform various
 build-related actions, such as listing existing builds, on-going builds,
 and trigger new builds.
 

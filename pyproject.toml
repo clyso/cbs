@@ -11,6 +11,7 @@ members = [
     "cbscore",
     "cbsdcore",
     "cbsd",
+    "cbc",
     "crt",
 ]
 

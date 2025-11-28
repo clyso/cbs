@@ -1,0 +1,21 @@
+[project]
+name = "cbc"
+version = "0.1.0"
+description = "CBS service client"
+readme = "README.md"
+authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+cbc = "cbc.__main__:main"
+
+[tool.uv.sources]
+cbscore = { workspace = true }
+cbsdcore = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9.1,<0.10.0"]
+build-backend = "uv_build"

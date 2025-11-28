@@ -8,6 +8,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "cbc",
     "cbscore",
     "cbsd",
     "cbsdcore",
@@ -279,6 +280,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/9a/f5/8a2874a9a426e98df
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/cc/951184f1862153bd15f15753d9340103e11f8f9836c37149a6bd9ccbeb5c/botocore_stubs-1.40.59-py3-none-any.whl", hash = "sha256:0cfbb0b03597cf1f33d4fc3a2f0ec4d92de5773177f858406f86f01f454d09ad", size = 66541, upload-time = "2025-10-24T20:27:25.231Z" },
 ]
+
+[[package]]
+name = "cbc"
+version = "0.1.0"
+source = { editable = "cbc" }
 
 [[package]]
 name = "cbscore"
