@@ -285,6 +285,18 @@ wheels = [
 name = "cbc"
 version = "0.1.0"
 source = { editable = "cbc" }
+dependencies = [
+    { name = "click" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click", specifier = ">=8.1.8" },
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pydantic", specifier = ">=2.12.3" },
+]
 
 [[package]]
 name = "cbscore"
@@ -320,7 +332,6 @@ dependencies = [
     { name = "cbscore" },
     { name = "cbsdcore" },
     { name = "celery" },
-    { name = "click" },
     { name = "fastapi" },
     { name = "flower" },
     { name = "httpx" },
@@ -336,9 +347,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "basedpyright" },
     { name = "celery-types" },
-    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -349,10 +358,9 @@ requires-dist = [
     { name = "cbscore", editable = "cbscore" },
     { name = "cbsdcore", editable = "cbsdcore" },
     { name = "celery", specifier = "==5.5.0rc5" },
-    { name = "click", specifier = "==8.1.8" },
     { name = "fastapi", specifier = "==0.115.11" },
     { name = "flower", specifier = "==2.0.1" },
-    { name = "httpx", specifier = "==0.28.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "hvac", specifier = "==2.3.0" },
     { name = "itsdangerous", specifier = "==2.2.0" },
     { name = "pydantic", specifier = ">=2.11.6" },
@@ -364,11 +372,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "basedpyright", specifier = ">=1.29.1" },
-    { name = "celery-types", specifier = "==0.23.0" },
-    { name = "ruff", specifier = ">=0.11.8" },
-]
+dev = [{ name = "celery-types", specifier = "==0.23.0" }]
 
 [[package]]
 name = "cbsdcore"

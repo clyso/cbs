@@ -11,6 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from cbscore.logger import logger as root_logger
+import logging
 
-logger = root_logger.getChild("cbsdcore")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("cbsdcore")
+
+
+def set_debug_logging() -> None:
+    """Set debug logging for cbsd core library."""
+    logger.setLevel(logging.DEBUG)

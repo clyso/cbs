@@ -15,3 +15,8 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cbscore")
+
+
+def set_debug_logging() -> None:
+    """Set debug logging for cbscore library."""
+    logger.setLevel(logging.DEBUG)
