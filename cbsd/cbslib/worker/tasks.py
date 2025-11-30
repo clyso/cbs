@@ -18,6 +18,8 @@ from celery import Task
 from celery.worker.request import Request
 
 from cbscore.versions.desc import VersionDescriptor
+from cbslib.config.config import get_config
+from cbslib.worker import WorkerError
 from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
 from cbslib.worker.celery import celery_app, logger
 
@@ -67,3 +69,26 @@ def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
     except (WorkerBuilderError, Exception) as e:
         logger.exception("error running build")
         raise e  # noqa: TRY201
+
+
+@celery_app.task(pydantic=True)
+def list_components() -> list[str]:
+    logger.debug("list components")
+
+    config = get_config()
+    if not config.worker:
+        msg = "unexpected missing worker config"
+        logger.error(msg)
+        raise WorkerError(msg)
+
+    cbscore_config = config.worker.get_cbscore_config()
+
+    avail_components: list[str] = []
+    for components_path in cbscore_config.paths.components:
+        for candidate in components_path.iterdir():
+            if not candidate.is_dir():
+                continue
+            avail_components.append(candidate.name)
+
+    logger.debug(f"obtain available components: {avail_components}")
+    return avail_components

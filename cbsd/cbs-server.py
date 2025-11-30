@@ -32,7 +32,7 @@ from cbslib.builds.tracker import get_builds_tracker
 from cbslib.config.config import config_init
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
-from cbslib.routes import auth, builds
+from cbslib.routes import auth, builds, components
 from cbslib.worker.monitor import monitor
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -104,6 +104,7 @@ def factory() -> FastAPI:
 
     api.include_router(auth.router)
     api.include_router(builds.router)
+    api.include_router(components.router)
     app.mount("/api", api)
 
     return app

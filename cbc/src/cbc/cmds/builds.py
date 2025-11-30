@@ -11,8 +11,10 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import errno
 import logging
 import sys
+from typing import cast
 
 import click
 import pydantic
@@ -26,6 +28,19 @@ from cbsdcore.auth.user import UserConfig
 from cbsdcore.builds.types import BuildEntry
 
 # pyright: reportUnusedParameter=false, reportUnusedFunction=false
+
+
+@endpoint("/components/")
+def _list_components(logger: logging.Logger, client: CBCClient, ep: str) -> list[str]:
+    try:
+        r = client.get(ep)
+        lst = cast(list[str], r.json())
+        logger.debug(f"obtained components: {lst}")
+    except CBCError as e:
+        logger.error(f"unable to obtain component list: {e}")
+        raise e from None
+
+    return lst
 
 
 @endpoint("/builds/new")
@@ -85,6 +100,20 @@ def _build_abort(
 @update_ctx
 def cmd_build() -> None:
     pass
+
+
+@cmd_build.command("components", help="List available components")
+@update_ctx
+@pass_logger
+@pass_config
+def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> None:
+    try:
+        res = _list_components(logger, config)
+    except CBCError as e:
+        click.echo(f"error listing components: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    click.echo(f"available components: {res}")
 
 
 @cmd_build.command("new", help="Create new build")
