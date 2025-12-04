@@ -18,10 +18,11 @@ cbs_cert="${server_cfg_dir}/cbs.cert.pem"
 cbs_key="${server_cfg_dir}/cbs.key.pem"
 
 rebuild=
+compose_file="./podman-compose.cbs.yaml"
 
 down() {
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose \
-    -f ./podman-compose.cbs.yaml down
+    -f "${compose_file}" down
 }
 
 up() {
@@ -31,7 +32,7 @@ up() {
 
   # shellcheck disable=SC2086
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose --verbose \
-    --podman-run-args="--rm" -f ./podman-compose.cbs.yaml up \
+    --podman-run-args="--rm" -f "${compose_file}" up \
     --build --remove-orphans ${extra_args}
 
 }
@@ -225,6 +226,9 @@ Options for 'prepare':
 Options for 'up':
   --rebuild                       Ensure images are rebuild. Useful on upgrade.
 
+Options for 'up' and 'down':
+  --dev                           Use development setup.
+
 EOF
 }
 
@@ -279,6 +283,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --rebuild)
       rebuild=1
+      ;;
+    --dev)
+      compose_file="./podman-compose.cbs-dev.yaml"
       ;;
     -h | --help)
       usage

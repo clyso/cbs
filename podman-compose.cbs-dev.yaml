@@ -1,0 +1,89 @@
+# CBS - CES Build Service
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+services:
+  cbs:
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs-dev
+    container_name: clyso-cbs-service-dev
+    command: server
+    ports:
+      - "8080:8080"
+    restart: "no"
+    privileged: true
+    volumes:
+      - ./_local/cbs/config/server:/cbs/config
+      - ./_local/cbs/data:/cbs/data
+
+      - ./cbsd:/cbs/server/cbsd
+      - ./cbscore:/cbs/server/cbscore
+      - ./cbsdcore:/cbs/server/cbsdcore
+      - ./cbc:/cbs/server/cbc
+      - ./crt:/cbs/server/crt
+      - ./pyproject.toml:/cbs/server/pyproject.toml
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      CBS_CONFIG: /cbs/config/cbs.server.config.yaml
+      CBS_DEBUG: 1
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs-dev
+    container_name: clyso-cbs-worker-dev
+    command: worker
+    privileged: true
+    volumes:
+      - ./_local/cbs/config/worker:/cbs/config
+      - ./cbscore:/cbs/src
+
+      - ./_local/cbs/scratch:/cbs/scratch
+      - ./_local/cbs/scratch/containers:/var/lib/containers
+      - ./_local/cbs/scratch/ccache:/cbs/ccache
+      - ./components:/cbs/components
+      - /dev/fuse:/dev/fuse:rw
+
+      - ./cbsd:/cbs/server/cbsd
+      - ./cbscore:/cbs/server/cbscore
+      - ./cbsdcore:/cbs/server/cbsdcore
+      - ./cbc:/cbs/server/cbc
+      - ./crt:/cbs/server/crt
+      - ./pyproject.toml:/cbs/server/pyproject.toml
+    cap_add:
+      - MKNOD
+      - SYS_ADMIN
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      CBS_CONFIG: /cbs/config/cbs.worker.config.yaml
+      CBS_DEBUG: 1
+    # We require the host network to be able to properly access interfaces
+    # such as those of a vpn. This means the cbs worker is not in the same
+    # network as the other containers, and must access the redis broker by
+    # its external address (in this case, localhost). This must be taken
+    # into account when configuring the worker.
+    network_mode: host
+    depends_on:
+      - redis
+
+  redis:
+    container_name: cbs-redis
+    image: redis:7
+    ports:
+      - "6379:6379"
