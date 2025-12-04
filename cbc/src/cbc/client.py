@@ -23,9 +23,19 @@ from cbsdcore.api.responses import BaseErrorModel
 
 
 class CBCConnectionError(CBCError):
+    """Connection error to the CBS server."""
+
     @override
     def __str__(self) -> str:
-        return "Connection Error" + (f": {self.msg}" if self.msg else "")
+        return "Connection error" + (f": {self.msg}" if self.msg else "")
+
+
+class CBCPermissionDeniedError(CBCError):
+    """Permission denied from the CBS server, most likely due to invalid token."""
+
+    @override
+    def __str__(self) -> str:
+        return "Permission denied" + (f": {self.msg}" if self.msg else "")
 
 
 class CBCClient:
@@ -63,6 +73,7 @@ class CBCClient:
     def get(
         self, ep: str, *, params: httpx_types.QueryParamTypes | None = None
     ) -> httpx.Response:
+        """Send a GET request to the given CBS endpoint."""
         try:
             res = self._client.get(ep, params=params)
             self._maybe_handle_error(res)
@@ -70,6 +81,17 @@ class CBCClient:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
             raise CBCConnectionError(msg) from e
+        except httpx.HTTPStatusError as e:
+            if (
+                e.response.status_code == httpx.codes.UNAUTHORIZED
+                or e.response.status_code == httpx.codes.FORBIDDEN
+            ):
+                msg = f"authentication error accessing '{ep}': {e}"
+                self._logger.error(msg)
+                raise CBCPermissionDeniedError(msg) from e
+            msg = f"error getting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg) from e
         except Exception as e:
             msg = f"error getting '{ep}': {e}"
             self._logger.error(msg)
@@ -81,6 +103,7 @@ class CBCClient:
         ep: str,
         data: Any,  # pyright: ignore[reportExplicitAny, reportAny]
     ) -> httpx.Response:
+        """Send a POST request to the given CBS endpoint."""
         try:
             res = self._client.post(ep, json=data)  # pyright: ignore[reportAny]
             self._maybe_handle_error(res)
@@ -88,6 +111,17 @@ class CBCClient:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
             raise CBCConnectionError(msg) from e
+        except httpx.HTTPStatusError as e:
+            if (
+                e.response.status_code == httpx.codes.UNAUTHORIZED
+                or e.response.status_code == httpx.codes.FORBIDDEN
+            ):
+                msg = f"authentication error accessing '{ep}': {e}"
+                self._logger.error(msg)
+                raise CBCPermissionDeniedError(msg) from e
+            msg = f"error getting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg) from e
         except Exception as e:
             msg = f"error posting '{ep}': {e}"
             self._logger.error(msg)
@@ -97,6 +131,7 @@ class CBCClient:
     def delete(
         self, ep: str, params: httpx_types.QueryParamTypes | None = None
     ) -> httpx.Response:
+        """Send a DELETE request to the given CBS endpoint."""
         try:
             res = self._client.delete(ep, params=params)
             self._maybe_handle_error(res)
@@ -104,6 +139,17 @@ class CBCClient:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
             raise CBCConnectionError(msg) from e
+        except httpx.HTTPStatusError as e:
+            if (
+                e.response.status_code == httpx.codes.UNAUTHORIZED
+                or e.response.status_code == httpx.codes.FORBIDDEN
+            ):
+                msg = f"authentication error accessing '{ep}': {e}"
+                self._logger.error(msg)
+                raise CBCPermissionDeniedError(msg) from e
+            msg = f"error getting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg) from e
         except Exception as e:
             msg = f"error deleting '{ep}': {e}"
             self._logger.error(msg)

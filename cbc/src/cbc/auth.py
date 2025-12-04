@@ -31,10 +31,10 @@ def auth_ping(logger: logging.Logger, host: str, verify: bool = False) -> bool:
         client = CBCClient(logger, host, verify=verify)
         _ = client.get("/auth/ping")
     except CBCConnectionError:
-        logger.exception("unable to connect to server")
+        logger.error("unable to connect to server")
         return False
-    except CBCError:
-        logger.exception("unexpected error pinging server")
+    except CBCError as e:
+        logger.error(f"unexpected error pinging server: {e}")
         return False
     return True
 
@@ -46,14 +46,14 @@ def auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[str
         res = r.read()
         logger.debug(f"whoami: {res}")
     except CBCError as e:
-        logger.exception("unable to obtain whoami")
-        raise e  # noqa: TRY201
+        logger.error("unable to obtain whoami")
+        raise e from None
 
     try:
         user = User.model_validate_json(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.exception(msg)
+        logger.error(msg)
         raise CBCError(msg) from None
 
     return (user.email, user.name)
