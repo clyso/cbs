@@ -79,12 +79,12 @@ async def builds_new(
     try:
         task_id, task_state = await tracker.new(descriptor)
     except BuildExistsError as e:
-        logger.exception("build exists")
+        logger.info(f"build '{descriptor.version}' already exists")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Build already exists"
         ) from e
     except Exception as e:
-        logger.exception("unexpected error")
+        logger.error(f"unexpected error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
@@ -106,7 +106,7 @@ async def get_builds_status(
     try:
         return await tracker.list(owner=owner, from_backend=from_backend)
     except Exception as e:
-        logger.exception("unexpected error")
+        logger.error(f"unexpected error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
@@ -125,12 +125,12 @@ async def delete_build_id(
     try:
         await tracker.abort_build(build_id, user.email, force)
     except UnauthorizedTrackerError as e:
-        logger.exception(f"unable to abort build '{build_id}'")
+        logger.error(f"unable to abort build '{build_id}': {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
         ) from e
     except Exception as e:
-        logger.exception("unexpected error")
+        logger.error(f"unexpected error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",
