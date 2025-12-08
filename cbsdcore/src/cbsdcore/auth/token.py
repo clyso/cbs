@@ -22,5 +22,5 @@ class TokenInfo(pydantic.BaseModel):
 
 
 class Token(pydantic.BaseModel):
-    token: bytes
+    token: pydantic.SecretBytes
     info: TokenInfo

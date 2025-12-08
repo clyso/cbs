@@ -123,7 +123,10 @@ def endpoint(ep: str, *, verify: bool = False) -> _EPFnWrapper[P, R]:
         ) -> R:
             host = cfg.host.rstrip("/")
             client = CBCClient(
-                logger, host, token=cfg.login_info.token.decode("utf-8"), verify=verify
+                logger,
+                host,
+                token=cfg.login_info.token.get_secret_value().decode("utf-8"),
+                verify=verify,
             )
             return fn(logger, client, ep, *args, **kwargs)
 
