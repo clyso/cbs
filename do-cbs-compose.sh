@@ -121,6 +121,16 @@ prepare() {
     echo "error: unable to init vault config" >/dev/stderr && exit 1
   )
 
+  cp "${configdir}/cbs.vault.yaml" "${worker_cfg_dir}/cbs.vault.yaml" || (
+    echo "error: unable to copy vault config to worker's config dir" >/dev/stderr && exit 1
+  )
+  cp "${configdir}/cbs.vault.yaml" "${server_cfg_dir}/cbs.vault.yaml" || (
+    echo "error: unable to copy vault config to server's config dir" >/dev/stderr && exit 1
+  )
+  rm "${configdir}/cbs.vault.yaml" || (
+    echo "error: unable to delete generated vault config" >/dev/stderr && exit 1
+  )
+
   cbsbuild -c "${cbscore_cfg}" config init \
     --components /cbs/components \
     --scratch /cbs/scratch \
