@@ -25,7 +25,7 @@ if [ "${1}" = "server" ]; then
 elif [ "${1}" = "worker" ]; then
   uv run --no-sync \
     celery -A cbslib.worker worker \
-    --loglevel=info --concurrency=1 || (echo "error: failed to start worker." >&2 && exit 1)
+    -E --loglevel=info --concurrency=1 || (echo "error: failed to start worker." >&2 && exit 1)
 
 else
   echo "error: invalid argument '${1}'. Expected 'worker' or 'server'." >&2

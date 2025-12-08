@@ -12,12 +12,35 @@
 # GNU Affero General Public License for more details.
 
 services:
+  cbs:
+    build:
+      context: .
+      dockerfile: ./ContainerFile.cbs
+    container_name: clyso-cbs-server
+    ports:
+      - "8080:8080"
+    restart: "no"
+    privileged: true
+    volumes:
+      - ./_local/cbs/config/server:/cbs/config
+
+      - ./_local/cbs/data:/cbs/data
+      # - ./cbs:/cbs/tools
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      CBS_CONFIG: /cbs/config/cbs.server.config.yaml
+      CBS_DEBUG: 1
+    depends_on:
+      - redis
+
   worker:
     build:
       context: .
       dockerfile: ./ContainerFile.cbs
     container_name: clyso-cbs-worker
-    entrypoint: uv run --no-sync celery -A cbslib.worker worker --loglevel=info --concurrency=1
+    entrypoint: uv run --no-sync celery -A cbslib.worker worker -E --loglevel=info --concurrency=1
     privileged: true
     volumes:
       - ./_local/cbs/config/worker:/cbs/config
@@ -43,29 +66,6 @@ services:
     # its external address (in this case, localhost). This must be taken
     # into account when configuring the worker.
     network_mode: host
-    depends_on:
-      - redis
-
-  cbs:
-    build:
-      context: .
-      dockerfile: ./ContainerFile.cbs
-    container_name: clyso-cbs-server
-    ports:
-      - "8080:8080"
-    restart: "no"
-    privileged: true
-    volumes:
-      - ./_local/cbs/config/server:/cbs/config
-
-      - ./_local/cbs/data:/cbs/data
-      # - ./cbs:/cbs/tools
-    security_opt:
-      - label=disable
-      - seccomp=unconfined
-    environment:
-      CBS_CONFIG: /cbs/config/cbs.server.config.yaml
-      CBS_DEBUG: 1
     depends_on:
       - redis
 
