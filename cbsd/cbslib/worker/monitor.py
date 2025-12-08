@@ -39,25 +39,6 @@ _R = TypeVar("_R")
 _BM = TypeVar("_BM", bound=pydantic.BaseModel)
 
 
-# Keep this here for future reference, because it might come in handy at some point.
-#
-# _ModelFn = Callable[Concatenate[_BM, _P], _R]
-# _DictFn = Callable[Concatenate[_EventDict, _P], _R]
-# _ToModelFnWrapper = Callable[[_ModelFn[_BM, _P, _R]], _DictFn[_P, _R]]
-#
-#
-# def _as_model(bm: type[_BM]) -> _ToModelFnWrapper[_BM, _P, _R]:
-#     def inner(fn: _ModelFn[_BM, _P, _R]) -> _DictFn[_P, _R]:
-#         @wraps(fn)
-#         def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-#             m = bm(**e)
-#             return fn(m, *args, **kwargs)
-#
-#         return wrapper
-#
-#     return inner
-
-
 class _EventTaskStarted(pydantic.BaseModel):
     uuid: str
     timestamp: float
@@ -144,6 +125,7 @@ async def _event_task_revoked(tracker: BuildsTracker, event: _EventTaskRevoked) 
 
 
 def monitor(builds_tracker: BuildsTracker) -> None:
+    logger.info("starting task monitoring")
     try:
         with celery_app.connection() as conn:
             recv = celery_app.events.Receiver(
@@ -167,7 +149,7 @@ def monitor(builds_tracker: BuildsTracker) -> None:
                 },
             )
             recv.capture(limit=None, timeout=None, wakeup=None)
-    except Exception:
-        logger.exception("error capturing events")
+    except Exception as e:
+        logger.error(f"error capturing events: {e}")
         pass
     pass
