@@ -16,7 +16,7 @@ from datetime import datetime as dt
 
 import pydantic
 
-from cbscore.versions.desc import VersionDescriptor
+from cbsdcore.versions import BuildDescriptor
 
 
 class EntryState(str, enum.Enum):
@@ -31,7 +31,7 @@ class EntryState(str, enum.Enum):
 
 class BuildEntry(pydantic.BaseModel):
     task_id: str
-    desc: VersionDescriptor
+    desc: BuildDescriptor
     user: str
     submitted: dt
     state: EntryState

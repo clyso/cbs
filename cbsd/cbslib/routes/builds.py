@@ -18,9 +18,9 @@ from celery.result import AsyncResult
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from cbscore.versions.desc import VersionDescriptor
 from cbsdcore.api.responses import BaseErrorModel, NewBuildResponse
 from cbsdcore.builds.types import BuildEntry
+from cbsdcore.versions import BuildDescriptor
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
@@ -64,16 +64,16 @@ _responses = {
 async def builds_new(
     user: CBSAuthUser,
     tracker: CBSBuildsTracker,
-    descriptor: VersionDescriptor,
+    descriptor: BuildDescriptor,
 ) -> NewBuildResponse:
-    logger.debug(f"build new version: {descriptor}, user: {user}")
+    logger.info(f"build new version: {descriptor}, user: {user}")
 
     user_info = descriptor.signed_off_by
     if user_info.email != user.email or user_info.user != user.name:
-        logger.error(f"unexpected user/email combination: {user_info}")
+        logger.warning(f"unexpected user/email combination: {user_info}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="issuing user does not match token's user",
+            detail="issuing user does not match authenticated user",
         )
 
     try:

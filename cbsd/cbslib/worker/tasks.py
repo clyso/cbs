@@ -17,10 +17,10 @@ from typing import Any, ParamSpec, cast, override
 from celery import Task
 from celery.worker.request import Request
 
-from cbscore.versions.desc import VersionDescriptor
+from cbsdcore.versions import BuildDescriptor
 from cbslib.config.config import get_config
 from cbslib.worker import WorkerError
-from cbslib.worker.builder import WorkerBuilder, WorkerBuilderError
+from cbslib.worker.builder import WorkerBuilderError, get_builder
 from cbslib.worker.celery import celery_app, logger
 
 Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIssue]
@@ -31,6 +31,8 @@ _P = ParamSpec("_P")
 
 
 class BuilderRequest(Request):
+    """Defines a request for a given worker's builder task."""
+
     @override
     def terminate(
         self,
@@ -44,28 +46,29 @@ class BuilderRequest(Request):
 
 
 class BuilderTask(Task[_P, None]):
-    Request = BuilderRequest  # pyright: ignore[reportUnannotatedClassAttribute]
+    """Task for a given worker's builds."""
 
-    builder: WorkerBuilder
+    Request = BuilderRequest  # pyright: ignore[reportUnannotatedClassAttribute]
 
     def __init__(self) -> None:
         super().__init__()
-        self.builder = WorkerBuilder()
+        logger.info(f"initted task {self.name}")
 
     def on_termination(self, task_id: str) -> None:
         logger.info(f"revoked {task_id}")
+        builder = get_builder()
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.builder.kill())
+        loop.run_until_complete(builder.kill())
 
 
 @celery_app.task(pydantic=True, base=BuilderTask, bind=True, track_started=True)
-def build(self: BuilderTask[None], version_desc: VersionDescriptor) -> None:
-    logger.info(f"build version: {version_desc}")
+def build(_self: BuilderTask[None], build_desc: BuildDescriptor) -> None:
+    logger.info(f"build descriptor: {build_desc}")
 
+    builder = get_builder()
     loop = asyncio.new_event_loop()
     try:
-        # loop.run_until_complete(asyncio.sleep(120))
-        loop.run_until_complete(self.builder.build(version_desc))
+        loop.run_until_complete(builder.build(build_desc))
     except (WorkerBuilderError, Exception) as e:
         logger.exception("error running build")
         raise e  # noqa: TRY201

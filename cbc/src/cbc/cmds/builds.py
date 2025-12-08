@@ -20,12 +20,23 @@ import click
 import pydantic
 
 from cbc import CBCError
-from cbc.client import CBCClient
+from cbc.auth import auth_whoami
+from cbc.client import CBCClient, CBCConnectionError, CBCPermissionDeniedError
 from cbc.cmds import endpoint, pass_config, pass_logger, update_ctx
-from cbscore.versions.desc import VersionDescriptor
+from cbscore.versions.errors import VersionError
+from cbscore.versions.utils import VersionType, get_version_type, parse_component_refs
 from cbsdcore.api.responses import NewBuildResponse
 from cbsdcore.auth.user import UserConfig
 from cbsdcore.builds.types import BuildEntry
+from cbsdcore.versions import (
+    BuildArch,
+    BuildArtifactType,
+    BuildComponent,
+    BuildDescriptor,
+    BuildDestImage,
+    BuildSignedOffBy,
+    BuildTarget,
+)
 
 # pyright: reportUnusedParameter=false, reportUnusedFunction=false
 
@@ -45,7 +56,7 @@ def _list_components(logger: logging.Logger, client: CBCClient, ep: str) -> list
 
 @endpoint("/builds/new")
 def _build_new(
-    logger: logging.Logger, client: CBCClient, ep: str, desc: VersionDescriptor
+    logger: logging.Logger, client: CBCClient, ep: str, desc: BuildDescriptor
 ) -> NewBuildResponse:
     data = desc.model_dump(mode="json")
     try:
@@ -53,14 +64,14 @@ def _build_new(
         res = r.json()  # pyright: ignore[reportAny]
         logger.debug(f"new build: {res}")
     except CBCError as e:
-        logger.exception("unable to create new build")
-        raise e  # noqa: TRY201
+        logger.error(f"unable to create new build: {e}")
+        raise e from None
 
     try:
         return NewBuildResponse.model_validate(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.exception(msg)
+        logger.error(msg)
         raise CBCError(msg) from None
 
 
@@ -72,15 +83,15 @@ def _build_list(
         r = client.get(ep, params={"all": all})
         res = r.json()  # pyright: ignore[reportAny]
     except CBCError as e:
-        logger.exception("unable to list builds")
-        raise e  # noqa: TRY201
+        logger.error(f"unable to list builds: {e}")
+        raise e from None
 
     ta = pydantic.TypeAdapter(list[BuildEntry])
     try:
         return ta.validate_python(res)
     except pydantic.ValidationError:
         msg = f"error validating server result: {res}"
-        logger.exception(msg)
+        logger.error(msg)
         raise CBCError(msg) from None
 
 
@@ -92,8 +103,8 @@ def _build_abort(
         params = {"force": force} if force else None
         _ = client.delete(f"{ep}/{build_id}", params=params)
     except CBCError as e:
-        logger.exception(f"unable to abort build '{build_id}'")
-        raise e  # noqa: TRY201
+        logger.error(f"unable to abort build '{build_id}': {e}")
+        raise e from None
 
 
 @click.group("build", help="build related commands")
@@ -121,8 +132,8 @@ def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> Non
 @click.option(
     "-t",
     "--type",
-    "version_type",
-    type=str,
+    "version_type_name",
+    type=click.Choice([t.value for t in VersionType], case_sensitive=True),
     help="Type of version to be built",
     required=False,
     metavar="TYPE",
@@ -194,7 +205,7 @@ def cmd_build_new(
     config: UserConfig,
     logger: logging.Logger,
     version: str,
-    version_type: str,
+    version_type_name: str,
     components: tuple[str, ...],
     component_overrides: tuple[str, ...],
     distro: str,
@@ -203,40 +214,82 @@ def cmd_build_new(
     image_name: str,
     image_tag: str | None,
 ) -> None:
-    pass
-    # try:
-    #     email, name = auth_whoami(logger, config)
-    # except Exception as e:
-    #     click.echo(f"error obtaining user's info: {e}", err=True)
-    #     sys.exit(1)
-    #
-    # try:
-    #     version_type, desc = create(
-    #         version,
-    #         version_type,
-    #         components,
-    #         component_overrides,
-    #         distro,
-    #         el_version,
-    #         registry,
-    #         image_name,
-    #         image_tag,
-    #         name,
-    #         email,
-    #     )
-    # except (VersionError, Exception) as e:
-    #     click.echo(f"error creating version descriptor: {e}")
-    #     sys.exit(1)
-    #
-    # try:
-    #     res = _build_new(logger, config, desc)
-    # except CBCError as e:
-    #     click.echo(f"error triggering build: {e}")
-    #     sys.exit(1)
-    #
-    # click.echo(f"version type: {version_type.name}")
-    # click.echo(f"     task id: {res.task_id}")
-    # click.echo(f"       state: {res.state}")
+    try:
+        email, name = auth_whoami(logger, config)
+    except CBCConnectionError as e:
+        click.echo(f"connection error: {e}", err=True)
+        sys.exit(errno.ECONNREFUSED)
+    except CBCPermissionDeniedError as e:
+        click.echo(f"permission denied: {e}", err=True)
+        sys.exit(errno.EACCES)
+    except Exception as e:
+        click.echo(f"error obtaining user's info: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        version_type = get_version_type(version_type_name)
+    except VersionError as e:
+        click.echo(f"error parsing version type: {e}", err=True)
+        sys.exit(errno.EINVAL)
+
+    try:
+        component_refs = parse_component_refs(list(components))
+    except VersionError as e:
+        click.echo(f"error parsing components: {e}", err=True)
+        sys.exit(errno.EINVAL)
+
+    uri_overrides: dict[str, str] = {}
+    for uri_override in component_overrides:
+        entries = uri_override.split("=", maxsplit=1)
+        if len(entries) != 2:
+            click.echo(f"malformed component URI override: '{uri_override}'", err=True)
+            sys.exit(errno.EINVAL)
+
+        comp, uri = entries
+        if comp not in component_refs:
+            click.echo(f"ignoring URI for missing component '{comp}'", err=True)
+            continue
+
+        uri_overrides[comp] = uri
+
+    components_lst: list[BuildComponent] = []
+    for comp_name, comp_ref in component_refs.items():
+        components_lst.append(
+            BuildComponent(
+                name=comp_name,
+                ref=comp_ref,
+                repo=uri_overrides.get(comp_name),
+            )
+        )
+
+    image_tag = image_tag or version
+
+    desc = BuildDescriptor(
+        version=version,
+        signed_off_by=BuildSignedOffBy(user=name, email=email),
+        version_type=version_type,
+        dst_image=BuildDestImage(name=image_name, tag=image_tag),
+        components=components_lst,
+        build=BuildTarget(
+            distro=distro,
+            os_version=f"el{el_version}",
+            artifact_type=BuildArtifactType.rpm,
+            arch=BuildArch.x86_64,
+        ),
+    )
+
+    try:
+        res = _build_new(logger, config, desc)
+    except CBCError as e:
+        click.echo(f"error triggering build: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    click.echo(f"""
+triggered build:
+    type: {version_type_name}
+ task id: {res.task_id}
+   state: {res.state}
+""")
 
 
 @cmd_build.command("list", help="List builds from the build service")

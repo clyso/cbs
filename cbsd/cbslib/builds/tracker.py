@@ -20,8 +20,8 @@ from celery.result import AsyncResult as CeleryTaskResult
 from fastapi import Depends
 
 from cbscore.errors import CESError
-from cbscore.versions.desc import VersionDescriptor
 from cbsdcore.builds.types import BuildEntry, EntryState
+from cbsdcore.versions import BuildDescriptor
 from cbslib.builds import logger as parent_logger
 from cbslib.worker import tasks
 
@@ -64,6 +64,8 @@ class UnauthorizedTrackerError(TrackerError):
 
 
 class BuildsTracker:
+    """Tracks existing builds, tracking them as they are sent to workers."""
+
     _builds: dict[str, BuildEntry]
     _builds_by_version: dict[str, list[BuildEntry]]
     _lock: asyncio.Lock
@@ -73,7 +75,8 @@ class BuildsTracker:
         self._builds_by_version = {}
         self._lock = asyncio.Lock()
 
-    async def new(self, desc: VersionDescriptor) -> tuple[str, str]:
+    async def new(self, desc: BuildDescriptor) -> tuple[str, str]:
+        """Create a new build entry, scheduling it for build."""
         _ = await self._lock.acquire()
         try:
             if desc.version in self._builds_by_version and any(
@@ -83,6 +86,7 @@ class BuildsTracker:
             ):
                 raise BuildExistsError(desc.version)
 
+            # schedule version for building
             task = tasks.build.apply_async((desc,), serializer="pydantic")
 
             build_entry = BuildEntry(
