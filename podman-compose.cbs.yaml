@@ -69,26 +69,6 @@ services:
     depends_on:
       - redis
 
-  flower:
-    build:
-      context: .
-      dockerfile: ./ContainerFile.cbs
-    container_name: clyso-cbs-worker-flower
-    entrypoint: uv run --no-sync celery --broker=redis://cbs-redis:6379/0 -A cbslib.worker flower
-    ports:
-      - "5555:5555"
-    volumes:
-      - ./_local/cbs/config/worker/cbs.worker.config.yaml:/cbs/config/cbs-config.yaml
-      - ./_local/cbs/config/worker/cbscore.config.yaml:/cbs/config/cbscore.config.yaml
-    environment:
-      CBS_CONFIG: /cbs/config/cbs-config.yaml
-      CBS_DEBUG: 1
-    security_opt:
-      - label=disable
-    depends_on:
-      - worker
-      - redis
-
   redis:
     container_name: cbs-redis
     image: redis:7
