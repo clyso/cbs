@@ -12,12 +12,12 @@
 # GNU Affero General Public License for more details.
 
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 
 from cbsdcore.api.responses import BaseErrorModel
 from cbslib.auth.users import CBSAuthUser
+from cbslib.core.mgr import CBSMgr, NotAvailableError
 from cbslib.routes import logger as parent_logger
-from cbslib.worker import tasks
 
 _responses = {
     401: {
@@ -42,10 +42,19 @@ router = APIRouter(prefix="/components")
 @router.get("/", responses={**_responses})
 async def components_list(
     user: CBSAuthUser,
+    mgr: CBSMgr,
 ) -> list[str]:
     logger.debug(f"obtain components list, user: {user}")
 
-    res = tasks.list_components.apply_async()
-    components_lst = res.get()
-    logger.debug(f"obtained components: {components_lst}")
-    return components_lst
+    try:
+        return mgr.components
+    except NotAvailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
+        ) from None
+    except Exception as e:
+        logger.error(f"unknown error listing components: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="check logs for failure",
+        ) from e

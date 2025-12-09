@@ -24,9 +24,9 @@ from cbsdcore.versions import BuildDescriptor
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
-    CBSBuildsTracker,
     UnauthorizedTrackerError,
 )
+from cbslib.core.mgr import CBSMgr, NotAvailableError
 from cbslib.routes import logger as parent_logger
 from cbslib.worker.celery import celery_app
 
@@ -63,7 +63,7 @@ _responses = {
 )
 async def builds_new(
     user: CBSAuthUser,
-    tracker: CBSBuildsTracker,
+    mgr: CBSMgr,
     descriptor: BuildDescriptor,
 ) -> NewBuildResponse:
     logger.info(f"build new version: {descriptor}, user: {user}")
@@ -77,7 +77,11 @@ async def builds_new(
         )
 
     try:
-        task_id, task_state = await tracker.new(descriptor)
+        task_id, task_state = await mgr.new(descriptor)
+    except NotAvailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
+        ) from None
     except BuildExistsError as e:
         logger.info(f"build '{descriptor.version}' already exists")
         raise HTTPException(
@@ -96,7 +100,7 @@ async def builds_new(
 @router.get("/status", responses={**_responses})
 async def get_builds_status(
     user: CBSAuthUser,
-    tracker: CBSBuildsTracker,
+    mgr: CBSMgr,
     all: bool,
     from_backend: bool = False,
 ) -> list[BuildEntry]:
@@ -104,7 +108,7 @@ async def get_builds_status(
 
     owner = user.email if not all else None
     try:
-        return await tracker.list(owner=owner, from_backend=from_backend)
+        return await mgr.status(owner=owner, from_backend=from_backend)
     except Exception as e:
         logger.error(f"unexpected error: {e}")
         raise HTTPException(
@@ -116,14 +120,18 @@ async def get_builds_status(
 @router.delete("/abort/{build_id}", responses={**_responses})
 async def delete_build_id(
     user: CBSAuthUser,
-    tracker: CBSBuildsTracker,
+    mgr: CBSMgr,
     build_id: str,
     force: bool = False,
 ) -> bool:
     logger.debug(f"abort task '{build_id}'")
 
     try:
-        await tracker.abort_build(build_id, user.email, force)
+        await mgr.abort(build_id, user.email, force)
+    except NotAvailableError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
+        ) from None
     except UnauthorizedTrackerError as e:
         logger.error(f"unable to abort build '{build_id}': {e}")
         raise HTTPException(

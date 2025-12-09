@@ -23,9 +23,7 @@ services:
     privileged: true
     volumes:
       - ./_local/cbs/config/server:/cbs/config
-
       - ./_local/cbs/data:/cbs/data
-      # - ./cbs:/cbs/tools
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -33,7 +31,10 @@ services:
       CBS_CONFIG: /cbs/config/cbs.server.config.yaml
       CBS_DEBUG: 1
     depends_on:
-      - redis
+      redis:
+        condition: service_started
+      worker:
+        condition: service_healthy
 
   worker:
     build:
@@ -66,6 +67,14 @@ services:
     # its external address (in this case, localhost). This must be taken
     # into account when configuring the worker.
     network_mode: host
+    healthcheck:
+      test:
+        ["CMD-SHELL", "uv run --no-sync celery -A cbslib.worker inspect ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 5s
     depends_on:
       - redis
 

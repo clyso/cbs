@@ -28,12 +28,12 @@ from typing import Any
 import uvicorn
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
-from cbslib.builds.tracker import get_builds_tracker
 from cbslib.config.config import config_init
+from cbslib.core.mgr import mgr_init
+from cbslib.core.monitor import monitor
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds, components
-from cbslib.worker.monitor import monitor
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -46,26 +46,28 @@ logger = parent_logger.getChild("server")
 #
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
-    logger.info("Preparing server init")
+    logger.info("Preparing cbs service server...")
 
     try:
         await auth_users_init()
     except (CESError, Exception):
-        logger.exception("error initializing users db")
-        sys.exit(1)
+        logger.error("error initializing users db")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         oauth_init()
     except (CESError, Exception):
-        logger.exception("error initiating server")
-        sys.exit(1)
+        logger.error("error initiating server")
+        sys.exit(errno.ENOTRECOVERABLE)
 
-    thread = threading.Thread(target=monitor, args=(get_builds_tracker(),))
+    mgr = mgr_init()
+
+    thread = threading.Thread(target=monitor, args=(mgr.tracker,))
     thread.start()
 
-    logger.info("Starting ces build server")
+    logger.info("Starting cbs service server...")
     yield
-    logger.info("Shutting down ces build server")
+    logger.info("Shutting down cbs service server...")
     thread.join()
 
 
