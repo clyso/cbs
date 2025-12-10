@@ -21,3 +21,12 @@ class BaseErrorModel(pydantic.BaseModel):
 class NewBuildResponse(pydantic.BaseModel):
     task_id: str
     state: str
+
+
+class AvailableComponent(pydantic.BaseModel):
+    name: str
+    default_repo: str
+    versions: list[str]
+
+
+AvailableComponentsResponse = dict[str, AvailableComponent]

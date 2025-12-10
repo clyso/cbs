@@ -14,7 +14,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from cbsdcore.api.responses import BaseErrorModel
+from cbsdcore.api.responses import AvailableComponentsResponse, BaseErrorModel
 from cbslib.auth.users import CBSAuthUser
 from cbslib.core.mgr import CBSMgr, NotAvailableError
 from cbslib.routes import logger as parent_logger
@@ -43,7 +43,7 @@ router = APIRouter(prefix="/components")
 async def components_list(
     user: CBSAuthUser,
     mgr: CBSMgr,
-) -> list[str]:
+) -> AvailableComponentsResponse:
     logger.debug(f"obtain components list, user: {user}")
 
     try:
@@ -53,7 +53,7 @@ async def components_list(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
         ) from None
     except Exception as e:
-        logger.error(f"unknown error listing components: {e}")
+        logger.error(f"unknown error obtaining components: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="check logs for failure",

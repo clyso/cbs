@@ -14,9 +14,12 @@
 import asyncio
 from typing import Any, ParamSpec, cast, override
 
+import pydantic
 from celery import Task
 from celery.worker.request import Request
 
+from cbscore.core.component import load_components
+from cbsdcore.api.responses import AvailableComponent
 from cbsdcore.versions import BuildDescriptor
 from cbslib.config.config import get_config
 from cbslib.worker import WorkerError
@@ -28,6 +31,10 @@ Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIs
 )
 
 _P = ParamSpec("_P")
+
+
+class ListComponentsTaskResponse(pydantic.BaseModel):
+    components: dict[str, AvailableComponent]
 
 
 class BuilderRequest(Request):
@@ -75,7 +82,7 @@ def build(_self: BuilderTask[None], build_desc: BuildDescriptor) -> None:
 
 
 @celery_app.task(pydantic=True)
-def list_components() -> list[str]:
+def list_components() -> ListComponentsTaskResponse:
     logger.debug("list components")
 
     config = get_config()
@@ -86,12 +93,34 @@ def list_components() -> list[str]:
 
     cbscore_config = config.worker.get_cbscore_config()
 
-    avail_components: list[str] = []
-    for components_path in cbscore_config.paths.components:
-        for candidate in components_path.iterdir():
-            if not candidate.is_dir():
-                continue
-            avail_components.append(candidate.name)
+    avail_components: dict[str, AvailableComponent] = {}
+    avail_components_map = load_components(
+        cbscore_config.paths.components,
+    )
+    for comp_name, comp_loc in avail_components_map.items():
+        ctr_path = comp_loc.path / comp_loc.comp.containers.path
+        if not ctr_path.exists() or not ctr_path.is_dir():
+            logger.warning(
+                f"missing containers path '{ctr_path}' for component '{comp_name}'"
+            )
+            continue
+
+        avail_versions: list[str] = []
+        for p in list(ctr_path.rglob("container.yaml")):
+            avail_versions.append("*" if p.parent == ctr_path else p.parent.name)
+
+        if not avail_versions:
+            logger.warning(
+                f"no container versions found for component '{comp_name}' "
+                + f"in '{ctr_path}'"
+            )
+            continue
+
+        avail_components[comp_name] = AvailableComponent(
+            name=comp_name,
+            default_repo=comp_loc.comp.repo,
+            versions=avail_versions,
+        )
 
     logger.debug(f"obtain available components: {avail_components}")
-    return avail_components
+    return ListComponentsTaskResponse(components=avail_components)

@@ -14,7 +14,6 @@
 import errno
 import logging
 import sys
-from typing import cast
 
 import click
 import pydantic
@@ -25,7 +24,7 @@ from cbc.client import CBCClient, CBCConnectionError, CBCPermissionDeniedError
 from cbc.cmds import endpoint, pass_config, pass_logger, update_ctx
 from cbscore.versions.errors import VersionError
 from cbscore.versions.utils import VersionType, get_version_type, parse_component_refs
-from cbsdcore.api.responses import NewBuildResponse
+from cbsdcore.api.responses import AvailableComponent, NewBuildResponse
 from cbsdcore.auth.user import UserConfig
 from cbsdcore.builds.types import BuildEntry
 from cbsdcore.versions import (
@@ -42,16 +41,24 @@ from cbsdcore.versions import (
 
 
 @endpoint("/components/")
-def _list_components(logger: logging.Logger, client: CBCClient, ep: str) -> list[str]:
+def _list_components(
+    logger: logging.Logger, client: CBCClient, ep: str
+) -> dict[str, AvailableComponent]:
     try:
         r = client.get(ep)
-        lst = cast(list[str], r.json())
-        logger.debug(f"obtained components: {lst}")
+        res = r.json()  # pyright: ignore[reportAny]
+        logger.debug(f"obtained components: {res}")
     except CBCError as e:
         logger.error(f"unable to obtain component list: {e}")
         raise e from None
 
-    return lst
+    ta = pydantic.TypeAdapter(dict[str, AvailableComponent])
+    try:
+        return ta.validate_python(res)
+    except pydantic.ValidationError:
+        msg = f"error validating server result: {res}"
+        logger.error(msg)
+        raise CBCError(msg) from None
 
 
 @endpoint("/builds/new")
@@ -124,7 +131,10 @@ def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> Non
         click.echo(f"error listing components: {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 
-    click.echo(f"available components: {res}")
+    for comp_name, comp in res.items():
+        click.echo(f"\n-> {comp_name}")
+        click.echo(f"   repo: {comp.default_repo}")
+        click.echo(f"   versions: {comp.versions}")
 
 
 @cmd_build.command("new", help="Create new build")

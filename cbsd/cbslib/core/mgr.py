@@ -15,14 +15,17 @@
 import asyncio
 import errno
 import sys
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
+import pydantic
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.tracker import BuildsTracker
 from cbslib.worker.celery import celery_app
+from cbslib.worker.tasks import ListComponentsTaskResponse
 from fastapi import Depends
 
 from cbscore.errors import CESError
+from cbsdcore.api.responses import AvailableComponent
 from cbsdcore.builds.types import BuildEntry
 from cbsdcore.versions import BuildDescriptor
 
@@ -53,13 +56,13 @@ class Mgr:
     """
 
     _tracker: BuildsTracker
-    _available_components: list[str]
+    _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
 
     def __init__(self) -> None:
         self._tracker = BuildsTracker()
-        self._available_components = []
+        self._available_components = {}
         self._started = False
         self._init_task = None
 
@@ -71,20 +74,28 @@ class Mgr:
         # we need to take into account that, in that case, will be scheduled
         # alongside other tasks, and will have to wait for tasks to finish
         # before being able to run -- unless we do multiple queues.
-        logger.info("update builds mgr components")
+        logger.info("update mgr available components")
 
         async def _task() -> None:
             try:
                 res = celery_app.send_task("cbslib.worker.tasks.list_components")
-                lst = cast(list[str], res.get())
-                logger.info(f"obtained components list from worker: {lst}")
+                raw = cast(dict[str, Any], res.get())  # pyright: ignore[reportExplicitAny]
             except Exception as e:
-                logger.error(f"failed to update components: {e}")
+                logger.error(f"failed to obtain components: {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
 
-            self._available_components = lst
+            logger.info(f"obtained components list from worker: {raw}")
+
+            try:
+                comp_res = ListComponentsTaskResponse.model_validate(raw)
+            except pydantic.ValidationError as e:
+                logger.error(f"failed to validate response: {e}")
+                sys.exit(errno.EINVAL)
+
+            self._available_components = comp_res.components
             self._started = True
             self._init_task = None
+            logger.info("mgr now available")
 
         loop = asyncio.get_running_loop()
         self._init_task = loop.create_task(_task())
@@ -128,7 +139,7 @@ class Mgr:
         return await self._tracker.list(owner=owner, from_backend=from_backend)
 
     @property
-    def components(self) -> list[str]:
+    def components(self) -> dict[str, AvailableComponent]:
         """Obtain known components list."""
         if not self._started:
             raise NotAvailableError()
