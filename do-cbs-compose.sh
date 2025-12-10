@@ -112,7 +112,7 @@ prepare() {
   [[ ! -e "${server_cfg_dir}" ]] &&
     mkdir -p "${server_cfg_dir}"
 
-  if ! yq --help 2>/dev/null; then
+  if ! yq --help &>/dev/null; then
     echo "error: 'yq' not available in PATH" >/dev/stderr
     exit 1
   fi
