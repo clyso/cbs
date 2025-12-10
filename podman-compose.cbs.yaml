@@ -80,6 +80,6 @@ services:
 
   redis:
     container_name: cbs-redis
-    image: redis:7
+    image: docker.io/redis:7
     ports:
       - "6379:6379"
