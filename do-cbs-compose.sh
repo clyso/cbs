@@ -11,8 +11,8 @@ server_cfg_dir="${configdir}/server"
 
 components_dir="${rundir}/components"
 cbscore_cfg="${worker_cfg_dir}/cbscore.config.yaml"
-worker_cfg="${worker_cfg_dir}/cbs.worker.config.yaml"
-server_cfg="${server_cfg_dir}/cbs.server.config.yaml"
+worker_cfg="${worker_cfg_dir}/cbsd.worker.config.yaml"
+server_cfg="${server_cfg_dir}/cbsd.server.config.yaml"
 google_client_secrets="${server_cfg_dir}/google-client-cbs.json"
 cbs_cert="${server_cfg_dir}/cbs.cert.pem"
 cbs_key="${server_cfg_dir}/cbs.key.pem"
@@ -157,13 +157,13 @@ prepare() {
 
     tmp_server_cfg=$(mktemp)
 
-    set_server_keys "${ourdir}"/cbs/cbs.server.config.example.yaml \
+    set_server_keys "${ourdir}"/cbsd/cbsd.server.config.example.yaml \
       "${tmp_server_cfg}" "${srv_key}" "${tkn_key}"
 
     cp "${tmp_server_cfg}" "${server_cfg}" || (
       echo "error: unable to copy server config" >/dev/stderr && exit 1
     )
-    cp "${ourdir}"/cbs/cbs.worker.config.example.yaml "${worker_cfg}" || (
+    cp "${ourdir}"/cbsd/cbsd.worker.config.example.yaml "${worker_cfg}" || (
       echo "error: unable to copy worker config" >/dev/stderr && exit 1
     )
   fi

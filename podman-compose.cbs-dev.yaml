@@ -36,7 +36,7 @@ services:
       - label=disable
       - seccomp=unconfined
     environment:
-      CBS_CONFIG: /cbs/config/cbs.server.config.yaml
+      CBS_CONFIG: /cbs/config/cbsd.server.config.yaml
       CBS_DEBUG: 1
     depends_on:
       redis:
@@ -74,7 +74,7 @@ services:
       - label=disable
       - seccomp=unconfined
     environment:
-      CBS_CONFIG: /cbs/config/cbs.worker.config.yaml
+      CBS_CONFIG: /cbs/config/cbsd.worker.config.yaml
       CBS_DEBUG: 1
     # We require the host network to be able to properly access interfaces
     # such as those of a vpn. This means the cbs worker is not in the same
