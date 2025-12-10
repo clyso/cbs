@@ -117,23 +117,23 @@ async def get_builds_status(
         ) from e
 
 
-@router.delete("/abort/{build_id}", responses={**_responses})
-async def delete_build_id(
+@router.delete("/revoke/{build_id}", responses={**_responses})
+async def revoke_build_id(
     user: CBSAuthUser,
     mgr: CBSMgr,
     build_id: str,
     force: bool = False,
 ) -> bool:
-    logger.debug(f"abort task '{build_id}'")
+    logger.debug(f"revoke task '{build_id}'")
 
     try:
-        await mgr.abort(build_id, user.email, force)
+        await mgr.revoke(build_id, user.email, force)
     except NotAvailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
         ) from None
     except UnauthorizedTrackerError as e:
-        logger.error(f"unable to abort build '{build_id}': {e}")
+        logger.error(f"unable to revoke build '{build_id}': {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)
         ) from e

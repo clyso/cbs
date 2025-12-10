@@ -107,14 +107,14 @@ class Mgr:
         # propagate exceptions
         return await self._tracker.new(desc)
 
-    async def abort(self, build_id: str, user: str, force: bool) -> None:
+    async def revoke(self, build_id: str, user: str, force: bool) -> None:
         """Abort a given build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
 
         # propagate exceptions
-        await self._tracker.abort_build(build_id, user, force)
+        await self._tracker.revoke(build_id, user, force)
 
     async def status(
         self, *, owner: str | None = None, from_backend: bool = False

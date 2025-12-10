@@ -135,7 +135,7 @@ class BuildsTracker:
 
         return build_lst
 
-    async def abort_build(self, task_id: str, user: str, force: bool) -> None:
+    async def revoke(self, task_id: str, user: str, force: bool) -> None:
         _ = await self._lock.acquire()
         try:
             if task_id not in self._builds:
@@ -143,7 +143,7 @@ class BuildsTracker:
             entry = self._builds[task_id]
 
             if not force and entry.user != user:
-                raise UnauthorizedTrackerError(user, f"abort build '{task_id}'")
+                raise UnauthorizedTrackerError(user, f"revoke build '{task_id}'")
 
             task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
                 entry.task_id,

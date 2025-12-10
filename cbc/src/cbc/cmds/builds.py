@@ -95,15 +95,15 @@ def _build_list(
         raise CBCError(msg) from None
 
 
-@endpoint("/builds/abort")
-def _build_abort(
+@endpoint("/builds/revoke")
+def _build_revoke(
     logger: logging.Logger, client: CBCClient, ep: str, build_id: str, force: bool
 ) -> None:
     try:
         params = {"force": force} if force else None
         _ = client.delete(f"{ep}/{build_id}", params=params)
     except CBCError as e:
-        logger.error(f"unable to abort build '{build_id}': {e}")
+        logger.error(f"unable to revoke build '{build_id}': {e}")
         raise e from None
 
 
@@ -319,25 +319,25 @@ def cmd_build_list(config: UserConfig, logger: logging.Logger, all: bool) -> Non
     pass
 
 
-@cmd_build.command("abort", help="Abort an existing build")
+@cmd_build.command("revoke", help="Revoke an on-going build")
 @click.argument("build_id", type=str, required=True, metavar="ID")
 @click.option(
     "--force",
     is_flag=True,
     required=False,
     default=False,
-    help="Force aborting build, regardless of whom has created it",
+    help="Force revoking build, regardless of whom has created it",
 )
 @update_ctx
 @pass_logger
 @pass_config
-def cmd_build_abort(
+def cmd_build_revoke(
     config: UserConfig, logger: logging.Logger, build_id: str, force: bool
 ) -> None:
     try:
-        _build_abort(logger, config, build_id, force)
+        _build_revoke(logger, config, build_id, force)
     except CBCError as e:
-        click.echo(f"error aborting build '{build_id}': {e}", err=True)
+        click.echo(f"error revoking build '{build_id}': {e}", err=True)
         sys.exit(1)
 
-    click.echo(f"successfully aborted build '{build_id}'")
+    click.echo(f"successfully revoked build '{build_id}'")
