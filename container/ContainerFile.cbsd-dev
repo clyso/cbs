@@ -1,4 +1,4 @@
-# CBS - CES Build Service
+# CBS - Clyso Build System
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,7 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-FROM python:3.13-alpine3.20
+FROM python:3.13-alpine3.20 AS base
 
 # hadolint ignore=DL3018
 RUN apk --no-cache add podman=5.2.5-r0 curl
@@ -23,37 +23,28 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \
   UV_NO_MODIFY_PATH=1 \
   /bin/sh
 
-
 WORKDIR /cbs/server
 
-COPY ./pyproject.toml ./
-COPY ./cbsd/pyproject.toml ./cbsd/
-COPY ./cbsd/cbs-server.py ./
-COPY ./cbsd/cbslib/ ./cbslib/
-COPY ./cbsdcore/ ./cbsdcore/
-COPY ./cbscore/ ./cbscore/
+VOLUME [ "/cbs/config" ]
 
-RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
-RUN ( find . \(-type f --name uv.lock \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+FROM base AS cbsd-dev-server
 
-RUN uv add --workspace --no-cache ./cbscore || exit 1
-RUN uv add --workspace --no-cache ./cbsdcore || exit 1
-RUN uv sync --all-packages --no-cache --no-dev || exit 1
+ENTRYPOINT [ \
+  "/cbs/server/cbsd/entrypoint-dev.sh", \
+  "server" \
+  ]
+
+
+FROM base AS cbsd-dev-worker
 
 VOLUME [ "/cbs/scratch" ]
-VOLUME [ "/cbs/config" ]
 VOLUME [ "/var/lib/containers" ]
 VOLUME [ "/cbs/components" ]
 VOLUME [ "/cbs/containers" ]
 VOLUME [ "/cbs/ccache" ]
+VOLUME [ "/cbs/server" ]
 
-ENTRYPOINT [ "uv", "run", "--no-sync", \
-  "uvicorn", \
-  "--factory", \
-  "--host", "0.0.0.0", \
-  "--port", "8080", \ 
-  "--ssl-keyfile", "/cbs/config/cbs.key.pem", \
-  "--ssl-certfile", "/cbs/config/cbs.cert.pem", \
-  "cbs-server:factory" \
+ENTRYPOINT [ \
+  "/cbs/server/cbsd/entrypoint-dev.sh", \
+  "worker" \
   ]
-

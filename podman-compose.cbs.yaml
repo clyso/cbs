@@ -1,4 +1,4 @@
-# CBS - CES Build Service
+# CBS - Clyso Build System
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,8 +15,9 @@ services:
   cbs:
     build:
       context: .
-      dockerfile: ./container/ContainerFile.compose
-    container_name: clyso-cbs-server
+      dockerfile: ./container/ContainerFile.cbsd
+      target: cbsd-server
+    container_name: clyso-cbsd-server
     ports:
       - "8080:8080"
     restart: "no"
@@ -39,9 +40,9 @@ services:
   worker:
     build:
       context: .
-      dockerfile: ./container/ContainerFile.compose
-    container_name: clyso-cbs-worker
-    entrypoint: uv run --no-sync celery -A cbslib.worker worker -E --loglevel=info --concurrency=1
+      dockerfile: ./container/ContainerFile.cbsd
+      target: cbsd-worker
+    container_name: clyso-cbsd-worker
     privileged: true
     volumes:
       - ./_local/cbs/config/worker:/cbs/config
