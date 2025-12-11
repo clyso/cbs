@@ -15,7 +15,7 @@ services:
   cbs:
     build:
       context: .
-      dockerfile: ./ContainerFile.cbs
+      dockerfile: ./container/ContainerFile.compose
     container_name: clyso-cbs-server
     ports:
       - "8080:8080"
@@ -39,7 +39,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: ./ContainerFile.cbs
+      dockerfile: ./container/ContainerFile.compose
     container_name: clyso-cbs-worker
     entrypoint: uv run --no-sync celery -A cbslib.worker worker -E --loglevel=info --concurrency=1
     privileged: true

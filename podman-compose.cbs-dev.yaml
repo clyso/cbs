@@ -15,7 +15,7 @@ services:
   cbs:
     build:
       context: .
-      dockerfile: ./ContainerFile.cbs-dev
+      dockerfile: ./container/ContainerFile.compose-dev
     container_name: clyso-cbs-service-dev
     command: server
     ports:
@@ -47,7 +47,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: ./ContainerFile.cbs-dev
+      dockerfile: ./container/ContainerFile.compose-dev
     container_name: clyso-cbs-worker-dev
     command: worker
     privileged: true
