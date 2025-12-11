@@ -46,7 +46,10 @@ up() {
   # shellcheck disable=SC2086
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose --verbose \
     --podman-run-args="--rm" -f "${compose_file}" up \
-    --build --remove-orphans ${extra_args}
+    --build --remove-orphans ${extra_args} || {
+    echo "error: failed to bring up CBS environment" >/dev/stderr &&
+      exit 1
+  }
 
 }
 
@@ -57,10 +60,10 @@ gen_server_keys() {
   fi
 
   openssl req -x509 -newkey rsa:4096 -keyout "${cbs_key}" \
-    -out "${cbs_cert}" -days 365 -nodes -subj "/CN=cbs" || (
+    -out "${cbs_cert}" -days 365 -nodes -subj "/CN=cbs" || {
     echo "error: failed to generate self-signed cert" >/dev/stderr
     exit 1
-  )
+  }
 }
 
 set_server_keys() {
@@ -71,9 +74,9 @@ set_server_keys() {
 
   (yq ".server.secrets.session-secret-key = \"${srv_key}\" |
     .server.secrets.token-secret-key = \"${tkn_key}\"" \
-    "${src_template}" >"${tgt_file}") || (
+    "${src_template}" >"${tgt_file}") || {
     echo "error: failed to set keys in ${tgt_file}" >/dev/stderr && exit 1
-  )
+  }
 }
 
 prepare() {
@@ -130,19 +133,19 @@ prepare() {
     exit 1
   fi
 
-  cbsbuild config init-vault --vault "${configdir}/cbs.vault.yaml" || (
+  cbsbuild config init-vault --vault "${configdir}/cbs.vault.yaml" || {
     echo "error: unable to init vault config" >/dev/stderr && exit 1
-  )
+  }
 
-  cp "${configdir}/cbs.vault.yaml" "${worker_cfg_dir}/cbs.vault.yaml" || (
+  cp "${configdir}/cbs.vault.yaml" "${worker_cfg_dir}/cbs.vault.yaml" || {
     echo "error: unable to copy vault config to worker's config dir" >/dev/stderr && exit 1
-  )
-  cp "${configdir}/cbs.vault.yaml" "${server_cfg_dir}/cbs.vault.yaml" || (
+  }
+  cp "${configdir}/cbs.vault.yaml" "${server_cfg_dir}/cbs.vault.yaml" || {
     echo "error: unable to copy vault config to server's config dir" >/dev/stderr && exit 1
-  )
-  rm "${configdir}/cbs.vault.yaml" || (
+  }
+  rm "${configdir}/cbs.vault.yaml" || {
     echo "error: unable to delete generated vault config" >/dev/stderr && exit 1
-  )
+  }
 
   cbsbuild -c "${cbscore_cfg}" config init \
     --components /cbs/components \
@@ -150,17 +153,17 @@ prepare() {
     --containers-scratch /var/lib/containers \
     --ccache /cbs/ccache \
     --vault /cbs/config/cbs.vault.yaml \
-    --secrets /cbs/config/secrets.yaml || (
+    --secrets /cbs/config/secrets.yaml || {
     echo "error: unable to init cbscore config at '${cbscore_cfg}'" >/dev/stderr &&
       exit 1
-  )
+  }
 
-  [[ ! -e "${worker_cfg_dir}/secrets.yaml" ]] && (
-    cp "${secrets_file_src}" "${worker_cfg_dir}/secrets.yaml" || (
+  [[ ! -e "${worker_cfg_dir}/secrets.yaml" ]] && {
+    cp "${secrets_file_src}" "${worker_cfg_dir}/secrets.yaml" || {
       echo "error: unable to copy secrets file to worker config dir" >/dev/stderr &&
         exit 1
-    )
-  ) && echo "=> copied secrets file to worker config dir"
+    }
+  } && echo "=> copied secrets file to worker config dir"
 
   gen_server_keys
 
@@ -173,31 +176,35 @@ prepare() {
     set_server_keys "${ourdir}"/cbsd/cbsd.server.config.example.yaml \
       "${tmp_server_cfg}" "${srv_key}" "${tkn_key}"
 
-    cp "${tmp_server_cfg}" "${server_cfg}" || (
-      echo "error: unable to copy server config" >/dev/stderr && exit 1
-    )
-    cp "${ourdir}"/cbsd/cbsd.worker.config.example.yaml "${worker_cfg}" || (
-      echo "error: unable to copy worker config" >/dev/stderr && exit 1
-    )
+    cp "${tmp_server_cfg}" "${server_cfg}" || {
+      echo "error: unable to copy server config" >/dev/stderr &&
+        exit 1
+    }
+    cp "${ourdir}"/cbsd/cbsd.worker.config.example.yaml "${worker_cfg}" || {
+      echo "error: unable to copy worker config" >/dev/stderr &&
+        exit 1
+    }
   fi
 
-  cp "${google_client_secrets_src}" "${google_client_secrets}" || (
+  cp "${google_client_secrets_src}" "${google_client_secrets}" || {
     echo "error: unable to copy google client secrets" >/dev/stderr &&
       exit 1
-  )
+  }
 
-  [[ -e "${components_dir}" ]] && (rm -rf "${components_dir}" || (
-    echo "error: unable to remove old components dir" >/dev/stderr && exit 1
-  ))
+  [[ -e "${components_dir}" ]] && {
+    rm -rf "${components_dir}" || {
+      echo "error: unable to remove old components dir" >/dev/stderr && exit 1
+    }
+  }
 
-  mkdir "${components_dir}" || (
+  mkdir "${components_dir}" || {
     echo "error: unable to create components dir" >/dev/stderr && exit 1
-  )
+  }
   for comp_dir in "${components[@]}"; do
-    cp -r "${comp_dir}"/* "${components_dir}"/ || (
+    cp -r "${comp_dir}"/* "${components_dir}"/ || {
       echo "error: unable to copy components from '${comp_dir}'" >/dev/stderr &&
         exit 1
-    )
+    }
     echo "=> using components from '${comp_dir}'"
   done
 
