@@ -16,8 +16,8 @@ services:
     build:
       context: .
       dockerfile: ./container/ContainerFile.cbsd
-      target: cbsd-server
-    container_name: clyso-cbsd-server
+      target: cbsd-dev-server
+    container_name: clyso-cbs-service-dev
     ports:
       - "8080:8080"
     restart: "no"
@@ -25,6 +25,13 @@ services:
     volumes:
       - ./_local/cbs/config/server:/cbs/config
       - ./_local/cbs/data:/cbs/data
+
+      - ./cbsd:/cbs/server/cbsd
+      - ./cbscore:/cbs/server/cbscore
+      - ./cbsdcore:/cbs/server/cbsdcore
+      - ./cbc:/cbs/server/cbc
+      - ./crt:/cbs/server/crt
+      - ./pyproject.toml:/cbs/server/pyproject.toml
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -39,8 +46,8 @@ services:
     build:
       context: .
       dockerfile: ./container/ContainerFile.cbsd
-      target: cbsd-worker
-    container_name: clyso-cbsd-worker
+      target: cbsd-dev-worker
+    container_name: clyso-cbs-worker-dev
     privileged: true
     volumes:
       - ./_local/cbs/config/worker:/cbs/config
@@ -51,6 +58,13 @@ services:
       - ./_local/cbs/scratch/ccache:/cbs/ccache
       - ./components:/cbs/components
       - /dev/fuse:/dev/fuse:rw
+
+      - ./cbsd:/cbs/server/cbsd
+      - ./cbscore:/cbs/server/cbscore
+      - ./cbsdcore:/cbs/server/cbsdcore
+      - ./cbc:/cbs/server/cbc
+      - ./crt:/cbs/server/crt
+      - ./pyproject.toml:/cbs/server/pyproject.toml
     cap_add:
       - MKNOD
       - SYS_ADMIN
@@ -67,8 +81,11 @@ services:
     # into account when configuring the worker.
     network_mode: host
     healthcheck:
-      test:
-        ["CMD-SHELL", "uv run --no-sync celery -A cbslib.worker inspect ping"]
+      test: [
+          "CMD-SHELL",
+          "cd /cbs/server/cbsd && \
+          uv run --no-sync celery -A cbslib.worker inspect ping",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

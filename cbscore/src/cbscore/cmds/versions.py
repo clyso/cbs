@@ -21,7 +21,7 @@ import click
 from cbscore.cmds import logger as parent_logger
 from cbscore.cmds import with_config
 from cbscore.config import Config, ConfigError
-from cbscore.errors import CESError, NoSuchVersionError
+from cbscore.errors import CESError, MalformedVersionError, NoSuchVersionError
 from cbscore.images.desc import get_image_desc
 from cbscore.releases import ReleaseError
 from cbscore.releases.s3 import list_releases
@@ -30,7 +30,7 @@ from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.create import version_create_helper
 from cbscore.versions.errors import VersionError
-from cbscore.versions.utils import VersionType
+from cbscore.versions.utils import VersionType, parse_component_refs
 
 logger = parent_logger.getChild("versions")
 
@@ -54,10 +54,16 @@ async def version_create(
         sys.exit(1)
 
     try:
+        component_refs_map = parse_component_refs(component_refs)
+    except VersionError as e:
+        click.echo(f"error parsing component refs: {e}")
+        sys.exit(errno.EINVAL)
+
+    try:
         desc = version_create_helper(
             version,
             version_type_name,
-            component_refs,
+            component_refs_map,
             components_paths,
             component_uri_overrides,
             distro,
@@ -68,7 +74,7 @@ async def version_create(
             user_name,
             user_email,
         )
-    except VersionError as e:
+    except (VersionError, MalformedVersionError) as e:
         click.echo(f"error creating version descriptor: {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 

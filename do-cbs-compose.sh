@@ -1,5 +1,18 @@
 #!/bin/bash
 
+# CBS - Clyso Build System
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
 components=()
 
 ourdir="$(dirname "$(realpath "$0")")"
@@ -11,20 +24,33 @@ server_cfg_dir="${configdir}/server"
 
 components_dir="${rundir}/components"
 cbscore_cfg="${worker_cfg_dir}/cbscore.config.yaml"
-worker_cfg="${worker_cfg_dir}/cbs.worker.config.yaml"
-server_cfg="${server_cfg_dir}/cbs.server.config.yaml"
+worker_cfg="${worker_cfg_dir}/cbsd.worker.config.yaml"
+server_cfg="${server_cfg_dir}/cbsd.server.config.yaml"
 google_client_secrets="${server_cfg_dir}/google-client-cbs.json"
 cbs_cert="${server_cfg_dir}/cbs.cert.pem"
 cbs_key="${server_cfg_dir}/cbs.key.pem"
 
+rebuild=
+compose_file="./podman-compose.cbs.yaml"
+
 down() {
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose \
-    -f ./podman-compose.cbs.yaml down
+    -f "${compose_file}" down
 }
 
 up() {
+  extra_args=
+  [[ -n "${rebuild}" ]] &&
+    extra_args="--pull --no-cache --force-recreate"
+
+  # shellcheck disable=SC2086
   PODMAN_COMPOSE_PROVIDER="podman-compose" podman compose --verbose \
-    --podman-run-args="--rm" -f ./podman-compose.cbs.yaml up --build
+    --podman-run-args="--rm" -f "${compose_file}" up \
+    --build --remove-orphans ${extra_args} || {
+    echo "error: failed to bring up CBS environment" >/dev/stderr &&
+      exit 1
+  }
+
 }
 
 gen_server_keys() {
@@ -34,10 +60,10 @@ gen_server_keys() {
   fi
 
   openssl req -x509 -newkey rsa:4096 -keyout "${cbs_key}" \
-    -out "${cbs_cert}" -days 365 -nodes -subj "/CN=cbs" || (
+    -out "${cbs_cert}" -days 365 -nodes -subj "/CN=cbs" || {
     echo "error: failed to generate self-signed cert" >/dev/stderr
     exit 1
-  )
+  }
 }
 
 set_server_keys() {
@@ -48,9 +74,9 @@ set_server_keys() {
 
   (yq ".server.secrets.session-secret-key = \"${srv_key}\" |
     .server.secrets.token-secret-key = \"${tkn_key}\"" \
-    "${src_template}" >"${tgt_file}") || (
+    "${src_template}" >"${tgt_file}") || {
     echo "error: failed to set keys in ${tgt_file}" >/dev/stderr && exit 1
-  )
+  }
 }
 
 prepare() {
@@ -102,14 +128,24 @@ prepare() {
   [[ ! -e "${server_cfg_dir}" ]] &&
     mkdir -p "${server_cfg_dir}"
 
-  if ! yq --help 2>/dev/null; then
+  if ! yq --help &>/dev/null; then
     echo "error: 'yq' not available in PATH" >/dev/stderr
     exit 1
   fi
 
-  cbsbuild config init-vault --vault "${configdir}/cbs.vault.yaml" || (
+  cbsbuild config init-vault --vault "${configdir}/cbs.vault.yaml" || {
     echo "error: unable to init vault config" >/dev/stderr && exit 1
-  )
+  }
+
+  cp "${configdir}/cbs.vault.yaml" "${worker_cfg_dir}/cbs.vault.yaml" || {
+    echo "error: unable to copy vault config to worker's config dir" >/dev/stderr && exit 1
+  }
+  cp "${configdir}/cbs.vault.yaml" "${server_cfg_dir}/cbs.vault.yaml" || {
+    echo "error: unable to copy vault config to server's config dir" >/dev/stderr && exit 1
+  }
+  rm "${configdir}/cbs.vault.yaml" || {
+    echo "error: unable to delete generated vault config" >/dev/stderr && exit 1
+  }
 
   cbsbuild -c "${cbscore_cfg}" config init \
     --components /cbs/components \
@@ -117,17 +153,17 @@ prepare() {
     --containers-scratch /var/lib/containers \
     --ccache /cbs/ccache \
     --vault /cbs/config/cbs.vault.yaml \
-    --secrets /cbs/config/secrets.yaml || (
+    --secrets /cbs/config/secrets.yaml || {
     echo "error: unable to init cbscore config at '${cbscore_cfg}'" >/dev/stderr &&
       exit 1
-  )
+  }
 
-  [[ ! -e "${worker_cfg_dir}/secrets.yaml" ]] && (
-    cp "${secrets_file_src}" "${worker_cfg_dir}/secrets.yaml" || (
+  [[ ! -e "${worker_cfg_dir}/secrets.yaml" ]] && {
+    cp "${secrets_file_src}" "${worker_cfg_dir}/secrets.yaml" || {
       echo "error: unable to copy secrets file to worker config dir" >/dev/stderr &&
         exit 1
-    )
-  ) && echo "=> copied secrets file to worker config dir"
+    }
+  } && echo "=> copied secrets file to worker config dir"
 
   gen_server_keys
 
@@ -137,34 +173,38 @@ prepare() {
 
     tmp_server_cfg=$(mktemp)
 
-    set_server_keys "${ourdir}"/cbs/cbs.server.config.example.yaml \
+    set_server_keys "${ourdir}"/cbsd/cbsd.server.config.example.yaml \
       "${tmp_server_cfg}" "${srv_key}" "${tkn_key}"
 
-    cp "${tmp_server_cfg}" "${server_cfg}" || (
-      echo "error: unable to copy server config" >/dev/stderr && exit 1
-    )
-    cp "${ourdir}"/cbs/cbs.worker.config.example.yaml "${worker_cfg}" || (
-      echo "error: unable to copy worker config" >/dev/stderr && exit 1
-    )
+    cp "${tmp_server_cfg}" "${server_cfg}" || {
+      echo "error: unable to copy server config" >/dev/stderr &&
+        exit 1
+    }
+    cp "${ourdir}"/cbsd/cbsd.worker.config.example.yaml "${worker_cfg}" || {
+      echo "error: unable to copy worker config" >/dev/stderr &&
+        exit 1
+    }
   fi
 
-  cp "${google_client_secrets_src}" "${google_client_secrets}" || (
+  cp "${google_client_secrets_src}" "${google_client_secrets}" || {
     echo "error: unable to copy google client secrets" >/dev/stderr &&
       exit 1
-  )
+  }
 
-  [[ -e "${components_dir}" ]] && (rm -rf "${components_dir}" || (
-    echo "error: unable to remove old components dir" >/dev/stderr && exit 1
-  ))
+  [[ -e "${components_dir}" ]] && {
+    rm -rf "${components_dir}" || {
+      echo "error: unable to remove old components dir" >/dev/stderr && exit 1
+    }
+  }
 
-  mkdir "${components_dir}" || (
+  mkdir "${components_dir}" || {
     echo "error: unable to create components dir" >/dev/stderr && exit 1
-  )
+  }
   for comp_dir in "${components[@]}"; do
-    cp -r "${comp_dir}"/* "${components_dir}"/ || (
+    cp -r "${comp_dir}"/* "${components_dir}"/ || {
       echo "error: unable to copy components from '${comp_dir}'" >/dev/stderr &&
         exit 1
-    )
+    }
     echo "=> using components from '${comp_dir}'"
   done
 
@@ -212,6 +252,12 @@ Options for 'prepare':
   --components <PATH>             path to a directory with components
                                   [multiple] (default: ./components)
   --secrets <PATH>                path to secrets.yaml file [required]
+
+Options for 'up':
+  --rebuild                       Ensure images are rebuild. Useful on upgrade.
+
+Options for 'up' and 'down':
+  --dev                           Use development setup.
 
 EOF
 }
@@ -264,6 +310,12 @@ while [[ $# -gt 0 ]]; do
         exit 1
       secrets_file_src="${2}"
       shift 1
+      ;;
+    --rebuild)
+      rebuild=1
+      ;;
+    --dev)
+      compose_file="./podman-compose.cbs-dev.yaml"
       ;;
     -h | --help)
       usage

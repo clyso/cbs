@@ -1,23 +1,24 @@
 [project]
-name = "cbscore"
+name = "cbc"
 version = "0.1.0"
-description = "Clyso Build System core library"
+description = "CBS service client"
 readme = "README.md"
 authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
-  "aioboto3==13.3.0",
-  "click>=8.1.8",
-  "hvac>=2.3.0",
-  "pydantic>=2.11.6",
-  "pyyaml>=6.0.2",
-  "types-aioboto3[full]==13.3.0.post1",
+    "click>=8.1.8",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.3",
 ]
 
 [project.scripts]
-cbsbuild = "cbscore.__main__:cmd_main"
+cbc = "cbc.__main__:main"
+
+[tool.uv.sources]
+cbscore = { workspace = true }
+cbsdcore = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]

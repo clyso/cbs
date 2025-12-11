@@ -140,6 +140,21 @@ def get_version_type_desc(version_type: VersionType) -> str:
     return _release_types[version_type.value][1]
 
 
+def parse_component_refs(components: list[str]) -> dict[str, str]:
+    """Parse a list of strings made of components in the format 'COMPONENT@REF'."""
+    comps: dict[str, str] = {}
+
+    for c in components:
+        m = re.match(r"^([\w_-]+)@([\d\w_./-]+)$", c)
+        if not m:
+            msg = f"malformed component name/version pair '{c}'"
+            logger.error(msg)
+            raise VersionError(msg)
+        comps[m.group(1)] = m.group(2)
+
+    return comps
+
+
 if __name__ == "__main__":
     overall_success = True
 

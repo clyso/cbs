@@ -1,0 +1,40 @@
+[project]
+name = "cbsd"
+version = "0.1.0"
+description = "CBS service daemon"
+authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.13"
+dependencies = [
+    "aioboto3==13.3.0",
+    "aiohttp==3.12.14",
+    "authlib==1.6.5",
+    "cbscore",
+    "cbsdcore",
+    "fastapi==0.115.11",
+    "flower==2.0.1",
+    "hvac==2.3.0",
+    "itsdangerous==2.2.0",
+    "pydantic>=2.11.6",
+    "pyseto==1.8.3",
+    "pyyaml==6.0.2",
+    "redis==5.2.1",
+    "types-aioboto3[full]==13.3.0.post1",
+    "uvicorn==0.34.0",
+    "httpx>=0.28.1",
+    "celery>=5.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "celery-types>=0.23.0",
+]
+
+[tool.uv.sources]
+cbscore = { workspace = true }
+cbsdcore = { workspace = true }
+
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"

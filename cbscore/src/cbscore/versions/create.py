@@ -11,7 +11,6 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import re
 from pathlib import Path
 
 from cbscore.core.component import CoreComponentLoc, load_components
@@ -28,6 +27,7 @@ from cbscore.versions.utils import (
     VersionType,
     get_version_type,
     get_version_type_desc,
+    parse_component_refs,
     parse_version,
 )
 
@@ -40,20 +40,6 @@ def _validate_version(v: str) -> bool:
     except MalformedVersionError:
         return False
     return minor is not None and patch is not None
-
-
-def _parse_component_refs(components: list[str]) -> dict[str, str]:
-    comps: dict[str, str] = {}
-
-    for c in components:
-        m = re.match(r"^([\w_-]+)@([\d\w_./-]+)$", c)
-        if not m:
-            msg = f"malformed component name/version pair '{c}'"
-            logger.error(msg)
-            raise VersionError(msg)
-        comps[m.group(1)] = m.group(2)
-
-    return comps
 
 
 def _do_version_title(version: str, version_type: VersionType) -> str:
@@ -93,7 +79,7 @@ def _do_version_title(version: str, version_type: VersionType) -> str:
 def create(
     version: str,
     version_type: VersionType,
-    component_refs: list[str],
+    component_refs: list[str] | dict[str, str],
     components: dict[str, CoreComponentLoc],
     component_uri_overrides: dict[str, str],
     distro: str,
@@ -107,9 +93,14 @@ def create(
     if not _validate_version(version):
         msg = f"malformed version '{version}'"
         logger.error(msg)
-        raise VersionError(msg)
+        raise MalformedVersionError(msg)
 
-    component_refs_map = _parse_component_refs(component_refs)
+    if isinstance(component_refs, list):
+        # propagate exceptions
+        component_refs_map = parse_component_refs(component_refs)
+    else:
+        component_refs_map = component_refs
+
     if len(component_refs_map) == 0:
         msg = "missing valid components"
         logger.error(msg)
@@ -162,9 +153,9 @@ def create(
 def version_create_helper(
     version: str,
     version_type_name: str,
-    component_refs: list[str],
+    component_refs: dict[str, str],
     components_paths: list[Path],
-    component_uri_overrides: list[str],
+    component_uri_overrides: list[str] | dict[str, str],
     distro: str,
     el_version: int,
     registry: str,
@@ -188,14 +179,19 @@ def version_create_helper(
         raise VersionError(msg)
 
     uri_overrides: dict[str, str] = {}
-    for override in component_uri_overrides:
-        entries = override.split("=", 1)
-        if len(entries) != 2:
-            msg = f"malformed URI override '{override}'"
-            logger.error(msg)
-            raise VersionError(msg)
-        comp, uri = entries
-        uri_overrides[comp] = uri
+    if isinstance(component_uri_overrides, list):
+        for override in component_uri_overrides:
+            entries = override.split("=", 1)
+            if len(entries) != 2:
+                msg = f"malformed URI override '{override}'"
+                logger.error(msg)
+                raise VersionError(msg)
+            comp, uri = entries
+            uri_overrides[comp] = uri
+    else:
+        uri_overrides = component_uri_overrides
+
+    for comp, uri in uri_overrides.items():
         logger.debug(f"overriding component '{comp}' URI with '{uri}'")
 
     try:
@@ -224,3 +220,6 @@ def version_create_helper(
         msg = f"error creating version descriptor: {e}"
         logger.error(msg)
         raise VersionError(msg) from e
+    except MalformedVersionError as e:
+        logger.error(f"error creating version descriptor: {e}")
+        raise e from None
