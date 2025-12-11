@@ -34,8 +34,6 @@ services:
     depends_on:
       redis:
         condition: service_started
-      worker:
-        condition: service_healthy
 
   worker:
     build:
