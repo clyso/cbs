@@ -15,7 +15,7 @@ services:
   cbs:
     build:
       context: .
-      dockerfile: ./container/ContainerFile.cbsd-dev
+      dockerfile: ./container/ContainerFile.cbsd
       target: cbsd-dev-server
     container_name: clyso-cbs-service-dev
     ports:
@@ -45,7 +45,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: ./container/ContainerFile.cbsd-dev
+      dockerfile: ./container/ContainerFile.cbsd
       target: cbsd-dev-worker
     container_name: clyso-cbs-worker-dev
     privileged: true

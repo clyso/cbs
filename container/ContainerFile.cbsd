@@ -26,6 +26,16 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | \
 
 WORKDIR /cbs/server
 
+VOLUME [ "/cbs/config" ]
+
+
+# --- production images ---
+#
+
+# CBSD production base image
+#
+FROM base AS cbsd-prod-base
+
 COPY ./pyproject.toml ./
 COPY ./cbsd/pyproject.toml ./cbsd/
 COPY ./cbsd/cbslib/ ./cbslib/
@@ -39,12 +49,11 @@ RUN uv add --workspace --no-cache ./cbscore || exit 1
 RUN uv add --workspace --no-cache ./cbsdcore || exit 1
 RUN uv sync --all-packages --no-cache --no-dev || exit 1
 
-VOLUME [ "/cbs/config" ]
 
 
-# CBSD server
+# CBSD production server
 #
-FROM base AS cbsd-server
+FROM cbsd-prod-base AS cbsd-server
 
 COPY ./cbsd/cbs-server.py ./
 
@@ -59,9 +68,9 @@ ENTRYPOINT [ "uv", "run", "--no-sync", \
   ]
 
 
-# CBSD worker
+# CBSD production worker
 #
-FROM base AS cbsd-worker
+FROM cbsd-prod-base AS cbsd-worker
 
 VOLUME [ "/cbs/scratch" ]
 VOLUME [ "/var/lib/containers" ]
@@ -72,4 +81,35 @@ VOLUME [ "/cbs/ccache" ]
 ENTRYPOINT ["uv", "run", "--no-sync", \
   "celery", "-A", "cbslib.worker", "worker", \
   "-E", "--loglevel=info", "--concurrency=1" \
-]
+  ]
+
+
+# --- development images ---
+#
+
+# CBSD development server
+#
+FROM base AS cbsd-dev-server
+
+ENTRYPOINT [ \
+  "/cbs/server/cbsd/entrypoint-dev.sh", \
+  "server" \
+  ]
+
+
+# CBSD development worker
+#
+FROM base AS cbsd-dev-worker
+
+VOLUME [ "/cbs/scratch" ]
+VOLUME [ "/var/lib/containers" ]
+VOLUME [ "/cbs/components" ]
+VOLUME [ "/cbs/containers" ]
+VOLUME [ "/cbs/ccache" ]
+VOLUME [ "/cbs/server" ]
+
+ENTRYPOINT [ \
+  "/cbs/server/cbsd/entrypoint-dev.sh", \
+  "worker" \
+  ]
+
