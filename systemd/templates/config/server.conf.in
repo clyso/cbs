@@ -1,0 +1,6 @@
+# configure as necessary
+#
+# SERVER_BIND_ADDR="127.0.0.1"
+# SERVER_BIND_PORT="8080"
+# DEBUG=0
+# IMAGE="harbor.clyso.com/cbs/cbsd-server:latest"

@@ -1,0 +1,7 @@
+[Unit]
+Description=Clyso Build System service for '{{deployment}}' deployment
+PartOf=cbsd.target
+Before=cbsd.target
+
+[Install]
+WantedBy=multi-user.target cbsd.target

@@ -1,0 +1,30 @@
+# CBS - Clyso Build System
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+[Unit]
+Description=CBSD Init Container Services for %i on deployment '{{deployment}}'
+After=network.target local-fs.target
+Wants=network-online.target local-fs.target
+PartOf=cbsd-{{deployment}}.target
+Before=cbsd-{{deployment}}.target
+
+
+[Service]
+ExecStart=/bin/bash {{cbsd_data}}/cbsd-ctr.sh start %p %i -c {{cbsd_config}} -d {{cbsd_data}}
+ExecStop=/bin/bash {{cbsd_data}}/cbsd-ctr.sh stop %p %i -c {{cbsd_config}} -d {{cbsd_data}}
+Restart=on-failure
+RestartSec=10s
+Type=forking
+
+[Install]
+WantedBy=cbsd-{{deployment}}.target
