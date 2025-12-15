@@ -91,6 +91,10 @@ class ServerConfig(pydantic.BaseModel):
     #
     db: Path
 
+    # permissions file
+    #
+    permissions: Path
+
     # server secrets
     #
     secrets: ServerSecretsConfig

@@ -19,31 +19,32 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import pydantic
-from cbslib.builds import logger as parent_logger
-from cbslib.builds.db import BuildsDB
-from cbslib.builds.tracker import BuildsTracker
-from cbslib.config.config import get_config
-from cbslib.worker.celery import celery_app
-from cbslib.worker.tasks import ListComponentsTaskResponse
 from fastapi import Depends
 
 from cbscore.errors import CESError
 from cbsdcore.api.responses import AvailableComponent
 from cbsdcore.builds.types import BuildEntry
 from cbsdcore.versions import BuildDescriptor
+from cbslib.builds import logger as parent_logger
+from cbslib.builds.db import BuildsDB
+from cbslib.builds.tracker import BuildsTracker
+from cbslib.config.config import get_config
+from cbslib.core.permissions import Permissions
+from cbslib.worker.celery import celery_app
+from cbslib.worker.tasks import ListComponentsTaskResponse
 
 logger = parent_logger.getChild("mgr")
 
 
-class BuildsMgrError(CESError):
+class MgrError(CESError):
     pass
 
 
-class NotAvailableError(BuildsMgrError):
+class NotAvailableError(MgrError):
     pass
 
 
-class UnknownComponentsError(BuildsMgrError):
+class UnknownComponentsError(MgrError):
     components: list[str]
 
     def __init__(self, unknown_components: list[str]) -> None:
@@ -59,13 +60,28 @@ class Mgr:
     """
 
     _db: BuildsDB
+    _permissions: Permissions
     _tracker: BuildsTracker
     _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, permissions_path: Path) -> None:
         self._db = BuildsDB(db_path)
+
+        try:
+            self._permissions = Permissions.load(permissions_path)
+        except (ValueError, CESError) as e:
+            msg = f"failed to load permissions from '{permissions_path}': {e}"
+            logger.error(msg)
+            raise MgrError(msg) from e
+
+        logger.info(
+            "loaded permissions: "
+            + f"{len(self._permissions.groups)} groups, "
+            + f"{len(self._permissions.rules)} rules"
+        )
+
         self._tracker = BuildsTracker()
         self._available_components = {}
         self._started = False
@@ -165,7 +181,7 @@ def mgr_init() -> Mgr:
     if not _mgr:
         config = get_config()
         assert config.server, "unexpected missing server config"
-        _mgr = Mgr(config.server.db)
+        _mgr = Mgr(config.server.db, config.server.permissions)
 
     return _mgr
 

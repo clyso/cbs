@@ -29,7 +29,7 @@ import uvicorn
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.config.config import config_init
-from cbslib.core.mgr import mgr_init
+from cbslib.core.mgr import MgrError, mgr_init
 from cbslib.core.monitor import monitor
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
@@ -60,7 +60,11 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         logger.error("error initiating server")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    mgr = mgr_init()
+    try:
+        mgr = mgr_init()
+    except (MgrError, Exception) as e:
+        logger.error(f"error initializing manager: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     thread = threading.Thread(target=monitor, args=(mgr.tracker,))
     thread.start()

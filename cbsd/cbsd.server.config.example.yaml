@@ -13,6 +13,7 @@ server:
   key: /cbs/config/cbs.key.pem
   # database for persistent storage
   db: /cbs/data/cbs.db
+  permissions: /cbs/config/permissions.yaml
   secrets:
     # config file for google's oauth2 application (currently mandatory).
     oauth2-secrets-file: /cbs/config/google-client-cbs.json
