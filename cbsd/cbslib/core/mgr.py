@@ -1,4 +1,4 @@
-# CBS service library - builds - mgr
+# CBS service library - core - mgr
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,11 +15,14 @@
 import asyncio
 import errno
 import sys
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import pydantic
 from cbslib.builds import logger as parent_logger
+from cbslib.builds.db import BuildsDB
 from cbslib.builds.tracker import BuildsTracker
+from cbslib.config.config import get_config
 from cbslib.worker.celery import celery_app
 from cbslib.worker.tasks import ListComponentsTaskResponse
 from fastapi import Depends
@@ -55,12 +58,14 @@ class Mgr:
     This is where logic for permissions, version naming conventions, etc., should live.
     """
 
+    _db: BuildsDB
     _tracker: BuildsTracker
     _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Path) -> None:
+        self._db = BuildsDB(db_path)
         self._tracker = BuildsTracker()
         self._available_components = {}
         self._started = False
@@ -119,7 +124,7 @@ class Mgr:
         return await self._tracker.new(desc)
 
     async def revoke(self, build_id: str, user: str, force: bool) -> None:
-        """Abort a given build."""
+        """Revoke a given build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
@@ -156,8 +161,12 @@ _mgr: Mgr | None = None
 def mgr_init() -> Mgr:
     logger.info("init cbs service mgr")
     global _mgr
+
     if not _mgr:
-        _mgr = Mgr()
+        config = get_config()
+        assert config.server, "unexpected missing server config"
+        _mgr = Mgr(config.server.db)
+
     return _mgr
 
 
