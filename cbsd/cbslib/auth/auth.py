@@ -52,7 +52,7 @@ def token_create(user: str) -> Token:
         key,
         payload=info_payload,  # pyright: ignore[reportAny]
     )
-    return Token(token=token, info=info)
+    return Token(token=pydantic.SecretBytes(token), info=info)
 
 
 _http_bearer = HTTPBearer()
