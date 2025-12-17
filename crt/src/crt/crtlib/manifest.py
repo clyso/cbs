@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import cast
 
 import pydantic
-
 from cbscore.versions.utils import parse_version
+
 from crt.crtlib.apply import ApplyError, apply_manifest
 from crt.crtlib.errors import CRTError
 from crt.crtlib.errors.manifest import (

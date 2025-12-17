@@ -19,11 +19,11 @@ from typing import cast
 
 import click
 import rich.box
+from cbscore.versions.utils import parse_version
 from git import GitError
 from rich.padding import Padding
 from rich.table import Table
 
-from cbscore.versions.utils import parse_version
 from crt.cmds._common import CRTExitError, CRTProgress
 from crt.crtlib.errors.manifest import NoSuchManifestError
 from crt.crtlib.errors.release import NoSuchReleaseError
