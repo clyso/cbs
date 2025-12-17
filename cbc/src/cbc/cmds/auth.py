@@ -16,13 +16,13 @@ import logging
 import sys
 
 import click
+from cbsdcore.auth.user import UserConfig
 
 from cbc import CBC_DEFAULT_CONFIG_PATH
 from cbc.auth import auth_ping, auth_whoami
 from cbc.client import CBCConnectionError, CBCPermissionDeniedError
 from cbc.cmds import logger as parent_logger
 from cbc.cmds import pass_config, pass_logger, update_ctx
-from cbsdcore.auth.user import UserConfig
 
 logger = parent_logger.getChild("auth")
 

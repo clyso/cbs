@@ -16,10 +16,10 @@ from typing import Any, override
 
 import httpx
 import pydantic
+from cbsdcore.api.responses import BaseErrorModel
 from httpx import _types as httpx_types  # pyright: ignore[reportPrivateUsage]
 
 from cbc import CBCError
-from cbsdcore.api.responses import BaseErrorModel
 
 
 class CBCConnectionError(CBCError):

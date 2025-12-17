@@ -17,11 +17,6 @@ import sys
 
 import click
 import pydantic
-
-from cbc import CBCError
-from cbc.auth import auth_whoami
-from cbc.client import CBCClient, CBCConnectionError, CBCPermissionDeniedError
-from cbc.cmds import endpoint, pass_config, pass_logger, update_ctx
 from cbscore.versions.errors import VersionError
 from cbscore.versions.utils import VersionType, get_version_type, parse_component_refs
 from cbsdcore.api.responses import AvailableComponent, NewBuildResponse
@@ -36,6 +31,11 @@ from cbsdcore.versions import (
     BuildSignedOffBy,
     BuildTarget,
 )
+
+from cbc import CBCError
+from cbc.auth import auth_whoami
+from cbc.client import CBCClient, CBCConnectionError, CBCPermissionDeniedError
+from cbc.cmds import endpoint, pass_config, pass_logger, update_ctx
 
 # pyright: reportUnusedParameter=false, reportUnusedFunction=false
 

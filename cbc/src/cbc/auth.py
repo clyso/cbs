@@ -14,12 +14,12 @@
 import logging
 
 import pydantic
+from cbsdcore.auth.user import User
 
 from cbc import CBCError
 from cbc import logger as parent_logger
 from cbc.client import CBCClient, CBCConnectionError
 from cbc.cmds import endpoint
-from cbsdcore.auth.user import User
 
 logger = parent_logger.getChild("auth")
 
