@@ -14,8 +14,8 @@
 import enum
 
 import pydantic
-
 from cbscore.versions.utils import VersionType
+
 from cbsdcore.logger import logger as parent_logger
 
 logger = parent_logger.getChild("versions")
