@@ -19,7 +19,6 @@ from copy import deepcopy
 from typing import Any
 
 import uvicorn.config
-
 from cbscore.logger import logger as root_logger
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

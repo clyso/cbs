@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+from cbscore.errors import CESError
 from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.config.config import config_init
@@ -36,8 +37,6 @@ from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds, components
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
-
-from cbscore.errors import CESError
 
 logger = parent_logger.getChild("server")
 

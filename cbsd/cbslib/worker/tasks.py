@@ -15,12 +15,12 @@ import asyncio
 from typing import Any, ParamSpec, cast, override
 
 import pydantic
-from celery import Task
-from celery.worker.request import Request
-
 from cbscore.core.component import load_components
 from cbsdcore.api.responses import AvailableComponent
 from cbsdcore.versions import BuildDescriptor
+from celery import Task
+from celery.worker.request import Request
+
 from cbslib.config.config import get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.builder import WorkerBuilderError, get_builder

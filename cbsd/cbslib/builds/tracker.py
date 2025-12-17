@@ -16,12 +16,12 @@ import datetime
 from datetime import datetime as dt
 from typing import Annotated, override
 
-from celery.result import AsyncResult as CeleryTaskResult
-from fastapi import Depends
-
 from cbscore.errors import CESError
 from cbsdcore.builds.types import BuildEntry, EntryState
 from cbsdcore.versions import BuildDescriptor
+from celery.result import AsyncResult as CeleryTaskResult
+from fastapi import Depends
+
 from cbslib.builds import logger as parent_logger
 from cbslib.worker import tasks
 

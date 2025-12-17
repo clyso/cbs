@@ -19,13 +19,13 @@ from typing import Annotated, cast
 import pydantic
 import pydantic_core
 import pyseto
+from cbsdcore.auth.token import Token, TokenInfo
 from fastapi import Depends, HTTPException, status
 from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
 
-from cbsdcore.auth.token import Token, TokenInfo
 from cbslib.auth import logger as parent_logger
 from cbslib.config.config import get_config
 

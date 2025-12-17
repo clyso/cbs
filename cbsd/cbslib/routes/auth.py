@@ -18,10 +18,10 @@
 #
 from typing import cast
 
+from cbsdcore.auth.user import User, UserConfig
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from cbsdcore.auth.user import User, UserConfig
 from cbslib.auth import AuthError
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
 from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB

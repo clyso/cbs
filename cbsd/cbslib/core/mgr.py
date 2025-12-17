@@ -19,12 +19,12 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 
 import pydantic
-from fastapi import Depends
-
 from cbscore.errors import CESError
 from cbsdcore.api.responses import AvailableComponent
 from cbsdcore.builds.types import BuildEntry
 from cbsdcore.versions import BuildDescriptor
+from fastapi import Depends
+
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB
 from cbslib.builds.tracker import BuildsTracker

@@ -20,9 +20,9 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
-
 from cbscore.errors import CESError
 from cbsdcore.builds.types import BuildEntry, EntryState
+
 from cbslib.builds import logger as parent_logger
 
 logger = parent_logger.getChild("db")

@@ -12,9 +12,9 @@
 # GNU Affero General Public License for more details.
 
 
+from cbsdcore.api.responses import AvailableComponentsResponse, BaseErrorModel
 from fastapi import APIRouter, HTTPException, status
 
-from cbsdcore.api.responses import AvailableComponentsResponse, BaseErrorModel
 from cbslib.auth.users import CBSAuthUser
 from cbslib.core.mgr import CBSMgr, NotAvailableError
 from cbslib.routes import logger as parent_logger
