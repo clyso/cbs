@@ -227,6 +227,9 @@ async def git_checkout(repo_path: Path, ref: str, worktrees_base_path: Path) -> 
             [
                 "worktree",
                 "add",
+                "--track",
+                "-b",
+                worktree_name,
                 "--quiet",
                 worktree_path.resolve().as_posix(),
                 ref,
