@@ -24,3 +24,7 @@ class TokenInfo(pydantic.BaseModel):
 class Token(pydantic.BaseModel):
     token: pydantic.SecretBytes
     info: TokenInfo
+
+    @pydantic.field_serializer("token", when_used="json")
+    def dump_secret_token(self, v: pydantic.SecretBytes) -> bytes:
+        return v.get_secret_value()
