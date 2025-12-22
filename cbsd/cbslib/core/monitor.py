@@ -13,10 +13,14 @@
 
 import asyncio
 import datetime
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import datetime as dt
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
+import celery
+import celery.events  # pyright: ignore[reportMissingImports]
+import kombu
 import pydantic
 
 from cbslib.builds.tracker import BuildsTracker
@@ -124,32 +128,82 @@ async def _event_task_revoked(tracker: BuildsTracker, event: _EventTaskRevoked) 
     await tracker.mark_revoked(event.uuid)
 
 
-def monitor(builds_tracker: BuildsTracker) -> None:
-    logger.info("starting task monitoring")
-    try:
-        with celery_app.connection() as conn:
-            recv = celery_app.events.Receiver(
-                conn,
-                handlers={
-                    "task-started": _with_tracker(
-                        builds_tracker, _EventTaskStarted, _event_task_started
-                    ),
-                    "task-succeeded": _with_tracker(
-                        builds_tracker, _EventTaskSucceeded, _event_task_succeeded
-                    ),
-                    "task-failed": _with_tracker(
-                        builds_tracker, _EventTaskFailed, _event_task_failed
-                    ),
-                    "task-rejected": _with_tracker(
-                        builds_tracker, _EventTaskRejected, _event_task_rejected
-                    ),
-                    "task-revoked": _with_tracker(
-                        builds_tracker, _EventTaskRevoked, _event_task_revoked
-                    ),
-                },
-            )
-            recv.capture(limit=None, timeout=None, wakeup=None)
-    except Exception as e:
-        logger.error(f"error capturing events: {e}")
-        pass
-    pass
+class Monitor:
+    """Monitors task events from the celery workqueue."""
+
+    _builds_tracker: BuildsTracker
+    _thread: threading.Thread | None
+    _connection: kombu.Connection | None
+    _receiver: celery.events.EventReceiver | None
+
+    def __init__(self, builds_tracker: BuildsTracker) -> None:
+        self._builds_tracker = builds_tracker
+        self._thread = None
+        self._connection = None
+        self._receiver = None
+
+    def start(self) -> None:
+        if self._thread:
+            logger.warning("monitoring already started")
+            return
+
+        self._thread = threading.Thread(target=self._do_monitoring)
+        self._thread.start()
+
+    def _do_monitoring(self) -> None:
+        logger.info("starting task monitoring")
+        if self._connection:
+            logger.warning("monitoring already started")
+            return
+
+        try:
+            self._connection = celery_app.connection()
+        except Exception as e:
+            logger.error(f"error creating connection for monitoring: {e}")
+            return
+
+        self._receiver = celery_app.events.Receiver(
+            self._connection,
+            handlers={
+                "task-started": _with_tracker(
+                    self._builds_tracker, _EventTaskStarted, _event_task_started
+                ),
+                "task-succeeded": _with_tracker(
+                    self._builds_tracker,
+                    _EventTaskSucceeded,
+                    _event_task_succeeded,
+                ),
+                "task-failed": _with_tracker(
+                    self._builds_tracker, _EventTaskFailed, _event_task_failed
+                ),
+                "task-rejected": _with_tracker(
+                    self._builds_tracker,
+                    _EventTaskRejected,
+                    _event_task_rejected,
+                ),
+                "task-revoked": _with_tracker(
+                    self._builds_tracker, _EventTaskRevoked, _event_task_revoked
+                ),
+            },
+        )
+
+        assert self._receiver is not None
+        try:
+            self._receiver.capture(limit=None, timeout=None, wakeup=None)
+        except Exception as e:
+            logger.error(f"error capturing events: {e}")
+            return
+        finally:
+            self._connection.release()
+            self._connection = None
+
+    def stop(self) -> None:
+        logger.info("stopping task monitoring")
+        if not self._thread:
+            return
+        if not self._receiver:
+            logger.warning("monitoring thread exists, receiver missing")
+            return
+        self._receiver.should_stop = True
+        self._thread.join()
+        self._thread = None

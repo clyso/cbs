@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import errno
 import sys
-import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -31,10 +30,11 @@ from cbslib.auth.oauth import oauth_init
 from cbslib.auth.users import auth_users_init
 from cbslib.config.config import config_init
 from cbslib.core.mgr import MgrError, mgr_init
-from cbslib.core.monitor import monitor
+from cbslib.core.monitor import Monitor
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
 from cbslib.routes import auth, builds, components
+from cbslib.worker.celery import celery_app
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -65,13 +65,14 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         logger.error(f"error initializing manager: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    thread = threading.Thread(target=monitor, args=(mgr.tracker,))
-    thread.start()
+    monitor = Monitor(mgr.tracker)
+    monitor.start()
 
     logger.info("Starting cbs service server...")
     yield
     logger.info("Shutting down cbs service server...")
-    thread.join()
+    monitor.stop()
+    celery_app.close()
 
 
 def factory() -> FastAPI:
