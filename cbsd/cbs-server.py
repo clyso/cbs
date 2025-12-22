@@ -108,6 +108,7 @@ def factory() -> FastAPI:
     )
 
     api.include_router(auth.router)
+    api.include_router(auth.permissions_router)
     api.include_router(builds.router)
     api.include_router(components.router)
     app.mount("/api", api)

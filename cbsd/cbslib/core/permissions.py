@@ -492,6 +492,31 @@ class Permissions(pydantic.BaseModel):
 
         return False
 
+    def list_caps_for(
+        self, user: str
+    ) -> tuple[list[AuthorizationEntry], dict[str, list[AuthorizationEntry]]]:
+        """Obtain a list of all authorization entries for the given user."""
+        from_groups: dict[str, list[AuthorizationEntry]] = {}
+        authorized_for: list[AuthorizationEntry] = []
+
+        for rule in self.rules:
+            if not rule.matches(user):
+                continue
+
+            authorized_for.extend(rule.authorized_for)
+
+            for group in rule.groups:
+                if group not in from_groups:
+                    from_groups[group] = []
+
+                if group not in self.groups:
+                    logger.warning(f"unknown group '{group}' in rule for user '{user}'")
+                    continue
+
+                from_groups[group].extend(self.groups[group].authorized_for)
+
+        return (authorized_for, from_groups)
+
 
 # kludge for testing
 #

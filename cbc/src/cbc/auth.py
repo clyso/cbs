@@ -57,3 +57,16 @@ def auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[str
         raise CBCError(msg) from None
 
     return (user.email, user.name)
+
+
+@endpoint("/auth/permissions/")
+def auth_perms_list(logger: logging.Logger, client: CBCClient, ep: str) -> str:
+    try:
+        r = client.get(ep)
+        res = r.read()
+        logger.debug(f"permissions: {res}")
+    except CBCError as e:
+        logger.error("unable to obtain permissions")
+        raise e from None
+
+    return res.decode("utf-8")

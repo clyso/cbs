@@ -170,6 +170,10 @@ class Mgr:
     def tracker(self) -> BuildsTracker:
         return self._tracker
 
+    @property
+    def permissions(self) -> Permissions:
+        return self._permissions
+
 
 _mgr: Mgr | None = None
 
