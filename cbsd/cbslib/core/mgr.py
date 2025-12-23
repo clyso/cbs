@@ -29,7 +29,7 @@ from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB
 from cbslib.builds.tracker import BuildsTracker
 from cbslib.config.config import get_config
-from cbslib.core.permissions import Permissions
+from cbslib.core.permissions import AuthorizationCaps, Permissions
 from cbslib.worker.celery import celery_app
 from cbslib.worker.tasks import ListComponentsTaskResponse
 
@@ -41,15 +41,50 @@ class MgrError(CESError):
 
 
 class NotAvailableError(MgrError):
+    """Service currently not available."""
+
     pass
 
 
 class UnknownComponentsError(MgrError):
+    """Unknown components have been specified."""
+
     components: list[str]
 
     def __init__(self, unknown_components: list[str]) -> None:
         self.components = unknown_components
         super().__init__()
+
+
+class NotAuthorizedError(MgrError):
+    """User is not authorized to perform an operation."""
+
+    pass
+
+
+def _check_new_descriptor_permissions(
+    user: str, permissions: Permissions, desc: BuildDescriptor
+) -> bool:
+    """Validate whether a given user is authorized for a new build."""
+    logger.warning(f"check new build permissions for user '{user}'")
+    if desc.channel.startswith("!"):
+        # channel variables not implemented yet, maybe soon-ish. These are
+        # meant to allow having user channels, group channels, etc.
+        logger.warning(f"user '{user}' build refused for own channel")
+        return False
+
+    if not permissions.is_authorized_for_project(
+        user, desc.channel, AuthorizationCaps.BUILDS_CREATE
+    ):
+        logger.warning(f"user '{user}' build refused for channel '{desc.channel}'")
+        return False
+
+    for comp in desc.components:
+        if comp.repo and not permissions.is_authorized_for_repository(user, comp.repo):
+            logger.warning(f"user '{user}' build refused for repository '{comp.repo}'")
+            return False
+
+    return True
 
 
 class Mgr:
@@ -121,11 +156,14 @@ class Mgr:
         loop = asyncio.get_running_loop()
         self._init_task = loop.create_task(_task())
 
-    async def new(self, desc: BuildDescriptor) -> tuple[str, str]:
+    async def new(self, user: str, desc: BuildDescriptor) -> tuple[str, str]:
         """Start a new build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
+
+        if not _check_new_descriptor_permissions(user, self._permissions, desc):
+            raise NotAuthorizedError()
 
         unknown_components = [
             c.name for c in desc.components if c.name not in self._available_components

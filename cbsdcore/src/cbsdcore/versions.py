@@ -69,6 +69,7 @@ class BuildDescriptor(pydantic.BaseModel):
     """Describes a version to the build service."""
 
     version: str
+    channel: str
     signed_off_by: BuildSignedOffBy
     version_type: VersionType
     dst_image: BuildDestImage

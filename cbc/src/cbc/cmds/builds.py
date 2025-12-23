@@ -151,6 +151,17 @@ def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> Non
     show_default=True,
 )
 @click.option(
+    "-p",
+    "--channel",
+    "version_channel",
+    type=str,
+    help="Channel to build version for",
+    required=True,
+    metavar="CHANNEL",
+    default="!user",
+    show_default=True,
+)
+@click.option(
     "-c",
     "--component",
     "components",
@@ -197,7 +208,7 @@ def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> Non
     "--image-name",
     type=str,
     required=False,
-    default="ces/ceph/ceph",
+    default="ceph/ceph",
     metavar="NAME",
     help="Name for this release's image",
 )
@@ -216,11 +227,12 @@ def cmd_build_new(
     logger: logging.Logger,
     version: str,
     version_type_name: str,
+    version_channel: str,
     components: tuple[str, ...],
     component_overrides: tuple[str, ...],
     distro: str,
     el_version: int,
-    registry: str,
+    registry: str,  # currently unused?
     image_name: str,
     image_tag: str | None,
 ) -> None:
@@ -274,8 +286,22 @@ def cmd_build_new(
 
     image_tag = image_tag or version
 
+    click.echo(f"""
+requesting build for:
+
+   version: {version}
+   channel: {version_channel}
+      type: {version_type}
+     image: {image_name}:{image_tag}
+components: {", ".join([comp.name for comp in components_lst])}
+    distro: {distro}
+os version: el{el_version}
+
+""")
+
     desc = BuildDescriptor(
         version=version,
+        channel=version_channel,
         signed_off_by=BuildSignedOffBy(user=name, email=email),
         version_type=version_type,
         dst_image=BuildDestImage(name=image_name, tag=image_tag),

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import abc
 import enum
+import logging
 import re
 import sys
 from collections.abc import Callable
@@ -29,6 +30,7 @@ from cbslib.core import logger as parent_logger
 from cbslib.logger import setup_logging
 
 logger = parent_logger.getChild("permissions")
+logger.setLevel(logging.INFO)
 
 
 class _PermissionsCapsMeta(abc.ABCMeta, enum.EnumMeta):
@@ -92,6 +94,7 @@ def _caps_from_str_lst_for(
             return v
 
         avail_caps = [cap.get_canonical_name() for cap in t if cap.name is not None]
+        logger.debug(f"available caps for '{t.__name__}': {avail_caps}")
 
         def _inverted(values: list[str]) -> list[str]:
             """Invert all provided cap strings."""
@@ -107,6 +110,7 @@ def _caps_from_str_lst_for(
             Inverted/negated bulk flags will be expanded to their individual inverted
             flags.
             """
+            logger.debug(f"processing cap strings: {values}")
             result: list[str] = []
             for v in values:
                 flag_entry = rf"{v}"
@@ -126,7 +130,9 @@ def _caps_from_str_lst_for(
                 value_results: list[str] = []
                 for avail_cap in avail_caps:
                     try:
+                        logger.debug(f"matching '{avail_cap}' against '{flag_entry}'")
                         if re.match(rf"{flag_entry}", avail_cap):
+                            logger.debug(f"matched '{avail_cap}'")
                             value_results.append(avail_cap)
                     except Exception as e:
                         msg = (
@@ -155,6 +161,9 @@ def _caps_from_str_lst_for(
             else:
                 result |= t.get_cap(cap_str)
 
+        logger.debug(
+            f"converted cap strings '{v}' to flags '{result!r}', cap_strs: {cap_strs}"
+        )
         return result
 
     return _caps_from_str_lst
@@ -286,13 +295,23 @@ class UserAuthorizationRule(pydantic.BaseModel):
             if not isinstance(entry, entry_type):
                 continue
 
-            if pattern and not (
-                isinstance(entry, _PatternAuthorizationEntry) and entry.matches(pattern)
+            if pattern and (
+                not isinstance(entry, _PatternAuthorizationEntry)
+                or not entry.matches(pattern)
             ):
+                logger.debug(f"not authorized for pattern '{pattern}', entry '{entry}'")
                 continue
 
+            logger.debug(
+                f"authorized for pattern '{pattern}', entry '{entry}', "
+                + f"caps: '{entry.caps!r}'"
+            )
             aggregated_caps |= entry.caps
 
+        logger.debug(
+            f"requested caps: '{caps!r}', aggregated caps: '{aggregated_caps!r}', "
+            + f"intersection: '{caps & aggregated_caps!r}'"
+        )
         return caps & aggregated_caps == caps
 
     def _is_authorized_for_caps_type(
@@ -319,6 +338,7 @@ class UserAuthorizationRule(pydantic.BaseModel):
             if g := groups.get(group_name):
                 authorizations_for.extend(g.authorized_for)
 
+        logger.debug(f"check authorization from groups: {authorizations_for}")
         return self._is_authorized_for_caps(
             authorizations_for,
             entry_type,
@@ -394,6 +414,7 @@ class UserAuthorizationRule(pydantic.BaseModel):
         self, groups: dict[str, AuthorizationGroup], caps: RoutesCapsType
     ) -> bool:
         """Check whether this rule grants access for the given route's caps."""
+        logger.warning(f"check authorization for route caps '{caps!r}'")
         return self._is_authorized_for_caps_type(
             groups,
             RoutesAuthorizationEntry,
@@ -449,6 +470,11 @@ class Permissions(pydantic.BaseModel):
                     + f"by rule '{rule.user_pattern}' with caps '{caps!r}'"
                 )
                 return True
+            else:
+                logger.warning(
+                    f"user '{user}' not authorized for project '{project}', "
+                    + f"rule '{rule}"
+                )
 
         return False
 

@@ -27,7 +27,7 @@ from cbslib.builds.tracker import (
     BuildExistsError,
     UnauthorizedTrackerError,
 )
-from cbslib.core.mgr import CBSMgr, NotAvailableError
+from cbslib.core.mgr import CBSMgr, NotAuthorizedError, NotAvailableError
 from cbslib.core.permissions import RoutesCaps
 from cbslib.routes import logger as parent_logger
 from cbslib.worker.celery import celery_app
@@ -80,10 +80,15 @@ async def builds_new(
         )
 
     try:
-        task_id, task_state = await mgr.new(descriptor)
+        task_id, task_state = await mgr.new(user.email, descriptor)
     except NotAvailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
+        ) from None
+    except NotAuthorizedError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to perform requested build",
         ) from None
     except BuildExistsError as e:
         logger.info(f"build '{descriptor.version}' already exists")

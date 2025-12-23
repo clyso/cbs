@@ -31,6 +31,10 @@ class RequiredRouteCaps:
     def __call__(self, user: CBSAuthUser, mgr: CBSMgr) -> None:
         logger.debug(f"checking user '{user.email}' for caps '{self._required}'")
         if not mgr.permissions.is_authorized_for_route(user.email, self._required):
+            logger.warning(
+                f"authorization failed for user '{user.email}' "
+                + f"missing caps '{self._required}'"
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User missing required capabilities",
