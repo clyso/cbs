@@ -204,6 +204,9 @@ groups:
         pattern: ".*"
       - type: repository
         pattern: ".*"
+      - type: routes
+        caps:
+         - ".*"
 
   development:
     name: development
@@ -220,6 +223,11 @@ groups:
         pattern: "^registry\\\.domain\\\.tld/dev/.*$"
       - type: repository
         pattern: "^https?://git\\\.domain\\\.tld/dev/.*$"
+      - type: routes
+        caps:
+          - ".*"
+          - -routes:auth:permissions
+          - -routes:auth:inspect
 
   all:
     name: all
@@ -229,6 +237,10 @@ groups:
         caps:
           - project:list
           - builds:list:any
+      - type: routes
+        caps:
+          - routes:auth:login
+          - routes:builds:status
 
 rules:
   - user_pattern: "^.*@domain\\\.tld$"

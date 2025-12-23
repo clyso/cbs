@@ -67,6 +67,11 @@ class RoutesCaps(_PermissionsCaps):
     ROUTES_AUTH_PERMISSIONS = enum.auto()
     ROUTES_AUTH_LOGIN = enum.auto()
 
+    ROUTES_BUILDS_NEW = enum.auto()
+    ROUTES_BUILDS_REVOKE = enum.auto()
+    ROUTES_BUILDS_STATUS = enum.auto()
+    ROUTES_BUILDS_INSPECT = enum.auto()
+
 
 def _caps_from_str_lst_for(
     t: type[_PermissionsCaps],

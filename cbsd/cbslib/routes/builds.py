@@ -18,15 +18,17 @@ from cbsdcore.api.responses import BaseErrorModel, NewBuildResponse
 from cbsdcore.builds.types import BuildEntry
 from cbsdcore.versions import BuildDescriptor
 from celery.result import AsyncResult
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
+from cbslib.auth.caps import RequiredRouteCaps
 from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.tracker import (
     BuildExistsError,
     UnauthorizedTrackerError,
 )
 from cbslib.core.mgr import CBSMgr, NotAvailableError
+from cbslib.core.permissions import RoutesCaps
 from cbslib.routes import logger as parent_logger
 from cbslib.worker.celery import celery_app
 
@@ -60,6 +62,7 @@ _responses = {
             "description": "A build already exists for the same version",
         },
     },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_NEW))],
 )
 async def builds_new(
     user: CBSAuthUser,
@@ -97,7 +100,10 @@ async def builds_new(
     return NewBuildResponse(task_id=task_id, state=task_state)
 
 
-@router.get("/status", responses={**_responses})
+@router.get(
+    "/status",
+    responses={**_responses},
+)
 async def get_builds_status(
     user: CBSAuthUser,
     mgr: CBSMgr,
@@ -117,7 +123,22 @@ async def get_builds_status(
         ) from e
 
 
-@router.delete("/revoke/{build_id}", responses={**_responses})
+@router.get("/status/{task_id}")
+async def get_task_status(task_id: str) -> JSONResponse:
+    task_result = AsyncResult(task_id)  # pyright: ignore[reportUnknownVariableType]
+    result = {  # pyright: ignore[reportUnknownVariableType]
+        "task_id": task_id,
+        "task_status": task_result.status,
+        "task_result": task_result.result,  # pyright: ignore[reportUnknownMemberType]
+    }
+    return JSONResponse(result)
+
+
+@router.delete(
+    "/revoke/{build_id}",
+    responses={**_responses},
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_REVOKE))],
+)
 async def revoke_build_id(
     user: CBSAuthUser,
     mgr: CBSMgr,
@@ -146,18 +167,10 @@ async def revoke_build_id(
     return True
 
 
-@router.get("/status/{task_id}")
-async def get_task_status(task_id: str) -> JSONResponse:
-    task_result = AsyncResult(task_id)  # pyright: ignore[reportUnknownVariableType]
-    result = {  # pyright: ignore[reportUnknownVariableType]
-        "task_id": task_id,
-        "task_status": task_result.status,
-        "task_result": task_result.result,  # pyright: ignore[reportUnknownMemberType]
-    }
-    return JSONResponse(result)
-
-
-@router.get("/inspect")
+@router.get(
+    "/inspect",
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_INSPECT))],
+)
 async def get_status() -> JSONResponse:
     inspct = celery_app.control.inspect()
 

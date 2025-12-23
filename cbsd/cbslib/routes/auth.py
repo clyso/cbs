@@ -20,14 +20,15 @@ from typing import cast
 
 import pydantic
 from cbsdcore.auth.user import User, UserConfig
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from cbslib.auth import AuthError
+from cbslib.auth.caps import RequiredRouteCaps
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
 from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB
 from cbslib.core.mgr import CBSMgr
-from cbslib.core.permissions import AuthorizationEntry
+from cbslib.core.permissions import AuthorizationEntry, RoutesCaps
 from cbslib.routes import logger as parent_logger
 
 logger = parent_logger.getChild("auth")
@@ -118,7 +119,9 @@ class _UserPermissionsListResponse(pydantic.BaseModel):
     from_groups: dict[str, list[AuthorizationEntry]]
 
 
-@permissions_router.get("/")
+@permissions_router.get(
+    "/", dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_AUTH_PERMISSIONS))]
+)
 def auth_permissions_list(
     user: CBSAuthUser, mgr: CBSMgr
 ) -> _UserPermissionsListResponse:
