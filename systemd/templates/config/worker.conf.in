@@ -1,0 +1,17 @@
+# configure as necessary
+#
+
+# recommended configuration
+#
+WORKER_SCRATCH_DIR="{{cbsd_data}}/{{deployment}}/{{svc_name}}/scratch"
+WORKER_CONTAINERS_DIR="{{cbsd_data}}/{{deployment}}/{{svc_name}}/scratch/containers"
+WORKER_CCACHE_DIR="{{cbsd_data}}/{{deployment}}/{{svc_name}}/scratch/ccache"
+
+# optional configuration
+#
+# DEBUG=0
+# IMAGE="harbor.clyso.com/cbs/cbsd-worker:latest"
+
+
+
+

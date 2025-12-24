@@ -1,0 +1,4 @@
+# configure as necessary
+#
+# REDIS_BIND_ADDR="127.0.0.1"
+# REDIS_BIND_PORT="6379"
