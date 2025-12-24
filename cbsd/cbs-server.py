@@ -61,6 +61,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
 
     try:
         mgr = mgr_init()
+        await mgr.init()
     except (MgrError, Exception) as e:
         logger.error(f"error initializing manager: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

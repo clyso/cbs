@@ -122,9 +122,16 @@ class Mgr:
         self._started = False
         self._init_task = None
 
-        self._update_components()
+    async def init(self) -> None:
+        """Perform operations on the mgr that are required for its proper start."""
+        # garbage collect old unfinished builds that may have lingered if we were
+        # hard shutdown.
+        await self._db.gc()
 
-    def _update_components(self) -> None:
+        # update our known components.
+        await self._update_components()
+
+    async def _update_components(self) -> None:
         """Update components list, before we can start servicing requests."""
         # this function could be run regularly in the background.
         # we need to take into account that, in that case, will be scheduled
@@ -153,8 +160,7 @@ class Mgr:
             self._init_task = None
             logger.info("mgr now available")
 
-        loop = asyncio.get_running_loop()
-        self._init_task = loop.create_task(_task())
+        self._init_task = asyncio.create_task(_task())
 
     async def new(self, user: str, desc: BuildDescriptor) -> tuple[str, str]:
         """Start a new build."""
