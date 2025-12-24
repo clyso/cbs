@@ -19,8 +19,6 @@ from pathlib import Path
 from typing import Any, override
 
 import pydantic
-from celery import signals
-
 from cbscore.config import Config as CBSCoreConfig
 from cbscore.errors import MalformedVersionError
 from cbscore.runner import gen_run_name, runner, stop
@@ -28,6 +26,8 @@ from cbscore.versions.create import version_create_helper
 from cbscore.versions.desc import VersionDescriptor
 from cbscore.versions.errors import VersionError
 from cbsdcore.versions import BuildDescriptor
+from celery import signals
+
 from cbslib.config.config import Config, get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger

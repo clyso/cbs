@@ -1,4 +1,4 @@
-# CBS service daemon core library - auth
+# CBS service library - core
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -11,20 +11,6 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-from datetime import datetime as dt
+from cbslib.logger import logger as parent_logger
 
-import pydantic
-
-
-class TokenInfo(pydantic.BaseModel):
-    user: str
-    expires: dt | None
-
-
-class Token(pydantic.BaseModel):
-    token: pydantic.SecretBytes
-    info: TokenInfo
-
-    @pydantic.field_serializer("token", when_used="json")
-    def dump_secret_token(self, v: pydantic.SecretBytes) -> bytes:
-        return v.get_secret_value()
+logger = parent_logger.getChild("core")

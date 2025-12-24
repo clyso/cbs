@@ -1,4 +1,4 @@
-# CBS service library - builds - mgr
+# CBS service library - core - mgr
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,37 +15,76 @@
 import asyncio
 import errno
 import sys
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 import pydantic
-from cbslib.builds import logger as parent_logger
-from cbslib.builds.tracker import BuildsTracker
-from cbslib.worker.celery import celery_app
-from cbslib.worker.tasks import ListComponentsTaskResponse
-from fastapi import Depends
-
 from cbscore.errors import CESError
 from cbsdcore.api.responses import AvailableComponent
-from cbsdcore.builds.types import BuildEntry
+from cbsdcore.builds.types import BuildEntry, BuildID
 from cbsdcore.versions import BuildDescriptor
+from fastapi import Depends
+
+from cbslib.builds import logger as parent_logger
+from cbslib.builds.db import BuildsDB
+from cbslib.builds.tracker import BuildsTracker
+from cbslib.config.config import get_config
+from cbslib.core.permissions import AuthorizationCaps, Permissions
+from cbslib.worker.celery import celery_app
+from cbslib.worker.tasks import ListComponentsTaskResponse
 
 logger = parent_logger.getChild("mgr")
 
 
-class BuildsMgrError(CESError):
+class MgrError(CESError):
     pass
 
 
-class NotAvailableError(BuildsMgrError):
+class NotAvailableError(MgrError):
+    """Service currently not available."""
+
     pass
 
 
-class UnknownComponentsError(BuildsMgrError):
+class UnknownComponentsError(MgrError):
+    """Unknown components have been specified."""
+
     components: list[str]
 
     def __init__(self, unknown_components: list[str]) -> None:
         self.components = unknown_components
         super().__init__()
+
+
+class NotAuthorizedError(MgrError):
+    """User is not authorized to perform an operation."""
+
+    pass
+
+
+def _check_new_descriptor_permissions(
+    user: str, permissions: Permissions, desc: BuildDescriptor
+) -> bool:
+    """Validate whether a given user is authorized for a new build."""
+    logger.warning(f"check new build permissions for user '{user}'")
+    if desc.channel.startswith("!"):
+        # channel variables not implemented yet, maybe soon-ish. These are
+        # meant to allow having user channels, group channels, etc.
+        logger.warning(f"user '{user}' build refused for own channel")
+        return False
+
+    if not permissions.is_authorized_for_project(
+        user, desc.channel, AuthorizationCaps.BUILDS_CREATE
+    ):
+        logger.warning(f"user '{user}' build refused for channel '{desc.channel}'")
+        return False
+
+    for comp in desc.components:
+        if comp.repo and not permissions.is_authorized_for_repository(user, comp.repo):
+            logger.warning(f"user '{user}' build refused for repository '{comp.repo}'")
+            return False
+
+    return True
 
 
 class Mgr:
@@ -55,20 +94,44 @@ class Mgr:
     This is where logic for permissions, version naming conventions, etc., should live.
     """
 
+    _db: BuildsDB
+    _permissions: Permissions
     _tracker: BuildsTracker
     _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
 
-    def __init__(self) -> None:
-        self._tracker = BuildsTracker()
+    def __init__(self, db_path: Path, permissions_path: Path) -> None:
+        self._db = BuildsDB(db_path)
+
+        try:
+            self._permissions = Permissions.load(permissions_path)
+        except (ValueError, CESError) as e:
+            msg = f"failed to load permissions from '{permissions_path}': {e}"
+            logger.error(msg)
+            raise MgrError(msg) from e
+
+        logger.info(
+            "loaded permissions: "
+            + f"{len(self._permissions.groups)} groups, "
+            + f"{len(self._permissions.rules)} rules"
+        )
+
+        self._tracker = BuildsTracker(self._db)
         self._available_components = {}
         self._started = False
         self._init_task = None
 
-        self._update_components()
+    async def init(self) -> None:
+        """Perform operations on the mgr that are required for its proper start."""
+        # garbage collect old unfinished builds that may have lingered if we were
+        # hard shutdown.
+        await self._db.gc()
 
-    def _update_components(self) -> None:
+        # update our known components.
+        await self._update_components()
+
+    async def _update_components(self) -> None:
         """Update components list, before we can start servicing requests."""
         # this function could be run regularly in the background.
         # we need to take into account that, in that case, will be scheduled
@@ -97,14 +160,16 @@ class Mgr:
             self._init_task = None
             logger.info("mgr now available")
 
-        loop = asyncio.get_running_loop()
-        self._init_task = loop.create_task(_task())
+        self._init_task = asyncio.create_task(_task())
 
-    async def new(self, desc: BuildDescriptor) -> tuple[str, str]:
+    async def new(self, user: str, desc: BuildDescriptor) -> tuple[BuildID, str]:
         """Start a new build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
+
+        if not _check_new_descriptor_permissions(user, self._permissions, desc):
+            raise NotAuthorizedError()
 
         unknown_components = [
             c.name for c in desc.components if c.name not in self._available_components
@@ -118,8 +183,8 @@ class Mgr:
         # propagate exceptions
         return await self._tracker.new(desc)
 
-    async def revoke(self, build_id: str, user: str, force: bool) -> None:
-        """Abort a given build."""
+    async def revoke(self, build_id: BuildID, user: str, force: bool) -> None:
+        """Revoke a given build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
@@ -128,15 +193,15 @@ class Mgr:
         await self._tracker.revoke(build_id, user, force)
 
     async def status(
-        self, *, owner: str | None = None, from_backend: bool = False
-    ) -> list[BuildEntry]:
+        self, *, owner: str | None = None
+    ) -> list[tuple[BuildID, BuildEntry]]:
         """List known builds."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
 
         # propagate exceptions
-        return await self._tracker.list(owner=owner, from_backend=from_backend)
+        return await self._tracker.list(owner=owner)
 
     @property
     def components(self) -> dict[str, AvailableComponent]:
@@ -149,6 +214,10 @@ class Mgr:
     def tracker(self) -> BuildsTracker:
         return self._tracker
 
+    @property
+    def permissions(self) -> Permissions:
+        return self._permissions
+
 
 _mgr: Mgr | None = None
 
@@ -156,8 +225,12 @@ _mgr: Mgr | None = None
 def mgr_init() -> Mgr:
     logger.info("init cbs service mgr")
     global _mgr
+
     if not _mgr:
-        _mgr = Mgr()
+        config = get_config()
+        assert config.server, "unexpected missing server config"
+        _mgr = Mgr(config.server.db, config.server.permissions)
+
     return _mgr
 
 

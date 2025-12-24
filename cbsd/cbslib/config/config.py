@@ -19,9 +19,9 @@ from typing import Annotated, ClassVar
 
 import pydantic
 import yaml
+from cbscore.errors import CESError
 from fastapi import Depends
 
-from cbscore.errors import CESError
 from cbslib.config import logger as parent_logger
 from cbslib.config.server import ServerConfig
 from cbslib.config.worker import WorkerConfig

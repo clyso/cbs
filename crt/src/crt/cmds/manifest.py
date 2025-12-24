@@ -23,12 +23,12 @@ from typing import cast
 
 import click
 import rich.box
+from cbscore.versions.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.panel import Panel
 from rich.table import Table
 
-from cbscore.versions.utils import parse_version
 from crt.cmds._common import CRTExitError, CRTProgress, get_stage_rdr
 from crt.crtlib.apply import ApplyConflictError, ApplyError, patches_apply_to_manifest
 from crt.crtlib.errors import CRTError

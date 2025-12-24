@@ -14,8 +14,8 @@
 import enum
 
 import pydantic
-
 from cbscore.versions.utils import VersionType
+
 from cbsdcore.logger import logger as parent_logger
 
 logger = parent_logger.getChild("versions")
@@ -69,6 +69,7 @@ class BuildDescriptor(pydantic.BaseModel):
     """Describes a version to the build service."""
 
     version: str
+    channel: str
     signed_off_by: BuildSignedOffBy
     version_type: VersionType
     dst_image: BuildDestImage

@@ -16,11 +16,11 @@ from pathlib import Path
 from typing import Annotated, override
 
 import pydantic
-from fastapi import Depends, HTTPException, status
-
 from cbscore.errors import CESError
 from cbsdcore.auth.token import Token
 from cbsdcore.auth.user import User
+from fastapi import Depends, HTTPException, status
+
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
 from cbslib.auth.auth import AuthTokenInfo, token_create
@@ -61,7 +61,7 @@ class Users:
         token = token_create(email)
         logger.debug(f"created token for user '{email}': {token}")
 
-        self._tokens_db[token.token] = token
+        self._tokens_db[token.token.get_secret_value()] = token
         self._users_db[email] = User(email=email, name=name, token=token)
         await self.save()
         return token
@@ -85,7 +85,7 @@ class Users:
                     self._users_db = users_adapter.validate_json(db["users"])
 
                 for user in self._users_db.values():
-                    self._tokens_db[user.token.token] = user.token
+                    self._tokens_db[user.token.token.get_secret_value()] = user.token
         except Exception as e:
             msg = f"error loading users from db '{self._db_path}': {e}"
             logger.exception(msg)

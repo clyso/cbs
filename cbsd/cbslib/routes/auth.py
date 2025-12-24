@@ -18,18 +18,23 @@
 #
 from typing import cast
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+import pydantic
+from cbsdcore.auth.user import User, UserConfig
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
-from cbsdcore.auth.user import User, UserConfig
 from cbslib.auth import AuthError
+from cbslib.auth.caps import RequiredRouteCaps
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
 from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB
+from cbslib.core.mgr import CBSMgr
+from cbslib.core.permissions import AuthorizationEntry, RoutesCaps
 from cbslib.routes import logger as parent_logger
 
 logger = parent_logger.getChild("auth")
 
 router = APIRouter(prefix="/auth")
+permissions_router = APIRouter(prefix="/auth/permissions")
 
 
 @router.get("/login")
@@ -103,3 +108,26 @@ async def auth_whoami(user: CBSAuthUser) -> User:
 @router.get("/ping")
 async def auth_ping() -> bool:
     return True
+
+
+# permissions
+#
+
+
+class _UserPermissionsListResponse(pydantic.BaseModel):
+    authorizations: list[AuthorizationEntry]
+    from_groups: dict[str, list[AuthorizationEntry]]
+
+
+@permissions_router.get(
+    "/", dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_AUTH_PERMISSIONS))]
+)
+def auth_permissions_list(
+    user: CBSAuthUser, mgr: CBSMgr
+) -> _UserPermissionsListResponse:
+    authorizations, from_groups = mgr.permissions.list_caps_for(user.email)
+
+    return _UserPermissionsListResponse(
+        authorizations=authorizations,
+        from_groups=from_groups,
+    )

@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Annotated, ClassVar
 
 import pydantic
-
 from cbscore.config import Config as CBSCoreConfig
 from cbscore.config import ConfigError as CBSCoreConfigError
 from cbscore.errors import CESError
+
 from cbslib.config import logger as parent_logger
 
 logger = parent_logger.getChild("worker")

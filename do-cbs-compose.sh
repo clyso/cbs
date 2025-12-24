@@ -191,6 +191,73 @@ prepare() {
       exit 1
   }
 
+  cat <<EOF >"${server_cfg_dir}/permissions.yaml"
+groups:
+  admin:
+    name: admin
+    authorized_for:
+      - type: project
+        pattern: ".*"
+        caps:
+          - ".*"
+      - type: registry
+        pattern: ".*"
+      - type: repository
+        pattern: ".*"
+      - type: routes
+        caps:
+         - ".*"
+
+  development:
+    name: development
+    authorized_for:
+      - type: project
+        pattern: "^dev/.*$"
+        caps:
+          - project:list
+          - builds:create
+          - builds:revoke:own
+          - builds:list:own
+          - builds:list:any
+      - type: registry
+        pattern: "^registry\\\.domain\\\.tld/dev/.*$"
+      - type: repository
+        pattern: "^https?://git\\\.domain\\\.tld/dev/.*$"
+      - type: routes
+        caps:
+          - ".*"
+          - -routes:auth:permissions
+          - -routes:auth:inspect
+
+  all:
+    name: all
+    authorized_for:
+      - type: project
+        pattern: ".*"
+        caps:
+          - project:list
+          - builds:list:any
+      - type: routes
+        caps:
+          - routes:auth:login
+          - routes:builds:status
+
+rules:
+  - user_pattern: "^.*@domain\\\.tld$"
+    groups:
+      - all
+  - user_pattern: "^admin@domain\\\.tld$"
+    groups:
+      - admin
+  - user_pattern: "^dev-.*@domain\\\.tld$"
+    groups:
+      - all
+      - development
+
+EOF
+
+  echo "=> please edit '${server_cfg_dir}/permissions.yaml' to adjust permissions as needed"
+
   [[ -e "${components_dir}" ]] && {
     rm -rf "${components_dir}" || {
       echo "error: unable to remove old components dir" >/dev/stderr && exit 1

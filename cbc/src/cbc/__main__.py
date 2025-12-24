@@ -17,13 +17,13 @@ import logging
 from pathlib import Path
 
 import click
+from cbsdcore.auth.user import UserConfig
 
 from cbc import CBC_DEFAULT_CONFIG_PATH, logger
 from cbc import set_debug_logging as cbc_set_debug_logging
 from cbc.cmds import Ctx, pass_ctx
 from cbc.cmds.auth import cmd_auth
 from cbc.cmds.builds import cmd_build
-from cbsdcore.auth.user import UserConfig
 
 _cbc_help_message = """CES Build Service Client
 

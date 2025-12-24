@@ -16,13 +16,13 @@ import logging
 import sys
 
 import click
+from cbsdcore.auth.user import UserConfig
 
 from cbc import CBC_DEFAULT_CONFIG_PATH
-from cbc.auth import auth_ping, auth_whoami
+from cbc.auth import auth_perms_list, auth_ping, auth_whoami
 from cbc.client import CBCConnectionError, CBCPermissionDeniedError
 from cbc.cmds import logger as parent_logger
 from cbc.cmds import pass_config, pass_logger, update_ctx
-from cbsdcore.auth.user import UserConfig
 
 logger = parent_logger.getChild("auth")
 
@@ -61,6 +61,30 @@ def cmd_auth_whoami(config: UserConfig, logger: logging.Logger) -> None:
         email, name = auth_whoami(logger, config)
         click.echo(f"email: {email}")
         click.echo(f" name: {name}")
+    except CBCConnectionError as e:
+        click.echo(f"connection error: {e}", err=True)
+        sys.exit(errno.ECONNREFUSED)
+    except CBCPermissionDeniedError as e:
+        click.echo(f"permission denied: {e}", err=True)
+        sys.exit(errno.EACCES)
+    except Exception as e:
+        click.echo(f"error obtaining whoami: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+
+@cmd_auth.group("perms", help="Handle permissions")
+def cmd_auth_perms() -> None:
+    pass
+
+
+@cmd_auth_perms.command("list", help="List user permissions")
+@update_ctx
+@pass_logger
+@pass_config
+def cmd_auth_perms_list(config: UserConfig, logger: logging.Logger) -> None:
+    logger.debug(f"config: {config}")
+    try:
+        click.echo(auth_perms_list(logger, config))
     except CBCConnectionError as e:
         click.echo(f"connection error: {e}", err=True)
         sys.exit(errno.ECONNREFUSED)

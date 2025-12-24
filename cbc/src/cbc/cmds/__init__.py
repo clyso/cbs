@@ -19,10 +19,10 @@ from functools import update_wrapper, wraps
 from typing import Concatenate, ParamSpec, TypeVar
 
 import click
+from cbsdcore.auth.user import UserConfig
 
 from cbc import logger as parent_logger
 from cbc.client import CBCClient
-from cbsdcore.auth.user import UserConfig
 
 logger = parent_logger.getChild("cmds")
 

@@ -7,19 +7,29 @@ if ! /usr/bin/uv --help >/dev/null 2>&1; then
   exit 1
 fi
 
-uv sync --all-packages --no-dev --no-cache || (
+uv sync --all-packages --no-dev --no-cache || {
   echo "error: 'uv sync' command failed." >&2 && exit 1
-)
+}
 
-cd /cbs/server/cbsd || (
+cd /cbs/server/cbsd || {
   echo "error: failed to change directory to /cbs/server/cbsd." >&2 && exit 1
-)
+}
 
 if [ "${1}" = "server" ]; then
-  uv run --no-sync \
-    uvicorn --factory --host 0.0.0.0 --port 8080 \
+  uv add watchfiles || {
+    echo "error: failed to add watchfiles package." >&2 && exit 1
+  }
+
+  # shellcheck source=/dev/null
+  . /cbs/server/.venv/bin/activate || {
+    echo "error: failed to activate virtual environment." >&2 && exit 1
+  }
+
+  uvicorn --factory --host 0.0.0.0 --port 8080 \
     --ssl-keyfile /cbs/config/cbs.key.pem \
     --ssl-certfile /cbs/config/cbs.cert.pem \
+    --reload \
+    --reload-include /cbs/server --reload-include /cbs/config \
     cbs-server:factory || (echo "error: failed to start server." >&2 && exit 1)
 
 elif [ "${1}" = "worker" ]; then

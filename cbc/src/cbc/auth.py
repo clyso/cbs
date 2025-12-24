@@ -14,12 +14,12 @@
 import logging
 
 import pydantic
+from cbsdcore.auth.user import User
 
 from cbc import CBCError
 from cbc import logger as parent_logger
 from cbc.client import CBCClient, CBCConnectionError
 from cbc.cmds import endpoint
-from cbsdcore.auth.user import User
 
 logger = parent_logger.getChild("auth")
 
@@ -57,3 +57,16 @@ def auth_whoami(logger: logging.Logger, client: CBCClient, ep: str) -> tuple[str
         raise CBCError(msg) from None
 
     return (user.email, user.name)
+
+
+@endpoint("/auth/permissions/")
+def auth_perms_list(logger: logging.Logger, client: CBCClient, ep: str) -> str:
+    try:
+        r = client.get(ep)
+        res = r.read()
+        logger.debug(f"permissions: {res}")
+    except CBCError as e:
+        logger.error("unable to obtain permissions")
+        raise e from None
+
+    return res.decode("utf-8")
