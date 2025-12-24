@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pydantic
 from cbscore.errors import CESError
-from cbsdcore.builds.types import BuildEntry, EntryState
+from cbsdcore.builds.types import BuildEntry, BuildID, EntryState
 
 from cbslib.builds import logger as parent_logger
 
@@ -56,7 +56,7 @@ class MalformedDBRootError(BuildsDBError):
 class _DBRoot(pydantic.BaseModel):
     """Builds database root entry."""
 
-    last_build_id: int
+    last_build_id: BuildID
 
     @property
     def next_build_id(self) -> int:
@@ -99,7 +99,7 @@ class _DBRoot(pydantic.BaseModel):
 class DBBuildEntry(pydantic.BaseModel):
     """Individual build entry in the builds database."""
 
-    build_id: int
+    build_id: BuildID
     entry: BuildEntry
 
     def save(self, path: Path) -> None:
@@ -126,7 +126,7 @@ class BuildsDB:
         self._root = _DBRoot.load(db_path)
         self._lock = asyncio.Lock()
 
-    async def new(self, entry: BuildEntry) -> int:
+    async def new(self, entry: BuildEntry) -> BuildID:
         """Create a new build entry in the database."""
         async with self._lock:
             build_id = self._root.next_build_id
@@ -135,7 +135,7 @@ class BuildsDB:
             self._root.save(self._db_path)
             return build_id
 
-    async def update(self, build_id: int, entry: BuildEntry) -> None:
+    async def update(self, build_id: BuildID, entry: BuildEntry) -> None:
         """Update an existing build entry in the database."""
         async with self._lock:
             if build_id < 1 or build_id > self._root.last_build_id:
@@ -253,3 +253,30 @@ class BuildsDB:
             raise BuildsDBError(msg) from e
 
         return entries
+
+    async def get(self, build_id: BuildID) -> DBBuildEntry:
+        """Obtain a specific build entry from the database."""
+        async with self._lock:
+            if build_id < 1 or build_id > self._root.last_build_id:
+                raise NoSuchBuildError(build_id)
+
+            db_entry_raw: bytes | None = None
+            try:
+                with dbm.open(self._db_path, flag="c") as db:
+                    key = f"build_{build_id}"
+                    db_entry_raw = db.get(key)
+            except Exception as e:
+                msg = f"failed to get build entry {build_id} from db: {e}"
+                logger.error(msg)
+                raise BuildsDBError(msg) from e
+
+        if not db_entry_raw:
+            raise NoSuchBuildError(build_id)
+
+        try:
+            db_entry = DBBuildEntry.model_validate_json(db_entry_raw)
+        except pydantic.ValidationError as e:
+            logger.error(f"malformed build entry {build_id} in db:\n{e}")
+            raise MalformedBuildEntryError(build_id) from e
+
+        return db_entry

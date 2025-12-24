@@ -14,7 +14,7 @@
 import asyncio
 import datetime
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from datetime import datetime as dt
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
@@ -72,17 +72,28 @@ class _EventTaskRevoked(pydantic.BaseModel):
     expired: bool
 
 
-_ModelFn = Callable[Concatenate[BuildsTracker, _BM, _P], Awaitable[_R]]
+_ModelFn = Callable[Concatenate[BuildsTracker, _BM, _P], Coroutine[None, None, _R]]
 _DictFn = Callable[Concatenate[_EventDict, _P], _R]
 
 
 def _with_tracker(
-    tracker: BuildsTracker, bm: type[_BM], fn: _ModelFn[_BM, _P, _R]
+    tracker: BuildsTracker,
+    bm: type[_BM],
+    fn: _ModelFn[_BM, _P, _R],
+    event_loop: asyncio.AbstractEventLoop,
 ) -> _DictFn[_P, _R]:
     def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         m = bm(**e)
-        loop = asyncio.new_event_loop()
-        return loop.run_until_complete(fn(tracker, m, *args, **kwargs))
+        loop = event_loop
+        logger.info(f"running '{fn}' in loop '{loop}'")
+        try:
+            ftr = asyncio.run_coroutine_threadsafe(
+                fn(tracker, m, *args, **kwargs), loop
+            )
+        except Exception as exc:
+            logger.error(f"unable to run '{fn}' in loop '{loop}': {exc}")
+            raise exc from None
+        return ftr.result()
 
     return wrapper
 
@@ -135,12 +146,16 @@ class Monitor:
     _thread: threading.Thread | None
     _connection: kombu.Connection | None
     _receiver: celery.events.EventReceiver | None
+    _event_loop: asyncio.AbstractEventLoop
 
-    def __init__(self, builds_tracker: BuildsTracker) -> None:
+    def __init__(
+        self, builds_tracker: BuildsTracker, event_loop: asyncio.AbstractEventLoop
+    ) -> None:
         self._builds_tracker = builds_tracker
         self._thread = None
         self._connection = None
         self._receiver = None
+        self._event_loop = event_loop
 
     def start(self) -> None:
         if self._thread:
@@ -156,6 +171,8 @@ class Monitor:
             logger.warning("monitoring already started")
             return
 
+        asyncio.set_event_loop(self._event_loop)
+
         try:
             self._connection = celery_app.connection()
         except Exception as e:
@@ -166,23 +183,34 @@ class Monitor:
             self._connection,
             handlers={
                 "task-started": _with_tracker(
-                    self._builds_tracker, _EventTaskStarted, _event_task_started
+                    self._builds_tracker,
+                    _EventTaskStarted,
+                    _event_task_started,
+                    self._event_loop,
                 ),
                 "task-succeeded": _with_tracker(
                     self._builds_tracker,
                     _EventTaskSucceeded,
                     _event_task_succeeded,
+                    self._event_loop,
                 ),
                 "task-failed": _with_tracker(
-                    self._builds_tracker, _EventTaskFailed, _event_task_failed
+                    self._builds_tracker,
+                    _EventTaskFailed,
+                    _event_task_failed,
+                    self._event_loop,
                 ),
                 "task-rejected": _with_tracker(
                     self._builds_tracker,
                     _EventTaskRejected,
                     _event_task_rejected,
+                    self._event_loop,
                 ),
                 "task-revoked": _with_tracker(
-                    self._builds_tracker, _EventTaskRevoked, _event_task_revoked
+                    self._builds_tracker,
+                    _EventTaskRevoked,
+                    _event_task_revoked,
+                    self._event_loop,
                 ),
             },
         )

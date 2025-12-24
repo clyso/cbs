@@ -21,7 +21,7 @@ from cbscore.versions.errors import VersionError
 from cbscore.versions.utils import VersionType, get_version_type, parse_component_refs
 from cbsdcore.api.responses import AvailableComponent, NewBuildResponse
 from cbsdcore.auth.user import UserConfig
-from cbsdcore.builds.types import BuildEntry
+from cbsdcore.builds.types import BuildEntry, BuildID
 from cbsdcore.versions import (
     BuildArch,
     BuildArtifactType,
@@ -85,7 +85,7 @@ def _build_new(
 @endpoint("/builds/status")
 def _build_list(
     logger: logging.Logger, client: CBCClient, ep: str, all: bool
-) -> list[BuildEntry]:
+) -> list[tuple[int, BuildEntry]]:
     try:
         r = client.get(ep, params={"all": all})
         res = r.json()  # pyright: ignore[reportAny]
@@ -93,7 +93,7 @@ def _build_list(
         logger.error(f"unable to list builds: {e}")
         raise e from None
 
-    ta = pydantic.TypeAdapter(list[BuildEntry])
+    ta = pydantic.TypeAdapter(list[tuple[int, BuildEntry]])
     try:
         return ta.validate_python(res)
     except pydantic.ValidationError:
@@ -104,7 +104,7 @@ def _build_list(
 
 @endpoint("/builds/revoke")
 def _build_revoke(
-    logger: logging.Logger, client: CBCClient, ep: str, build_id: str, force: bool
+    logger: logging.Logger, client: CBCClient, ep: str, build_id: BuildID, force: bool
 ) -> None:
     try:
         params = {"force": force} if force else None
@@ -323,7 +323,7 @@ os version: el{el_version}
     click.echo(f"""
 triggered build:
     type: {version_type_name}
- task id: {res.task_id}
+build id: {res.build_id}
    state: {res.state}
 """)
 
@@ -338,15 +338,15 @@ def cmd_build_list(config: UserConfig, logger: logging.Logger, all: bool) -> Non
         lst = _build_list(logger, config, all)
     except CBCError as e:
         click.echo(f"error obtaining build list: {e}", err=True)
-        sys.exit(1)
+        sys.exit(errno.ENOTRECOVERABLE)
 
     if not lst:
         click.echo("no builds found")
         return
 
-    for entry in lst:
+    for build_id, entry in lst:
         click.echo("---")
-        click.echo(f" build id: {entry.task_id}")
+        click.echo(f" build id: {build_id}")
         click.echo(f"     user: {entry.user}")
         click.echo(f"    state: {entry.state}")
         click.echo(f"submitted: {entry.submitted}")
@@ -356,7 +356,7 @@ def cmd_build_list(config: UserConfig, logger: logging.Logger, all: bool) -> Non
 
 
 @cmd_build.command("revoke", help="Revoke an on-going build")
-@click.argument("build_id", type=str, required=True, metavar="ID")
+@click.argument("build_id", type=BuildID, required=True, metavar="ID")
 @click.option(
     "--force",
     is_flag=True,
@@ -368,12 +368,12 @@ def cmd_build_list(config: UserConfig, logger: logging.Logger, all: bool) -> Non
 @pass_logger
 @pass_config
 def cmd_build_revoke(
-    config: UserConfig, logger: logging.Logger, build_id: str, force: bool
+    config: UserConfig, logger: logging.Logger, build_id: BuildID, force: bool
 ) -> None:
     try:
         _build_revoke(logger, config, build_id, force)
     except CBCError as e:
         click.echo(f"error revoking build '{build_id}': {e}", err=True)
-        sys.exit(1)
+        sys.exit(errno.ENOTRECOVERABLE)
 
     click.echo(f"successfully revoked build '{build_id}'")

@@ -15,7 +15,7 @@
 from typing import Any
 
 from cbsdcore.api.responses import BaseErrorModel, NewBuildResponse
-from cbsdcore.builds.types import BuildEntry
+from cbsdcore.builds.types import BuildEntry, BuildID
 from cbsdcore.versions import BuildDescriptor
 from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -80,7 +80,7 @@ async def builds_new(
         )
 
     try:
-        task_id, task_state = await mgr.new(user.email, descriptor)
+        build_id, task_state = await mgr.new(user.email, descriptor)
     except NotAvailableError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="try again later"
@@ -102,7 +102,7 @@ async def builds_new(
             detail="check logs for failure",
         ) from e
 
-    return NewBuildResponse(task_id=task_id, state=task_state)
+    return NewBuildResponse(build_id=build_id, state=task_state)
 
 
 @router.get(
@@ -113,13 +113,12 @@ async def get_builds_status(
     user: CBSAuthUser,
     mgr: CBSMgr,
     all: bool,
-    from_backend: bool = False,
-) -> list[BuildEntry]:
+) -> list[tuple[BuildID, BuildEntry]]:
     logger.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
 
     owner = user.email if not all else None
     try:
-        return await mgr.status(owner=owner, from_backend=from_backend)
+        return await mgr.status(owner=owner)
     except Exception as e:
         logger.error(f"unexpected error: {e}")
         raise HTTPException(
@@ -147,7 +146,7 @@ async def get_task_status(task_id: str) -> JSONResponse:
 async def revoke_build_id(
     user: CBSAuthUser,
     mgr: CBSMgr,
-    build_id: str,
+    build_id: BuildID,
     force: bool = False,
 ) -> bool:
     logger.debug(f"revoke task '{build_id}'")

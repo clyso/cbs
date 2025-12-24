@@ -21,7 +21,7 @@ from typing import Annotated, Any, cast
 import pydantic
 from cbscore.errors import CESError
 from cbsdcore.api.responses import AvailableComponent
-from cbsdcore.builds.types import BuildEntry
+from cbsdcore.builds.types import BuildEntry, BuildID
 from cbsdcore.versions import BuildDescriptor
 from fastapi import Depends
 
@@ -117,7 +117,7 @@ class Mgr:
             + f"{len(self._permissions.rules)} rules"
         )
 
-        self._tracker = BuildsTracker()
+        self._tracker = BuildsTracker(self._db)
         self._available_components = {}
         self._started = False
         self._init_task = None
@@ -162,7 +162,7 @@ class Mgr:
 
         self._init_task = asyncio.create_task(_task())
 
-    async def new(self, user: str, desc: BuildDescriptor) -> tuple[str, str]:
+    async def new(self, user: str, desc: BuildDescriptor) -> tuple[BuildID, str]:
         """Start a new build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
@@ -183,7 +183,7 @@ class Mgr:
         # propagate exceptions
         return await self._tracker.new(desc)
 
-    async def revoke(self, build_id: str, user: str, force: bool) -> None:
+    async def revoke(self, build_id: BuildID, user: str, force: bool) -> None:
         """Revoke a given build."""
         if not self._started:
             logger.warning("service not started yet, try again later")
@@ -193,15 +193,15 @@ class Mgr:
         await self._tracker.revoke(build_id, user, force)
 
     async def status(
-        self, *, owner: str | None = None, from_backend: bool = False
-    ) -> list[BuildEntry]:
+        self, *, owner: str | None = None
+    ) -> list[tuple[BuildID, BuildEntry]]:
         """List known builds."""
         if not self._started:
             logger.warning("service not started yet, try again later")
             raise NotAvailableError()
 
         # propagate exceptions
-        return await self._tracker.list(owner=owner, from_backend=from_backend)
+        return await self._tracker.list(owner=owner)
 
     @property
     def components(self) -> dict[str, AvailableComponent]:

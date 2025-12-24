@@ -37,3 +37,6 @@ class BuildEntry(pydantic.BaseModel):
     state: EntryState
     started: dt | None
     finished: dt | None
+
+
+BuildID = int

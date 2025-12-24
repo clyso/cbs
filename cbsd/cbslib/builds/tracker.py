@@ -14,15 +14,15 @@
 import asyncio
 import datetime
 from datetime import datetime as dt
-from typing import Annotated, override
+from typing import override
 
 from cbscore.errors import CESError
-from cbsdcore.builds.types import BuildEntry, EntryState
+from cbsdcore.builds.types import BuildEntry, BuildID, EntryState
 from cbsdcore.versions import BuildDescriptor
 from celery.result import AsyncResult as CeleryTaskResult
-from fastapi import Depends
 
 from cbslib.builds import logger as parent_logger
+from cbslib.builds.db import BuildsDB, BuildsDBError
 from cbslib.worker import tasks
 
 logger = parent_logger.getChild("tracker")
@@ -66,25 +66,25 @@ class UnauthorizedTrackerError(TrackerError):
 class BuildsTracker:
     """Tracks existing builds, tracking them as they are sent to workers."""
 
-    _builds: dict[str, BuildEntry]
-    _builds_by_version: dict[str, list[BuildEntry]]
+    _db: BuildsDB
+    _builds_by_task_id: dict[str, BuildID]
+    _builds_by_build_id: dict[BuildID, str]
     _lock: asyncio.Lock
 
-    def __init__(self) -> None:
-        self._builds = {}
-        self._builds_by_version = {}
+    def __init__(self, db: BuildsDB) -> None:
+        self._db = db
+        self._builds_by_task_id = {}
+        self._builds_by_build_id = {}
         self._lock = asyncio.Lock()
 
-    async def new(self, desc: BuildDescriptor) -> tuple[str, str]:
+    async def new(self, desc: BuildDescriptor) -> tuple[BuildID, str]:
         """Create a new build entry, scheduling it for build."""
         _ = await self._lock.acquire()
         try:
-            if desc.version in self._builds_by_version and any(
-                map(  # noqa: C417
-                    lambda x: not x.finished, self._builds_by_version[desc.version]
-                )
-            ):
-                raise BuildExistsError(desc.version)
+            # NOTE: We should ensure builds that are the same are properly
+            # deduplicated if they are in-progress. I.e., if the same build
+            # request comes twice, and it's either in-progress or queued, then
+            # we return its build ID.
 
             # schedule version for building
             task = tasks.build.apply_async((desc,), serializer="pydantic")
@@ -98,60 +98,74 @@ class BuildsTracker:
                 started=None,
                 finished=None,
             )
-            self._builds[build_entry.task_id] = build_entry
-            if desc.version not in self._builds_by_version:
-                self._builds_by_version[desc.version] = []
 
-            self._builds_by_version[desc.version].append(build_entry)
+            build_id = await self._db.new(build_entry)
+            self._builds_by_task_id[build_entry.task_id] = build_id
+            self._builds_by_build_id[build_id] = build_entry.task_id
 
-            return (build_entry.task_id, build_entry.state)
+            return (build_id, build_entry.state)
         finally:
             self._lock.release()
 
     async def list(
-        self, *, owner: str | None = None, from_backend: bool = False
-    ) -> list[BuildEntry]:
-        build_lst: list[BuildEntry] = []
-
-        _ = await self._lock.acquire()
+        self, *, owner: str | None = None
+    ) -> list[tuple[BuildID, BuildEntry]]:
+        """List all known builds, from stable storage, optionally filtering by owner."""
         try:
-            for entry in self._builds.values():
-                if owner and entry.user != owner:
-                    continue
+            db_builds = await self._db.ls()
+        except BuildsDBError as e:
+            logger.warning(f"failed to list builds from db: {e}")
+            raise TrackerError(f"failed to list builds: {e}") from e
 
-                if from_backend:
-                    entry_copy = entry.model_copy()
-                    task_res = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
-                        entry.task_id,
-                    )
-                    entry_copy.state = EntryState(task_res.state)
-                    if entry_copy.state == "FAILURE" or entry_copy.state == "SUCCESS":
-                        entry_copy.finished = task_res.date_done
-                    build_lst.append(entry_copy)
-                else:
-                    build_lst.append(entry)
-        finally:
-            self._lock.release()
+        builds: list[tuple[BuildID, BuildEntry]] = []
+        for db_entry in db_builds:
+            entry = db_entry.entry
+            if owner is None or entry.user == owner:
+                builds.append((db_entry.build_id, entry))
 
-        return build_lst
+        return builds
 
-    async def revoke(self, task_id: str, user: str, force: bool) -> None:
-        _ = await self._lock.acquire()
-        try:
-            if task_id not in self._builds:
-                raise NoSuchBuildError(task_id)
-            entry = self._builds[task_id]
+    async def revoke(self, build_id: BuildID, user: str, force: bool) -> None:
+        """
+        Revoke an on-going build.
 
-            if not force and entry.user != user:
-                raise UnauthorizedTrackerError(user, f"revoke build '{task_id}'")
+        Does not persist task state in the database, only triggers the revoke on the
+        task itself, on the worker.
 
-            task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
-                entry.task_id,
-            )
-            task.revoke(terminate=True, signal="KILL", wait=False)
-        finally:
-            self._lock.release()
-        pass
+        Persistent state will only be updated when the worker reports back through
+        events.
+        """
+        async with self._lock:
+            if build_id not in self._builds_by_build_id:
+                raise NoSuchBuildError()
+
+            task_id = self._builds_by_build_id[build_id]
+            if task_id not in self._builds_by_task_id:
+                logger.error(
+                    f"unexpected missing task '{task_id}' for build '{build_id}'"
+                )
+                raise NoSuchBuildError()
+
+            try:
+                db_entry = await self._db.get(build_id)
+            except BuildsDBError as e:
+                msg = f"failed to get build '{build_id}' from db: {e}"
+                logger.error(msg)
+                raise TrackerError(msg) from e
+
+            if not force and user != db_entry.entry.user:
+                raise UnauthorizedTrackerError(user, f"revoke build '{build_id}'")
+
+            entry = db_entry.entry
+            try:
+                task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
+                    entry.task_id,
+                )
+                task.revoke(terminate=True, signal="KILL", wait=False)
+            except Exception as e:
+                msg = f"failed to revoke build '{build_id}': {e}"
+                logger.error(msg)
+                raise TrackerError(msg) from e
 
     async def _mark_task_state(
         self,
@@ -161,31 +175,48 @@ class BuildsTracker:
         started: dt | None = None,
         finished: dt | None = None,
     ) -> None:
-        _ = await self._lock.acquire()
-        try:
-            entry = self._builds.get(task_id)
-            if not entry:
-                logger.error(
-                    f"unexpected missing task '{task_id}', "
-                    + f"can't mark {state.name}!!"
-                )
+        async with self._lock:
+            build_id = self._builds_by_task_id.get(task_id)
+            if not build_id:
+                # not our task, likely not a build, ignore.
                 return
 
+            try:
+                db_entry = await self._db.get(build_id)
+            except BuildsDBError as e:
+                msg = f"fialed to get build '{build_id}' from db: {e}"
+                logger.warning(msg)
+                raise TrackerError(msg) from e
+
+            entry = db_entry.entry
             entry.state = state
+
             if started:
                 entry.started = started
             if finished:
                 entry.finished = finished
 
-        finally:
-            self._lock.release()
+            await self._db.update(build_id, entry)
+
+            if entry.state in [
+                EntryState.success,
+                EntryState.failure,
+                EntryState.revoked,
+                EntryState.rejected,
+            ]:
+                logger.debug(
+                    f"removing completed build tracking for task {task_id}, "
+                    + f"state '{entry.state}'"
+                )
+                del self._builds_by_task_id[task_id]
+                del self._builds_by_build_id[build_id]
 
     async def mark_started(self, task_id: str, ts: dt) -> None:
         logger.info(f"task {task_id} started, ts = {ts}")
         await self._mark_task_state(task_id, EntryState.started, started=ts)
 
     async def mark_succeeded(self, task_id: str, ts: dt) -> None:
-        logger.info(f"task {task_id} failed, ts = {ts}")
+        logger.info(f"task {task_id} succeeded, ts = {ts}")
         await self._mark_task_state(task_id, EntryState.success, finished=ts)
 
     async def mark_failed(self, task_id: str, ts: dt) -> None:
@@ -201,13 +232,3 @@ class BuildsTracker:
         logger.info(f"task {task_id} revoked")
         now = dt.now(tz=datetime.UTC)
         await self._mark_task_state(task_id, EntryState.revoked, finished=now)
-
-
-_builds_tracker = BuildsTracker()
-
-
-def get_builds_tracker() -> BuildsTracker:
-    return _builds_tracker
-
-
-CBSBuildsTracker = Annotated[BuildsTracker, Depends(get_builds_tracker)]

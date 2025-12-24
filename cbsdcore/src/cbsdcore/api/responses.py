@@ -19,7 +19,7 @@ class BaseErrorModel(pydantic.BaseModel):
 
 
 class NewBuildResponse(pydantic.BaseModel):
-    task_id: str
+    build_id: int
     state: str
 
 
