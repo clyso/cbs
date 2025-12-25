@@ -23,7 +23,7 @@ from cbscore.builder.prepare import (
 from cbscore.builder.rpmbuild import ComponentBuild, build_rpms
 from cbscore.builder.signing import sign_rpms
 from cbscore.builder.upload import s3_upload_rpms
-from cbscore.config import Config, ConfigError
+from cbscore.config import Config, ConfigError, SigningConfig, StorageConfig
 from cbscore.containers import ContainerError
 from cbscore.containers.build import ContainerBuilder
 from cbscore.core.component import CoreComponentLoc, load_components
@@ -58,9 +58,8 @@ class Builder:
     config: Config
     scratch_path: Path
     components: dict[str, CoreComponentLoc]
-    upload_to: str | None
-    sign_with_gpg: str | None
-    sign_with_transit: str | None
+    storage_config: StorageConfig | None
+    signing_config: SigningConfig | None
     secrets: SecretsMgr
     ccache_path: Path | None
     skip_build: bool
@@ -78,15 +77,8 @@ class Builder:
         self.config = config
         self.scratch_path = config.paths.scratch
 
-        self.upload_to = (
-            config.secrets_config.storage if config.secrets_config else None
-        )
-        self.sign_with_gpg = (
-            config.secrets_config.gpg_signing if config.secrets_config else None
-        )
-        self.sign_with_transit = (
-            config.secrets_config.transit_signing if config.secrets_config else None
-        )
+        self.storage_config = config.storage
+        self.signing_config = config.signing
         self.ccache_path = config.paths.ccache
         self.skip_build = skip_build
         self.force = force
@@ -124,9 +116,13 @@ class Builder:
             logger.info(f"image '{container_img_uri}' not found in registry, build")
 
         release_desc: ReleaseDesc | None = None
-        if self.upload_to:
+        if self.storage_config and self.storage_config.s3:
             release_desc = await check_release_exists(
-                self.secrets, self.upload_to, self.desc.version
+                self.secrets,
+                self.storage_config.s3.url,
+                self.storage_config.s3.releases.bucket,
+                self.storage_config.s3.releases.loc,
+                self.desc.version,
             )
 
             # FIXME: checking for arch must be done agaisnt the version descriptor,
@@ -157,7 +153,7 @@ class Builder:
                 raise BuilderError(msg) from e
 
         if not release_desc:
-            if self.upload_to:
+            if self.storage_config and self.storage_config.s3:
                 # this should not happen!
                 msg = "unexpected missing release descriptor!"
                 logger.error(msg)
@@ -171,7 +167,9 @@ class Builder:
             await ctr_builder.build()
             await ctr_builder.finish(
                 self.secrets,
-                sign_with_transit=self.sign_with_transit,
+                sign_with_transit=self.signing_config.transit
+                if self.signing_config
+                else None,
             )
         except (ContainerError, Exception) as e:
             msg = f"error creating container: {e}"
@@ -234,13 +232,17 @@ class Builder:
         #
         existing: dict[str, ReleaseComponentVersion] = {}
 
-        if self.upload_to and not self.force:
+        if self.storage_config and self.storage_config.s3 and not self.force:
             try:
                 to_check = {
                     comp.name: comp.long_version for comp in components.values()
                 }
                 found = await check_released_components(
-                    self.secrets, self.upload_to, to_check
+                    self.secrets,
+                    self.storage_config.s3.url,
+                    self.storage_config.s3.releases.bucket,
+                    self.storage_config.s3.releases.loc,
+                    to_check,
                 )
             except (BuilderError, Exception) as e:
                 msg = f"error checking released components: {e}"
@@ -274,7 +276,7 @@ class Builder:
                 logger.error(msg)
                 raise BuilderError(msg) from e
 
-        if not self.upload_to:
+        if not self.storage_config or not self.storage_config.s3:
             logger.warning("not uploading per config, stop release build")
             return None
 
@@ -297,10 +299,15 @@ class Builder:
         )
 
         release: ReleaseDesc | None = None
-        if self.upload_to:
+        if self.storage_config and self.storage_config.s3:
             try:
                 release = await release_desc_upload(
-                    self.secrets, self.upload_to, self.desc.version, release_build
+                    self.secrets,
+                    self.storage_config.s3.url,
+                    self.storage_config.s3.releases.bucket,
+                    self.storage_config.s3.releases.loc,
+                    self.desc.version,
+                    release_build,
                 )
             except (BuilderError, Exception) as e:
                 msg = f"error uploading release desc to S3: {e}"
@@ -332,7 +339,7 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg) from e
 
-        if not self.upload_to:
+        if not self.storage_config or not self.storage_config.s3:
             return {}
 
         try:
@@ -375,12 +382,12 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg) from e
 
-        if not self.sign_with_gpg:
+        if not self.signing_config or not self.signing_config.gpg:
             logger.warning("no signing method provided, skip signing RPMs")
         else:
-            logger.info(f"signing RPMs with gpg key '{self.sign_with_gpg}'")
+            logger.info(f"signing RPMs with gpg key '{self.signing_config.gpg}'")
             try:
-                await sign_rpms(self.secrets, self.sign_with_gpg, comp_builds)
+                await sign_rpms(self.secrets, self.signing_config.gpg, comp_builds)
             except BuilderError as e:
                 msg = f"error signing component RPMs: {e}"
                 logger.error(msg)
@@ -404,12 +411,15 @@ class Builder:
         Returns a dict of component names to their corresponding component release
         descriptor.
         """  # noqa: D205
-        if not self.upload_to:
+        if not self.storage_config or not self.storage_config.s3:
             logger.warning("no upload location provided, skip upload")
             return {}
 
         logger.info(
-            f"upload RPMs to: {self.upload_to}, components: {comp_builds.keys()}"
+            f"upload RPMs to url '{self.storage_config.s3.url}' "
+            + f"bucket '{self.storage_config.s3.artifacts.bucket}', "
+            + f"loc '{self.storage_config.s3.artifacts.loc}', "
+            + f"components: {comp_builds.keys()}"
         )
 
         if not comp_builds:
@@ -424,7 +434,12 @@ class Builder:
 
         try:
             s3_comp_loc = await s3_upload_rpms(
-                self.secrets, self.upload_to, comp_builds, self.desc.el_version
+                self.secrets,
+                self.storage_config.s3.url,
+                self.storage_config.s3.artifacts.bucket,
+                self.storage_config.s3.artifacts.loc,
+                comp_builds,
+                self.desc.el_version,
             )
         except (BuilderError, Exception) as e:
             msg = f"error uploading RPMs to S3: {e}"
@@ -436,7 +451,11 @@ class Builder:
         comp_versions = {name: info.long_version for name, info in comp_infos.items()}
         try:
             existing_components = await check_released_components(
-                self.secrets, self.upload_to, comp_versions
+                self.secrets,
+                self.storage_config.s3.url,
+                self.storage_config.s3.releases.bucket,
+                self.storage_config.s3.releases.loc,
+                comp_versions,
             )
         except ReleaseError as e:
             msg = f"error checking existing released components: {e}"
@@ -506,7 +525,13 @@ class Builder:
         # in parallel, hence why we are doing it outside of the loop above.
         #
         try:
-            await release_upload_components(self.secrets, self.upload_to, comp_releases)
+            await release_upload_components(
+                self.secrets,
+                self.storage_config.s3.url,
+                self.storage_config.s3.releases.bucket,
+                self.storage_config.s3.releases.loc,
+                comp_releases,
+            )
         except (BuilderError, Exception) as e:
             msg = f"error uploading release descriptors for components: {e}"
             logger.error(msg)

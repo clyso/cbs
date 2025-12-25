@@ -64,15 +64,13 @@ class S3ListResult(pydantic.BaseModel):
     common_prefixes: list[str]
 
 
-_UPLOAD_BUCKET = "ces-packages"
-
-
 logger = parent_logger.getChild("s3")
 
 
 async def s3_upload_str_obj(
     secrets: SecretsMgr,
     url: str,
+    dst_bucket: str,
     location: str,
     contents: str,
     content_type: str = "application/json",
@@ -100,7 +98,7 @@ async def s3_upload_str_obj(
         hostname = f"https://{hostname}"
 
     async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
-        bucket = await s3.Bucket(_UPLOAD_BUCKET)
+        bucket = await s3.Bucket(dst_bucket)
         try:
             _ = await bucket.put_object(
                 Key=location,
@@ -116,6 +114,7 @@ async def s3_upload_str_obj(
 async def s3_download_str_obj(
     secrets: SecretsMgr,
     url: str,
+    src_bucket: str,
     location: str,
     content_type: str | None = None,
 ) -> str | None:
@@ -142,7 +141,7 @@ async def s3_download_str_obj(
         hostname = f"https://{hostname}"
 
     async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
-        bucket = await s3.Bucket(_UPLOAD_BUCKET)
+        bucket = await s3.Bucket(src_bucket)
         try:
             obj = await bucket.Object(location)
         except s3.meta.client.exceptions.NoSuchKey:
@@ -195,19 +194,21 @@ async def s3_download_str_obj(
 
 
 async def s3_upload_json(
-    secrets: SecretsMgr, url: str, location: str, contents: str
+    secrets: SecretsMgr, url: str, bucket: str, location: str, contents: str
 ) -> None:
     """Upload a JSON object."""
     return await s3_upload_str_obj(
-        secrets, url, location, contents, content_type="application/json"
+        secrets, url, bucket, location, contents, content_type="application/json"
     )
 
 
-async def s3_download_json(secrets: SecretsMgr, url: str, location: str) -> str | None:
+async def s3_download_json(
+    secrets: SecretsMgr, url: str, bucket: str, location: str
+) -> str | None:
     """Download a JSON object."""
     try:
         return await s3_download_str_obj(
-            secrets, url, location, content_type="application/json"
+            secrets, url, bucket, location, content_type="application/json"
         )
     except Exception as e:
         msg = f"error downloading JSON object: {e}"
@@ -217,15 +218,18 @@ async def s3_download_json(secrets: SecretsMgr, url: str, location: str) -> str 
 
 async def _upload_file(
     s3: S3ServiceResource,
+    dst_bucket: str,
     file_loc: S3FileLocator,
     public: bool = False,
 ) -> None:
     """Upload a file from the local filesystem to S3."""
-    bucket = await s3.Bucket(_UPLOAD_BUCKET)
+    bucket = await s3.Bucket(dst_bucket)
 
     extra_args = None if not public else {"ACL": "public-read"}
 
-    logger.debug(f"uploading file '{file_loc.name}' to '{file_loc.dst}'")
+    logger.debug(
+        f"uploading file '{file_loc.name}' to '{file_loc.dst}' bucket '{dst_bucket}'"
+    )
     try:
         await bucket.upload_file(
             file_loc.src.as_posix(),
@@ -235,7 +239,7 @@ async def _upload_file(
     except Exception as e:
         msg = (
             f"error uploading file '{file_loc.name}' from '{file_loc.src}' "
-            + f"to '{file_loc.dst}': {e}"
+            + f"to '{file_loc.dst}' bucket '{dst_bucket}': {e}"
         )
         logger.exception(msg)
         raise S3Error(msg) from e
@@ -244,6 +248,7 @@ async def _upload_file(
 async def s3_upload_files(
     secrets: SecretsMgr,
     url: str,
+    dst_bucket: str,
     file_locs: list[S3FileLocator],
     *,
     public: bool = False,
@@ -269,7 +274,7 @@ async def s3_upload_files(
     async with s3_session.resource("s3", None, None, True, True, hostname) as s3:
         for loc in file_locs:
             try:
-                await _upload_file(s3, loc, public=public)
+                await _upload_file(s3, dst_bucket, loc, public=public)
             except S3Error as e:
                 msg = f"error uploading file: {e}"
                 logger.exception(msg)
@@ -283,6 +288,7 @@ async def s3_upload_files(
 async def s3_list(
     secrets: SecretsMgr,
     url: str,
+    target_bucket: str,
     *,
     prefix: str | None = None,
     prefix_as_directory: bool = False,
@@ -323,13 +329,13 @@ async def s3_list(
     async with (
         s3_session.client("s3", endpoint_url=hostname) as s3_client,
     ):
-        logger.debug(f"listing objects for bucket '{_UPLOAD_BUCKET}")
+        logger.debug(f"listing objects for bucket '{target_bucket}")
 
         continuation_token = ""
         while True:
             logger.debug(f"listing objects, continuation_token: '{continuation_token}'")
             res = await s3_client.list_objects_v2(
-                Bucket=_UPLOAD_BUCKET,
+                Bucket=target_bucket,
                 Prefix=prefix if prefix else "",
                 Delimiter=delimiter,
                 ContinuationToken=continuation_token,
