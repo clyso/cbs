@@ -23,12 +23,14 @@ import yaml
 
 from cbscore.cmds import Ctx, pass_ctx
 from cbscore.config import (
-    ArtifactsConfig,
-    ArtifactsS3Config,
     Config,
     ConfigError,
-    DefaultSecretsConfig,
     PathsConfig,
+    RegistryStorageConfig,
+    S3LocationConfig,
+    S3StorageConfig,
+    SigningConfig,
+    StorageConfig,
     VaultAppRoleConfig,
     VaultConfig,
     VaultUserPassConfig,
@@ -157,20 +159,68 @@ def config_init_paths(
     )
 
 
-def config_init_artifacts() -> ArtifactsConfig | None:
-    """Initialize artifacts S3 locations config interactively."""
-    if not click.confirm("Configure S3 artifacts locations?"):
-        click.echo("skipping artifacts configuration")
-        click.echo("these should be manually configured later if S3 is being used")
+def config_init_storage() -> StorageConfig | None:
+    """Initialize storage config interactively."""
+    if not click.confirm("Configure storage?"):
+        click.echo("skipping storage configuration")
+        click.echo("this should be manually configured later if storage is used")
         return None
 
-    artifact_bucket = cast(str, click.prompt("S3 artifacts bucket", type=str))
-    releases_bucket = cast(str, click.prompt("S3 releases bucket", type=str))
-    return ArtifactsConfig(
-        s3=ArtifactsS3Config(
-            s3_artifact_bucket=artifact_bucket, s3_releases_bucket=releases_bucket
+    s3_storage_config: S3StorageConfig | None = None
+    if click.confirm("Configure S3 storage for artifact upload?"):
+        s3_url = cast(str, click.prompt("S3 storage URL", type=str))
+        artifact_bucket = cast(str, click.prompt("S3 artifacts bucket", type=str))
+        artifact_loc = cast(str, click.prompt("S3 artifacts location", type=str))
+        releases_bucket = cast(str, click.prompt("S3 releases bucket", type=str))
+        releases_loc = cast(str, click.prompt("S3 releases location", type=str))
+        s3_storage_config = S3StorageConfig(
+            url=s3_url,
+            artifacts=S3LocationConfig(
+                bucket=artifact_bucket,
+                loc=artifact_loc,
+            ),
+            releases=S3LocationConfig(
+                bucket=releases_bucket,
+                loc=releases_loc,
+            ),
         )
+
+    registry_storage_config: RegistryStorageConfig | None = None
+    # FIXME: container registry location config is currently ignored, given the image
+    # is always uploaded to the registry specified in the version descriptor. Yet, we
+    # need the config option otherwise checks in the builder will refuse to build.
+    if click.confirm("Configure registry storage for container image upload?"):
+        registry_url = cast(str, click.prompt("Registry storage URL", type=str))
+        registry_storage_config = RegistryStorageConfig(url=registry_url)
+
+    return StorageConfig(
+        s3=s3_storage_config,
+        registry=registry_storage_config,
     )
+
+
+def config_init_signing() -> SigningConfig | None:
+    """Initialize signing config interactively."""
+    if not click.confirm("Configure artifact signing?"):
+        click.echo("skipping signing configuration")
+        click.echo("this should be manually configured later if signing is used")
+        return None
+
+    gpg_secret: str | None = None
+    if click.confirm("Specify package GPG signing secret name?"):
+        gpg_secret = cast(str, click.prompt("GPG signing secret name", type=str))
+
+    transit_secret: str | None = None
+    if click.confirm("Specify container image transit signing secret name?"):
+        transit_secret = cast(
+            str, click.prompt("Transit signing secret name", type=str)
+        )
+
+    if gpg_secret is None and transit_secret is None:
+        click.echo("no signing methods specified, skipping signing configuration")
+        return None
+
+    return SigningConfig(gpg=gpg_secret, transit=transit_secret)
 
 
 def config_init_secrets_paths(secrets_files_paths: list[Path] | None) -> list[Path]:
@@ -198,30 +248,6 @@ def config_init_secrets_paths(secrets_files_paths: list[Path] | None) -> list[Pa
     return secrets_paths
 
 
-def config_init_secrets_config() -> DefaultSecretsConfig | None:
-    """Specify default secrets to use."""
-    if not click.confirm("Specify default secrets to use?"):
-        click.echo("skipping default secrets configuration")
-        click.echo("it is recommended to manually configure these later")
-        return None
-
-    storage_secret = cast(str, click.prompt("Storage secret", default="", type=str))
-    gpg_signing_secret = cast(
-        str, click.prompt("GPG signing secret", default="", type=str)
-    )
-    transit_signing_secret = cast(
-        str,
-        click.prompt("Transit signing secret", default="", type=str),
-    )
-    registry = cast(str, click.prompt("Registry", default="", type=str))
-    return DefaultSecretsConfig(
-        storage=storage_secret if storage_secret else None,
-        gpg_signing=gpg_signing_secret if gpg_signing_secret else None,
-        transit_signing=transit_signing_secret if transit_signing_secret else None,
-        registry=registry if registry else None,
-    )
-
-
 def config_init(
     config_path: Path,
     cwd: Path,
@@ -241,14 +267,15 @@ def config_init(
         containers_scratch_path=containers_scratch_path,
         ccache_path=ccache_path,
     )
-    artifacts = config_init_artifacts()
+    storage_config = config_init_storage()
+    signing_config = config_init_signing()
+
     secrets_paths = config_init_secrets_paths(secrets_files_paths)
-    secrets_config = config_init_secrets_config()
 
     config = Config(
         paths=config_paths,
-        artifacts=artifacts,
-        secrets_config=secrets_config,
+        storage=storage_config,
+        signing=signing_config,
         secrets=secrets_paths,
         vault=vault_config_path,
     )

@@ -24,7 +24,7 @@ from cbscore.builder import BuilderError
 from cbscore.builder.builder import Builder
 from cbscore.cmds import Ctx, pass_ctx, with_config
 from cbscore.cmds import logger as parent_logger
-from cbscore.config import Config, ConfigError, DefaultSecretsConfig
+from cbscore.config import Config, ConfigError, SigningConfig
 from cbscore.errors import CESError
 from cbscore.runner import RunnerError, runner
 from cbscore.utils.secrets import SecretsError
@@ -79,14 +79,6 @@ logger = parent_logger.getChild("builds")
     required=False,
 )
 @click.option(
-    "--upload-to",
-    "upload_to",
-    help="Upload artifacts to specified storage.",
-    type=str,
-    required=False,
-    metavar="HOST|ADDRESS",
-)
-@click.option(
     "--sign-with-gpg-id",
     "sign_with_gpg_id",
     help="Sign artifacts with specified gpg secret id.",
@@ -101,14 +93,6 @@ logger = parent_logger.getChild("builds")
     type=str,
     required=False,
     metavar="TRANSIT_SECRET_ID",
-)
-@click.option(
-    "--registry",
-    "registry",
-    help="Push built container images to specified registry.",
-    type=str,
-    required=False,
-    metavar="HOST|ADDRESS",
 )
 @click.option(
     "--skip-build",
@@ -129,10 +113,8 @@ def cmd_build(
     cbscore_path: Path,
     cbs_entrypoint_path: Path | None,
     timeout: float | None,
-    upload_to: str | None,
     sign_with_gpg_id: str | None,
     sign_with_transit: str | None,
-    registry: str | None,
     skip_build: bool,
     force: bool,
 ) -> None:
@@ -144,17 +126,15 @@ def cmd_build(
         click.echo(f"error loading config from '{ctx.config_path}': {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
 
-    if not config.secrets_config:
-        config.secrets_config = DefaultSecretsConfig()
+    if (sign_with_gpg_id or sign_with_transit) and not config.signing:
+        config.signing = SigningConfig()
 
-    config.secrets_config.storage = upload_to or config.secrets_config.storage
-    config.secrets_config.gpg_signing = (
-        sign_with_gpg_id or config.secrets_config.gpg_signing
-    )
-    config.secrets_config.transit_signing = (
-        sign_with_transit or config.secrets_config.transit_signing
-    )
-    config.secrets_config.registry = registry or config.secrets_config.registry
+    if sign_with_gpg_id:
+        assert config.signing
+        config.signing.gpg = sign_with_gpg_id
+    if sign_with_transit:
+        assert config.signing
+        config.signing.transit = sign_with_transit
 
     try:
         secrets = config.get_secrets()
@@ -231,23 +211,23 @@ def cmd_runner_build(
     force: bool,
 ) -> None:
     upload_to_str = (
-        config.secrets_config.storage
-        if config.secrets_config and config.secrets_config.storage
+        config.storage.s3.url
+        if config.storage and config.storage.s3
         else "not uploading"
     )
     gpg_signing_str = (
-        config.secrets_config.gpg_signing
-        if config.secrets_config and config.secrets_config.gpg_signing
+        config.signing.gpg
+        if config.signing and config.signing.gpg
         else "not signing with gpg"
     )
     transit_signing_str = (
-        config.secrets_config.transit_signing
-        if config.secrets_config and config.secrets_config.transit_signing
+        config.signing.transit
+        if config.signing and config.signing.transit
         else "not signing with transit"
     )
     registry_str = (
-        config.secrets_config.registry
-        if config.secrets_config and config.secrets_config.registry
+        config.storage.registry.url
+        if config.storage and config.storage.registry
         else "not pushing to registry"
     )
 

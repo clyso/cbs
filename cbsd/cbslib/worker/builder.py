@@ -72,7 +72,7 @@ def _create_version_desc(
 
     el_version = int(os_version_m.group(1))
 
-    if not config.secrets_config or not config.secrets_config.registry:
+    if not config.storage or not config.storage.registry:
         msg = "registry not specified in config, don't build"
         logger.error(msg)
         raise WorkerBuilderError(msg)
@@ -88,7 +88,7 @@ def _create_version_desc(
             },
             distro=build_desc.build.distro,
             el_version=el_version,
-            registry=config.secrets_config.registry,
+            registry=config.storage.registry.url,
             image_name=build_desc.dst_image.name,
             image_tag=build_desc.dst_image.tag,
             user_name=build_desc.signed_off_by.user,
