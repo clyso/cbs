@@ -24,6 +24,7 @@ from cbslib.auth import AuthNoSuchUserError
 from cbslib.auth.users import CBSAuthUsersDB
 from cbslib.builds.mgr import BuildsMgr
 from cbslib.core.mgr import CBSMgr
+from cbslib.core.periodic import PeriodicTracker
 from cbslib.core.permissions import RoutesCaps
 from cbslib.routes import logger as parent_logger
 from cbslib.routes._auth import AuthTokenInfo, responses_auth_token
@@ -100,3 +101,10 @@ class RequiredRouteCaps:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User missing required capabilities",
             )
+
+
+def get_periodic_tracker(mgr: CBSMgr) -> PeriodicTracker:
+    return mgr.periodic_tracker
+
+
+CBSPeriodicTracker = Annotated[PeriodicTracker, Depends(get_periodic_tracker)]

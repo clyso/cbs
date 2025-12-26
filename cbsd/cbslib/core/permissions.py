@@ -84,6 +84,9 @@ class RoutesCaps(_PermissionsCaps):
     ROUTES_BUILDS_STATUS = enum.auto()
     ROUTES_BUILDS_INSPECT = enum.auto()
 
+    ROUTES_PERIODIC_BUILDS_NEW = enum.auto()
+    ROUTES_PERIODIC_BUILDS_LIST = enum.auto()
+
 
 def _caps_from_str_lst_for(
     t: type[_PermissionsCaps],

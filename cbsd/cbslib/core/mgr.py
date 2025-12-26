@@ -72,6 +72,12 @@ class Mgr:
         # init builds manager
         await self._builds_mgr.init()
 
+        # set up periodic tasks from db.
+        # TODO: actually implement periodic tasks from db, only a placeholder for now.
+        # await self._periodic_tracker.add_task("*/1 * * * *")  # every 1 minute
+        # await self._periodic_tracker.add_task("*/2 * * * *")  # every 2 minutes
+        # await self._periodic_tracker.add_task("* * * * wed")  # every wednesday
+
     @property
     def builds_mgr(self) -> BuildsMgr:
         """Return the builds mgr instance, if it is already available."""
@@ -80,6 +86,11 @@ class Mgr:
     @property
     def permissions(self) -> Permissions:
         return self._permissions
+
+    @property
+    def periodic_tracker(self) -> PeriodicTracker:
+        """Returns the periodic tasks tracker instance."""
+        return self._periodic_tracker
 
 
 _mgr: Mgr | None = None
