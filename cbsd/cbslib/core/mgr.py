@@ -21,6 +21,7 @@ from fastapi import Depends
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.mgr import BuildsMgr
 from cbslib.config.config import get_config
+from cbslib.core.periodic import PeriodicTracker
 from cbslib.core.permissions import Permissions
 
 logger = parent_logger.getChild("mgr")
@@ -39,6 +40,7 @@ class Mgr:
 
     _permissions: Permissions
     _builds_mgr: BuildsMgr
+    _periodic_tracker: PeriodicTracker
 
     def __init__(self, db_path: Path, permissions_path: Path) -> None:
         try:
@@ -55,6 +57,7 @@ class Mgr:
         )
 
         self._builds_mgr = BuildsMgr(db_path, self._permissions)
+        self._periodic_tracker = PeriodicTracker(self._builds_mgr)
 
     async def init(self) -> None:
         """Perform operations on the mgr that are required for its proper start."""
