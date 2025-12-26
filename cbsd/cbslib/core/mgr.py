@@ -29,6 +29,7 @@ from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB
 from cbslib.builds.tracker import BuildsTracker
 from cbslib.config.config import get_config
+from cbslib.core.periodic import PeriodicTracker
 from cbslib.core.permissions import AuthorizationCaps, Permissions
 from cbslib.worker.celery import celery_app
 from cbslib.worker.tasks import ListComponentsTaskResponse
@@ -97,6 +98,7 @@ class Mgr:
     _db: BuildsDB
     _permissions: Permissions
     _tracker: BuildsTracker
+    _periodic_tracker: PeriodicTracker
     _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
@@ -117,6 +119,8 @@ class Mgr:
             + f"{len(self._permissions.rules)} rules"
         )
 
+        self._periodic_tracker = PeriodicTracker()
+
         self._tracker = BuildsTracker(self._db)
         self._available_components = {}
         self._started = False
@@ -130,6 +134,12 @@ class Mgr:
 
         # update our known components.
         await self._update_components()
+
+        # set up periodic tasks from db.
+        # TODO: actually implement periodic tasks from db, only a placeholder for now.
+        await self._periodic_tracker.add_task("*/1 * * * *")  # every 1 minute
+        await self._periodic_tracker.add_task("*/2 * * * *")  # every 2 minutes
+        await self._periodic_tracker.add_task("* * * * wed")  # every wednesday
 
     async def _update_components(self) -> None:
         """Update components list, before we can start servicing requests."""
