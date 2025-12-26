@@ -33,6 +33,16 @@ logger = parent_logger.getChild("permissions")
 logger.setLevel(logging.INFO)
 
 
+class PermissionsError(CESError):
+    pass
+
+
+class NotAuthorizedError(PermissionsError):
+    """User is not authorized to perform an operation."""
+
+    pass
+
+
 class _PermissionsCapsMeta(abc.ABCMeta, enum.EnumMeta):
     pass
 

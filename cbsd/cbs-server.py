@@ -67,7 +67,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         logger.error(f"error initializing manager: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    monitor = Monitor(mgr.tracker, asyncio.get_event_loop())
+    monitor = Monitor(mgr.builds_mgr.tracker, asyncio.get_event_loop())
     monitor.start()
 
     logger.info("Starting cbs service server...")

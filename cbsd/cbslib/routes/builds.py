@@ -23,13 +23,14 @@ from fastapi.responses import JSONResponse
 
 from cbslib.auth.caps import RequiredRouteCaps
 from cbslib.auth.users import CBSAuthUser
+from cbslib.builds.mgr import NotAvailableError
 from cbslib.builds.tracker import (
     BuildExistsError,
     UnauthorizedTrackerError,
 )
-from cbslib.core.mgr import CBSMgr, NotAuthorizedError, NotAvailableError
-from cbslib.core.permissions import RoutesCaps
+from cbslib.core.permissions import NotAuthorizedError, RoutesCaps
 from cbslib.routes import logger as parent_logger
+from cbslib.routes._utils import CBSBuildsMgr
 from cbslib.worker.celery import celery_app
 
 logger = parent_logger.getChild("builds")
@@ -66,7 +67,7 @@ _responses = {
 )
 async def builds_new(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
     descriptor: BuildDescriptor,
 ) -> NewBuildResponse:
     logger.info(f"build new version: {descriptor}, user: {user}")
@@ -111,7 +112,7 @@ async def builds_new(
 )
 async def get_builds_status(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
     all: bool,
 ) -> list[tuple[BuildID, BuildEntry]]:
     logger.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
@@ -145,7 +146,7 @@ async def get_task_status(task_id: str) -> JSONResponse:
 )
 async def revoke_build_id(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
     build_id: BuildID,
     force: bool = False,
 ) -> bool:

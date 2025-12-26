@@ -16,8 +16,9 @@ from cbsdcore.api.responses import AvailableComponentsResponse, BaseErrorModel
 from fastapi import APIRouter, HTTPException, status
 
 from cbslib.auth.users import CBSAuthUser
-from cbslib.core.mgr import CBSMgr, NotAvailableError
+from cbslib.builds.mgr import NotAvailableError
 from cbslib.routes import logger as parent_logger
+from cbslib.routes._utils import CBSBuildsMgr
 
 _responses = {
     401: {
@@ -42,7 +43,7 @@ router = APIRouter(prefix="/components")
 @router.get("/", responses={**_responses})
 async def components_list(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
 ) -> AvailableComponentsResponse:
     logger.debug(f"obtain components list, user: {user}")
 
