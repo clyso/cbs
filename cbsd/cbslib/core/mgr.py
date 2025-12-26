@@ -57,8 +57,7 @@ class Mgr:
         )
 
         self._builds_mgr = BuildsMgr(db_path, self._permissions)
-
-        self._periodic_tracker = PeriodicTracker()
+        self._periodic_tracker = PeriodicTracker(self._builds_mgr)
 
     async def init(self) -> None:
         """Perform operations on the mgr that are required for its proper start."""

@@ -22,6 +22,7 @@ import croniter
 import pydantic
 from cbsdcore.versions import BuildDescriptor
 
+from cbslib.builds.mgr import BuildsMgr
 from cbslib.core import logger as parent_logger
 
 logger = parent_logger.getChild("periodic")
@@ -31,12 +32,19 @@ class PeriodicTask(pydantic.BaseModel):
     """Represents a periodic task."""
 
     cron_format: str
+    cron_uuid: uuid.UUID
 
 
 class PeriodicBuildTask(PeriodicTask):
     """Represents a periodic build task."""
 
+    user: str
     descriptor: BuildDescriptor
+
+    async def trigger(self, mgr: BuildsMgr) -> None:
+        logger.info(f"triggering periodic build '{self.cron_uuid}'")
+        build_id, build_state = await mgr.new(self.user, self.descriptor)
+        logger.info(f"triggered periodic build '{build_id}', state '{build_state}'")
 
 
 class PeriodicTracker:
@@ -45,11 +53,13 @@ class PeriodicTracker:
     _lock: asyncio.Lock
     _tasks: dict[uuid.UUID, asyncio.Task[None]]
     _crons: dict[uuid.UUID, croniter.croniter]
+    _builds_mgr: BuildsMgr
 
-    def __init__(self) -> None:
+    def __init__(self, builds_mgr: BuildsMgr) -> None:
         self._lock = asyncio.Lock()
         self._tasks = {}
         self._crons = {}
+        self._builds_mgr = builds_mgr
 
     async def add_task(self, period: str) -> None:
         try:
