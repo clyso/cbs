@@ -43,6 +43,14 @@ class Mgr:
     _periodic_tracker: PeriodicTracker
 
     def __init__(self, db_path: Path, permissions_path: Path) -> None:
+        if not db_path.exists():
+            db_path.mkdir(parents=True)
+
+        if not db_path.is_dir():
+            msg = "database path is not a directory"
+            logger.error(msg)
+            raise MgrError(msg)
+
         try:
             self._permissions = Permissions.load(permissions_path)
         except (ValueError, CESError) as e:

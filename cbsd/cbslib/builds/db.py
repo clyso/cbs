@@ -28,6 +28,9 @@ from cbslib.builds import logger as parent_logger
 logger = parent_logger.getChild("db")
 
 
+_BUILDS_DB_FILE = "builds.db"
+
+
 class BuildsDBError(CESError):
     pass
 
@@ -121,9 +124,17 @@ class BuildsDB:
     _lock: asyncio.Lock
 
     def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
+        if not db_path.exists():
+            db_path.mkdir(parents=True)
+
+        if not db_path.is_dir():
+            msg = "database path is not a directory"
+            logger.error(msg)
+            raise BuildsDBError(msg)
+
+        self._db_path = db_path / _BUILDS_DB_FILE
         # propagate exceptions
-        self._root = _DBRoot.load(db_path)
+        self._root = _DBRoot.load(self._db_path)
         self._lock = asyncio.Lock()
 
     async def new(self, entry: BuildEntry) -> BuildID:

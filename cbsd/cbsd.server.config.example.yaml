@@ -12,7 +12,7 @@ server:
   cert: /cbs/config/cbs.cert.pem
   key: /cbs/config/cbs.key.pem
   # database for persistent storage
-  db: /cbs/data/cbs.db
+  db: /cbs/data/db/
   permissions: /cbs/config/permissions.yaml
   secrets:
     # config file for google's oauth2 application (currently mandatory).

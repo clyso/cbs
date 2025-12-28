@@ -28,6 +28,8 @@ from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("users")
 
+_USERS_DB_FILE = "users.db"
+
 
 class AuthUsersDBMissingError(AuthError):
     """Auth Users DB is missing."""
@@ -48,7 +50,15 @@ class Users:
     _tokens_db: dict[bytes, Token]
 
     def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
+        if not db_path.exists():
+            db_path.mkdir(parents=True)
+
+        if not db_path.is_dir():
+            msg = "database path is not a directory"
+            logger.error(msg)
+            raise UsersDBError(msg)
+
+        self._db_path = db_path / _USERS_DB_FILE
         self._users_db = {}
         self._tokens_db = {}
 
