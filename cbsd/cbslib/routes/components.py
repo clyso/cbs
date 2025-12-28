@@ -15,36 +15,35 @@
 from cbsdcore.api.responses import AvailableComponentsResponse, BaseErrorModel
 from fastapi import APIRouter, HTTPException, status
 
-from cbslib.auth.users import CBSAuthUser
 from cbslib.builds.mgr import NotAvailableError
 from cbslib.routes import logger as parent_logger
-from cbslib.routes._utils import CBSBuildsMgr
-
-_responses = {
-    401: {
-        "model": BaseErrorModel,
-        "description": "Not authorized to perform request",
-    },
-    403: {
-        "model": BaseErrorModel,
-        "description": "User not authenticated",
-    },
-    500: {
-        "model": BaseErrorModel,
-        "description": "An internal error occurred, please check CBS logs",
-    },
-}
+from cbslib.routes._utils import CBSAuthUser, CBSBuildsMgr, responses_auth
 
 logger = parent_logger.getChild("components")
 
 router = APIRouter(prefix="/components")
 
 
-@router.get("/", responses={**_responses})
+@router.get(
+    "/",
+    summary="Obtain known build components",
+    responses={
+        **responses_auth,
+        500: {
+            "description": "Unknown error obtaining components",
+            "model": BaseErrorModel,
+        },
+        200: {
+            "description": "Known components",
+            "model": AvailableComponentsResponse,
+        },
+    },
+)
 async def components_list(
     user: CBSAuthUser,
     mgr: CBSBuildsMgr,
 ) -> AvailableComponentsResponse:
+    """Obtain known components that are able to be built by the service."""
     logger.debug(f"obtain components list, user: {user}")
 
     try:

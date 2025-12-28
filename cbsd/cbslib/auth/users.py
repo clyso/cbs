@@ -19,11 +19,11 @@ import pydantic
 from cbscore.errors import CESError
 from cbsdcore.auth.token import Token
 from cbsdcore.auth.user import User
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends
 
 from cbslib.auth import AuthError, AuthNoSuchUserError
 from cbslib.auth import logger as parent_logger
-from cbslib.auth.auth import AuthTokenInfo, token_create
+from cbslib.auth.auth import token_create
 from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("users")
@@ -123,13 +123,3 @@ def get_auth_users() -> Users:
 
 
 CBSAuthUsersDB = Annotated[Users, Depends(get_auth_users)]
-
-
-async def get_user(token_info: AuthTokenInfo, users: CBSAuthUsersDB) -> User:
-    try:
-        return await users.get_user(token_info.user)
-    except AuthNoSuchUserError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized user") from None
-
-
-CBSAuthUser = Annotated[User, Depends(get_user)]

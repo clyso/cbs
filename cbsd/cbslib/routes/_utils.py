@@ -14,10 +14,47 @@
 
 from typing import Annotated
 
+from cbsdcore.api.responses import BaseErrorModel
+from cbsdcore.auth.user import User
 from fastapi import Depends, HTTPException, status
 
+from cbslib.auth import AuthNoSuchUserError
+from cbslib.auth.users import CBSAuthUsersDB
 from cbslib.builds.mgr import BuildsMgr
 from cbslib.core.mgr import CBSMgr
+from cbslib.core.permissions import RoutesCaps
+from cbslib.routes import logger as parent_logger
+from cbslib.routes._auth import AuthTokenInfo, responses_auth_token
+
+logger = parent_logger.getChild("utils")
+
+
+responses_auth = {
+    **responses_auth_token,
+    401: {
+        "description": "User not authorized to perform request",
+        "model": BaseErrorModel,
+    },
+    403: {"description": "User not authenticated", "model": BaseErrorModel},
+}
+
+
+async def get_user(token_info: AuthTokenInfo, users: CBSAuthUsersDB) -> User:
+    try:
+        return await users.get_user(token_info.user)
+    except AuthNoSuchUserError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Unauthorized user") from None
+
+
+CBSAuthUser = Annotated[User, Depends(get_user)]
+
+
+responses_builds = {
+    503: {
+        "description": "Service hasn't started yet, try again later",
+        "model": BaseErrorModel,
+    }
+}
 
 
 def get_builds_mgr(mgr: CBSMgr) -> BuildsMgr:
@@ -31,3 +68,31 @@ def get_builds_mgr(mgr: CBSMgr) -> BuildsMgr:
 
 
 CBSBuildsMgr = Annotated[BuildsMgr, Depends(get_builds_mgr)]
+
+
+responses_caps = {
+    **responses_auth,
+    403: {
+        "description": "User missing required capabilities",
+        "model": BaseErrorModel,
+    },
+}
+
+
+class RequiredRouteCaps:
+    _required: RoutesCaps
+
+    def __init__(self, required: RoutesCaps) -> None:
+        self._required = required
+
+    def __call__(self, user: CBSAuthUser, mgr: CBSMgr) -> None:
+        logger.debug(f"checking user '{user.email}' for caps '{self._required}'")
+        if not mgr.permissions.is_authorized_for_route(user.email, self._required):
+            logger.warning(
+                f"authorization failed for user '{user.email}' "
+                + f"missing caps '{self._required}'"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User missing required capabilities",
+            )
