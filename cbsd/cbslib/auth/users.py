@@ -11,7 +11,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+import datetime
 import dbm
+from datetime import datetime as dt
 from pathlib import Path
 from typing import Annotated, override
 
@@ -37,6 +39,13 @@ class AuthUsersDBMissingError(AuthError):
 
     def __init__(self) -> None:
         super().__init__("missing auth users db!")
+
+
+class ExpiredUserTokenError(AuthError):
+    """Auth user token has expired."""
+
+    def __init__(self, user: str) -> None:
+        super().__init__(f"token for user '{user}' has expired")
 
 
 class UsersDBError(CESError):
@@ -70,9 +79,13 @@ class Users:
         logger.info(f"create user '{email}' name '{name}'")
 
         async with self._rwlock.writer_lock:
-            if email in self._users_db:
+            user = self._users_db.get(email)
+            if user and (
+                not user.token.info.expires
+                or user.token.info.expires > dt.now(datetime.UTC)
+            ):
                 logger.debug(f"user '{email}' already exists, return")
-                return await self.get_user_token(email)
+                return user.token
 
             token = token_create(email)
             logger.debug(f"created token for user '{email}': {token}")
@@ -88,6 +101,9 @@ class Users:
             if email not in self._users_db:
                 raise AuthNoSuchUserError(email)
             user = self._users_db[email]
+            expires = user.token.info.expires
+            if expires and expires < dt.now(datetime.UTC):
+                raise ExpiredUserTokenError(email)
             return user.token
 
     async def get_user(self, email: str) -> User:

@@ -12,6 +12,8 @@
 # GNU Affero General Public License for more details.
 
 
+import datetime
+from datetime import datetime as dt
 from typing import Annotated
 
 from cbsdcore.api.responses import BaseErrorModel
@@ -40,6 +42,8 @@ responses_auth = {
 
 
 async def get_user(token_info: AuthTokenInfo, users: CBSAuthUsersDB) -> User:
+    if token_info.expires is not None and token_info.expires < dt.now(datetime.UTC):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expired") from None
     try:
         return await users.get_user(token_info.user)
     except AuthNoSuchUserError:

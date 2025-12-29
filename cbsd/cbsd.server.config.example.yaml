@@ -21,4 +21,4 @@ server:
     #   openssl rand -hex 32
     session-secret-key: <your-session-secret-key>
     token-secret-key: <your-token-secret-key>
-    token-secret-ttl-minutes: 30
+    token-secret-ttl-minutes: 10080 # 7 days / 1 week
