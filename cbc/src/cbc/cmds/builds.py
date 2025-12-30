@@ -17,25 +17,17 @@ import sys
 
 import click
 import pydantic
-from cbscore.versions.errors import VersionError
-from cbscore.versions.utils import VersionType, get_version_type, parse_component_refs
 from cbsdcore.api.responses import AvailableComponent, NewBuildResponse
 from cbsdcore.auth.user import UserConfig
 from cbsdcore.builds.types import BuildEntry, BuildID
 from cbsdcore.versions import (
-    BuildArch,
-    BuildArtifactType,
-    BuildComponent,
     BuildDescriptor,
-    BuildDestImage,
-    BuildSignedOffBy,
-    BuildTarget,
 )
 
 from cbc import CBCError
-from cbc.auth import auth_whoami
-from cbc.client import CBCClient, CBCConnectionError, CBCPermissionDeniedError
-from cbc.cmds import endpoint, pass_config, pass_logger, update_ctx
+from cbc.client import CBCClient
+from cbc.cmds import endpoint, pass_config, pass_logger, periodic, update_ctx
+from cbc.cmds._shared import build_descriptor_options, new_build_descriptor_helper
 
 # pyright: reportUnusedParameter=false, reportUnusedFunction=false
 
@@ -139,86 +131,7 @@ def cmd_build_components_list(config: UserConfig, logger: logging.Logger) -> Non
 
 @cmd_build.command("new", help="Create new build")
 @click.argument("version", type=str, metavar="VERSION", required=True)
-@click.option(
-    "-t",
-    "--type",
-    "version_type_name",
-    type=click.Choice([t.value for t in VersionType], case_sensitive=True),
-    help="Type of version to be built",
-    required=False,
-    metavar="TYPE",
-    default="dev",
-    show_default=True,
-)
-@click.option(
-    "-p",
-    "--channel",
-    "version_channel",
-    type=str,
-    help="Channel to build version for",
-    required=True,
-    metavar="CHANNEL",
-    default="!user",
-    show_default=True,
-)
-@click.option(
-    "-c",
-    "--component",
-    "components",
-    type=str,
-    multiple=True,
-    required=True,
-    metavar="NAME@VERSION",
-    help="Component's version (e.g., 'ceph@abcde1234')",
-)
-@click.option(
-    "--override-component",
-    "component_overrides",
-    type=str,
-    multiple=True,
-    required=False,
-    metavar="COMPONENT=URL",
-    help="Override component's location",
-)
-@click.option(
-    "--distro",
-    type=str,
-    required=False,
-    default="rockylinux:9",
-    metavar="NAME",
-    help="Distribution to use for this release",
-)
-@click.option(
-    "--el-version",
-    type=int,
-    required=False,
-    default=9,
-    metavar="VERSION",
-    help="Distribution's EL version",
-)
-@click.option(
-    "--registry",
-    type=str,
-    required=False,
-    default="harbor.clyso.com",
-    metavar="URL",
-    help="Registry for this release's image",
-)
-@click.option(
-    "--image-name",
-    type=str,
-    required=False,
-    default="ceph/ceph",
-    metavar="NAME",
-    help="Name for this release's image",
-)
-@click.option(
-    "--image-tag",
-    type=str,
-    required=False,
-    metavar="TAG",
-    help="Tag for this release's image",
-)
+@build_descriptor_options
 @update_ctx
 @pass_logger
 @pass_config
@@ -232,87 +145,36 @@ def cmd_build_new(
     component_overrides: tuple[str, ...],
     distro: str,
     el_version: int,
-    registry: str,  # currently unused?
+    # registry: str,  # currently unused?
     image_name: str,
     image_tag: str | None,
 ) -> None:
-    try:
-        email, name = auth_whoami(logger, config)
-    except CBCConnectionError as e:
-        click.echo(f"connection error: {e}", err=True)
-        sys.exit(errno.ECONNREFUSED)
-    except CBCPermissionDeniedError as e:
-        click.echo(f"permission denied: {e}", err=True)
-        sys.exit(errno.EACCES)
-    except Exception as e:
-        click.echo(f"error obtaining user's info: {e}", err=True)
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    try:
-        version_type = get_version_type(version_type_name)
-    except VersionError as e:
-        click.echo(f"error parsing version type: {e}", err=True)
-        sys.exit(errno.EINVAL)
-
-    try:
-        component_refs = parse_component_refs(list(components))
-    except VersionError as e:
-        click.echo(f"error parsing components: {e}", err=True)
-        sys.exit(errno.EINVAL)
-
-    uri_overrides: dict[str, str] = {}
-    for uri_override in component_overrides:
-        entries = uri_override.split("=", maxsplit=1)
-        if len(entries) != 2:
-            click.echo(f"malformed component URI override: '{uri_override}'", err=True)
-            sys.exit(errno.EINVAL)
-
-        comp, uri = entries
-        if comp not in component_refs:
-            click.echo(f"ignoring URI for missing component '{comp}'", err=True)
-            continue
-
-        uri_overrides[comp] = uri
-
-    components_lst: list[BuildComponent] = []
-    for comp_name, comp_ref in component_refs.items():
-        components_lst.append(
-            BuildComponent(
-                name=comp_name,
-                ref=comp_ref,
-                repo=uri_overrides.get(comp_name),
-            )
-        )
-
-    image_tag = image_tag or version
+    desc = new_build_descriptor_helper(
+        config,
+        logger,
+        version=version,
+        version_type_name=version_type_name,
+        version_channel=version_channel,
+        components=components,
+        component_overrides=component_overrides,
+        distro=distro,
+        el_version=el_version,
+        image_name=image_name,
+        image_tag=image_tag,
+    )
 
     click.echo(f"""
 requesting build for:
 
-   version: {version}
-   channel: {version_channel}
-      type: {version_type}
-     image: {image_name}:{image_tag}
-components: {", ".join([comp.name for comp in components_lst])}
-    distro: {distro}
-os version: el{el_version}
+   version: {desc.version}
+   channel: {desc.channel}
+      type: {desc.version_type}
+     image: {desc.dst_image.name}:{desc.dst_image.tag}
+components: {", ".join([comp.name for comp in desc.components])}
+    distro: {desc.build.distro}
+os version: {desc.build.os_version}
 
 """)
-
-    desc = BuildDescriptor(
-        version=version,
-        channel=version_channel,
-        signed_off_by=BuildSignedOffBy(user=name, email=email),
-        version_type=version_type,
-        dst_image=BuildDestImage(name=image_name, tag=image_tag),
-        components=components_lst,
-        build=BuildTarget(
-            distro=distro,
-            os_version=f"el{el_version}",
-            artifact_type=BuildArtifactType.rpm,
-            arch=BuildArch.x86_64,
-        ),
-    )
 
     try:
         res = _build_new(logger, config, desc)
@@ -322,7 +184,7 @@ os version: el{el_version}
 
     click.echo(f"""
 triggered build:
-    type: {version_type_name}
+    type: {desc.version_type}
 build id: {res.build_id}
    state: {res.state}
 """)
@@ -377,3 +239,6 @@ def cmd_build_revoke(
         sys.exit(errno.ENOTRECOVERABLE)
 
     click.echo(f"successfully revoked build '{build_id}'")
+
+
+cmd_build.add_command(periodic.cmd_periodic_build_grp)
