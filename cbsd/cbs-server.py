@@ -87,8 +87,8 @@ def factory() -> FastAPI:
 
     app = FastAPI(docs_url=None, lifespan=lifespan)
     api = FastAPI(
-        title="CES builder API",
-        description="CES release builder",
+        title="CBS service API",
+        description="CBS builder service",
         version="1.0.0",
         openapi_tags=api_tags_meta,
     )
