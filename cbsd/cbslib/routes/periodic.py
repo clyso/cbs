@@ -13,15 +13,26 @@
 
 
 import uuid
+from typing import Annotated
 
+import fastapi
 from cbsdcore.api.requests import NewPeriodicBuildTaskRequest
-from cbsdcore.api.responses import BaseErrorModel
+from cbsdcore.api.responses import BaseErrorModel, PeriodicBuildTaskResponseEntry
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from cbslib.core.periodic import BadCronFormatError, PeriodicTrackerError
+from cbslib.core.periodic import (
+    BadCronFormatError,
+    NoSuchTaskError,
+    PeriodicTrackerError,
+)
 from cbslib.core.permissions import RoutesCaps
 from cbslib.routes import logger as parent_logger
-from cbslib.routes._utils import CBSAuthUser, CBSPeriodicTracker, RequiredRouteCaps
+from cbslib.routes._utils import (
+    CBSAuthUser,
+    CBSPeriodicTracker,
+    RequiredRouteCaps,
+    responses_caps,
+)
 
 logger = parent_logger.getChild("periodic")
 
@@ -87,3 +98,63 @@ async def periodic_build_task(
         ) from e
 
     return cron_uuid
+
+
+@router.get(
+    "/build",
+    summary="List periodic build tasks",
+    responses={
+        **responses_caps,
+        200: {"description": "List of periodic build tasks"},
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_PERIODIC_BUILDS_LIST))],
+)
+async def periodic_builds_list(
+    tracker: CBSPeriodicTracker,
+) -> list[PeriodicBuildTaskResponseEntry]:
+    """List all periodic build tasks known to the build service."""
+    res_lst: list[PeriodicBuildTaskResponseEntry] = []
+
+    for next_run, entry in await tracker.ls():
+        res_lst.append(
+            PeriodicBuildTaskResponseEntry(
+                uuid=entry.cron_uuid,
+                enabled=entry.enabled,
+                next_run=next_run,
+                created_by=entry.created_by_user,
+                cron_format=entry.cron_format,
+                tag_format=entry.tag_format,
+                summary=entry.summary,
+                descriptor=entry.descriptor,
+            )
+        )
+
+    return res_lst
+
+
+@router.put(
+    "/build/{build_uuid}/disable",
+    summary="Disable a given periodic build",
+    responses={
+        **responses_caps,
+        404: {"description": "No such task"},
+        200: {"description": "Periodic build disabled"},
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_PERIODIC_BUILDS_UPDATE))],
+)
+async def periodic_builds_disable(
+    tracker: CBSPeriodicTracker,
+    build_uuid: Annotated[
+        uuid.UUID, fastapi.Path(description="Periodic build task's UUID")
+    ],
+) -> None:
+    try:
+        await tracker.disable(build_uuid)
+    except NoSuchTaskError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        ) from None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        ) from None

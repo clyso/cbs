@@ -62,6 +62,13 @@ class DisableTaskError(PeriodicTrackerError):
     pass
 
 
+class NoSuchTaskError(PeriodicTrackerError):
+    """Task does not exist."""
+
+    def __init__(self, cron_uuid: uuid.UUID) -> None:
+        super().__init__(f"task uuid '{cron_uuid}' does not exist")
+
+
 def _format_tag_to_str(tag_format: str, desc: BuildDescriptor) -> str:
     return format_to_str(
         tag_format,
@@ -371,6 +378,55 @@ class PeriodicTracker:
             f"max backoff of {backoff} seconds reached for '{cron_uuid}', disable task."
         )
         await on_finished(cron_uuid, True)
+
+    async def ls(self) -> list[tuple[dt | None, PeriodicBuildTask]]:
+        """
+        List all known periodic tasks.
+
+        Returns a list of tuples, each containing the next run for the task,
+        and the task's tracker entry.
+        """
+        known_tasks: list[tuple[dt | None, PeriodicBuildTask]] = []
+        async with self._lock.reader_lock:
+            for cron_uuid, entry in self._tasks_descs.items():
+                next_run: dt | None = None
+                if entry.enabled:
+                    if cron_uuid not in self._crons:
+                        logger.error(f"missing cron for '{cron_uuid}'!! skipping.")
+                        continue
+                    next_run = self._crons[cron_uuid].get_current(dt)
+
+                known_tasks.append((next_run, entry.model_copy(deep=True)))
+
+        return known_tasks
+
+    async def disable(self, cron_uuid: uuid.UUID) -> None:
+        """Disable a given task, if it exists."""
+        logger.info(f"received request to disable '{cron_uuid}'")
+        async with self._lock.writer_lock:
+            if cron_uuid not in self._tasks_descs:
+                raise NoSuchTaskError(cron_uuid)
+
+            if not self._tasks_descs[cron_uuid].enabled:
+                if cron_uuid in self._crons:
+                    # just some sanity checking, this should never happen.
+                    logger.error(f"disabled task '{cron_uuid}' has an active cron!!!")
+                return
+
+            if cron_uuid not in self._crons:
+                logger.error(f"unexpected missing cron for task '{cron_uuid}'!!!")
+                return
+
+            del self._crons[cron_uuid]
+
+            if cron_uuid in self._tasks:
+                _ = self._tasks[cron_uuid].cancel()
+                del self._tasks[cron_uuid]
+
+            self._tasks_descs[cron_uuid].enabled = False
+            await self._save_task(self._tasks_descs[cron_uuid])
+
+        logger.info(f"disabled task '{cron_uuid}'")
 
     async def _load(self) -> None:
         """Load the database of periodic tasks from disk."""

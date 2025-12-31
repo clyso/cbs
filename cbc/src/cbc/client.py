@@ -128,6 +128,37 @@ class CBCClient:
             raise CBCError(msg) from e
         return res
 
+    def put(
+        self,
+        ep: str,
+        *,
+        data: Any | None = None,  # pyright: ignore[reportExplicitAny]
+    ) -> httpx.Response:
+        """Send a PUT request to the given CBS endpoint."""
+        try:
+            res = self._client.put(ep, json=data)
+            self._maybe_handle_error(res)
+        except httpx.ConnectError as e:
+            msg = f"error connecting to '{self._client.base_url}': {e}"
+            self._logger.error(msg)
+            raise CBCConnectionError(msg) from e
+        except httpx.HTTPStatusError as e:
+            if (
+                e.response.status_code == httpx.codes.UNAUTHORIZED.value
+                or e.response.status_code == httpx.codes.FORBIDDEN.value
+            ):
+                msg = f"authentication error accessing '{ep}': {e}"
+                self._logger.error(msg)
+                raise CBCPermissionDeniedError(msg) from e
+            msg = f"error getting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg) from e
+        except Exception as e:
+            msg = f"error putting '{ep}': {e}"
+            self._logger.error(msg)
+            raise CBCError(msg) from e
+        return res
+
     def delete(
         self, ep: str, params: httpx_types.QueryParamTypes | None = None
     ) -> httpx.Response:

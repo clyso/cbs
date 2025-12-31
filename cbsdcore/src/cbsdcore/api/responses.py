@@ -11,7 +11,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
+import uuid
+from datetime import datetime as dt
+
 import pydantic
+
+from cbsdcore.versions import BuildDescriptor
 
 
 class BaseErrorModel(pydantic.BaseModel):
@@ -30,3 +35,17 @@ class AvailableComponent(pydantic.BaseModel):
 
 
 AvailableComponentsResponse = dict[str, AvailableComponent]
+
+
+class PeriodicBuildTaskResponseEntry(pydantic.BaseModel):
+    """Represents a periodic build task known to the build service."""
+
+    uuid: uuid.UUID
+    enabled: bool
+    next_run: dt | None
+    created_by: str
+
+    cron_format: str
+    tag_format: str
+    summary: str | None
+    descriptor: BuildDescriptor

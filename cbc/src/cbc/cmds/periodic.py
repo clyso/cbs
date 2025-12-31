@@ -19,6 +19,7 @@ import uuid
 import click
 import pydantic
 from cbsdcore.api.requests import NewPeriodicBuildTaskRequest
+from cbsdcore.api.responses import PeriodicBuildTaskResponseEntry
 from cbsdcore.auth.user import UserConfig
 from cbsdcore.versions import BuildDescriptor
 
@@ -66,6 +67,45 @@ def _new_periodic_build(
         msg = f"error parsing server result: {res}"
         logger.error(msg)
         raise CBCError(msg) from None
+
+
+@endpoint("/periodic/build")
+def _list_periodic_builds(
+    logger: logging.Logger,
+    client: CBCClient,
+    ep: str,
+) -> list[PeriodicBuildTaskResponseEntry]:
+    try:
+        r = client.get(ep)
+        res = r.json()  # pyright: ignore[reportAny]
+    except CBCError as e:
+        logger.error(f"unable to obtain periodic builds list: {e}")
+        raise e from None
+
+    ta = pydantic.TypeAdapter(list[PeriodicBuildTaskResponseEntry])
+    try:
+        return ta.validate_python(res)
+    except pydantic.ValidationError:
+        msg = f"error parsing server result: {res}"
+        logger.error(msg)
+        raise CBCError(msg) from None
+
+
+@endpoint("/periodic/build/{build_uuid}/disable")
+def _disable_periodic_build(
+    logger: logging.Logger,
+    client: CBCClient,
+    ep: str,
+    build_uuid: uuid.UUID,
+) -> bool:
+    real_ep = ep.format(build_uuid=build_uuid)
+    try:
+        r = client.put(real_ep)
+    except CBCError as e:
+        logger.error(f"unable to disable periodic build '{build_uuid}': {e}")
+        raise e from None
+
+    return r.is_success
 
 
 @click.group("periodic", help="periodic builds related commands")
@@ -162,3 +202,59 @@ image:
 """)
 
     pass
+
+
+@cmd_periodic_build_grp.command("list", help="List periodic builds")
+@update_ctx
+@pass_logger
+@pass_config
+def cmd_periodic_build_list(
+    config: UserConfig,
+    logger: logging.Logger,
+) -> None:
+    try:
+        builds_lst = _list_periodic_builds(logger, config)
+    except CBCError as e:
+        click.echo(f"error listing periodic builds: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    for entry in builds_lst:
+        click.echo(f"""{"---" if len(builds_lst) > 1 else ""}
+        uuid: {entry.uuid}
+     enabled: {entry.enabled}
+    next run: {entry.next_run if entry.next_run else "N/A"}
+
+     summary: {entry.summary or "N/A"}
+      period: {entry.cron_format}
+  tag format: {entry.tag_format}
+   issued by: {entry.created_by}
+
+version name: {entry.descriptor.version}
+     channel: {entry.descriptor.channel}
+        type: {entry.descriptor.version_type}
+  components: {", ".join([comp.name for comp in entry.descriptor.components])}
+      distro: {entry.descriptor.build.distro}
+  os version: {entry.descriptor.build.os_version}
+""")
+
+
+@cmd_periodic_build_grp.command("disable", help="Disable a periodic build")
+@click.argument("build_uuid", type=uuid.UUID, metavar="UUID", required=True)
+@update_ctx
+@pass_logger
+@pass_config
+def cmd_periodic_build_disable(
+    config: UserConfig,
+    logger: logging.Logger,
+    build_uuid: uuid.UUID,
+) -> None:
+    try:
+        res = _disable_periodic_build(logger, config, build_uuid)
+    except CBCError as e:
+        click.echo(f"error disabling periodic build '{build_uuid}': {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not res:
+        click.echo(f"unable to disable periodic build '{build_uuid}'", err=True)
+    else:
+        click.echo(f"disabled periodic build '{build_uuid}'")
