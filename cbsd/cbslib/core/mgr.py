@@ -21,7 +21,7 @@ from fastapi import Depends
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.mgr import BuildsMgr
 from cbslib.config.config import get_config
-from cbslib.core.periodic import PeriodicTracker
+from cbslib.core.periodic import PeriodicTracker, PeriodicTrackerError
 from cbslib.core.permissions import Permissions
 
 logger = parent_logger.getChild("mgr")
@@ -65,7 +65,7 @@ class Mgr:
         )
 
         self._builds_mgr = BuildsMgr(db_path, self._permissions)
-        self._periodic_tracker = PeriodicTracker(self._builds_mgr)
+        self._periodic_tracker = PeriodicTracker(self._builds_mgr, db_path)
 
     async def init(self) -> None:
         """Perform operations on the mgr that are required for its proper start."""
@@ -73,10 +73,12 @@ class Mgr:
         await self._builds_mgr.init()
 
         # set up periodic tasks from db.
-        # TODO: actually implement periodic tasks from db, only a placeholder for now.
-        # await self._periodic_tracker.add_task("*/1 * * * *")  # every 1 minute
-        # await self._periodic_tracker.add_task("*/2 * * * *")  # every 2 minutes
-        # await self._periodic_tracker.add_task("* * * * wed")  # every wednesday
+        try:
+            await self._periodic_tracker.init()
+        except PeriodicTrackerError as e:
+            msg = f"error initiating core mgr: {e}"
+            logger.error(msg)
+            raise MgrError(msg) from e
 
     @property
     def builds_mgr(self) -> BuildsMgr:

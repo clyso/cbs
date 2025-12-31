@@ -14,10 +14,13 @@
 
 import asyncio
 import datetime
+import dbm.sqlite3 as sqlite3
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime as dt
+from pathlib import Path
 
+import aiorwlock
 import croniter
 import pydantic
 from cbscore.errors import CESError
@@ -28,6 +31,8 @@ from cbslib.core import logger as parent_logger
 from cbslib.core.utils import format_to_str
 
 logger = parent_logger.getChild("periodic")
+
+_PERIODIC_TASKS_DB_FILE = "periodic_tasks.db"
 
 
 class PeriodicTrackerError(CESError):
@@ -114,7 +119,11 @@ class PeriodicBuildTask(PeriodicTask):
 class PeriodicTracker:
     """Keeps track of periodic tasks."""
 
-    _lock: asyncio.Lock
+    _db_file_path: Path
+
+    # use aiorwlock instead of asyncio.Lock because the latter is not reentrant, and as
+    # it is, that's exceptionally useful for us right now.
+    _lock: aiorwlock.RWLock
     _tasks: dict[uuid.UUID, asyncio.Task[None]]
     _crons: dict[uuid.UUID, croniter.croniter]
     _builds_mgr: BuildsMgr
@@ -126,12 +135,29 @@ class PeriodicTracker:
     #
     _tasks_descs: dict[uuid.UUID, PeriodicBuildTask]
 
-    def __init__(self, builds_mgr: BuildsMgr) -> None:
-        self._lock = asyncio.Lock()
+    def __init__(self, builds_mgr: BuildsMgr, db_path: Path) -> None:
+        self._lock = aiorwlock.RWLock()
         self._tasks = {}
         self._crons = {}
         self._builds_mgr = builds_mgr
         self._tasks_descs = {}
+
+        db_path.mkdir(parents=True, exist_ok=True)
+        if not db_path.is_dir():
+            msg = "database path is not a directory"
+            logger.error(msg)
+            raise PeriodicTrackerError(msg)
+
+        self._db_file_path = db_path / _PERIODIC_TASKS_DB_FILE
+
+    async def init(self) -> None:
+        """Initialize the periodic tracker, loading tasks from disk."""
+        try:
+            await self._load()
+        except Exception as e:
+            msg = f"failed to load periodic tasks database: {e}"
+            logger.error(msg)
+            raise PeriodicTrackerError(msg) from e
 
     async def add_build_task(
         self,
@@ -164,20 +190,6 @@ class PeriodicTracker:
         if not created_by:
             raise PeriodicTrackerError("creating user not provided")
 
-        try:
-            cron = croniter.croniter(cron_format, dt.now(datetime.UTC))
-        except (
-            croniter.CroniterBadCronError,
-            croniter.CroniterNotAlphaError,
-            croniter.CroniterUnsupportedSyntaxError,
-        ) as e:
-            logger.warning(f"potentially bad cron format '{cron_format}': {e}")
-            raise BadCronFormatError(cron_format) from e
-        except croniter.CroniterError as e:
-            msg = f"error parsing cron pattern for '{cron_format}': {e}"
-            logger.error(msg)
-            raise PeriodicTrackerError(msg) from e
-
         cron_uuid = uuid.uuid4()
 
         periodic_task = PeriodicBuildTask(
@@ -190,7 +202,38 @@ class PeriodicTracker:
             tag_format=tag_format,
         )
 
-        async with self._lock:
+        # propagate exceptions going forward, let the caller handle them.
+        res = await self._add_periodic_task(cron_uuid, periodic_task)
+        await self._save_task(periodic_task)
+
+        return res
+
+    async def _add_periodic_task(
+        self, cron_uuid: uuid.UUID, periodic_task: PeriodicBuildTask
+    ) -> uuid.UUID:
+        """
+        Add a periodic task to the tracker.
+
+        This is a helper function to deduplicate code between different code paths
+        adding a task to the tracker (e.g., 'add_build_task()' and loading from disk).
+        """
+        try:
+            cron = croniter.croniter(periodic_task.cron_format, dt.now(datetime.UTC))
+        except (
+            croniter.CroniterBadCronError,
+            croniter.CroniterNotAlphaError,
+            croniter.CroniterUnsupportedSyntaxError,
+        ) as e:
+            logger.warning(
+                f"potentially bad cron format '{periodic_task.cron_format}': {e}"
+            )
+            raise BadCronFormatError(periodic_task.cron_format) from e
+        except croniter.CroniterError as e:
+            msg = f"error parsing cron pattern for '{periodic_task.cron_format}': {e}"
+            logger.error(msg)
+            raise PeriodicTrackerError(msg) from e
+
+        async with self._lock.writer_lock:
             self._crons[cron_uuid] = cron
             self._tasks_descs[cron_uuid] = periodic_task
 
@@ -201,7 +244,7 @@ class PeriodicTracker:
     async def _setup_task(self, cron_uuid: uuid.UUID) -> None:
         """Set up a task to be periodically run."""
         logger.info(f"setup next task periodic run for '{cron_uuid}'")
-        async with self._lock:
+        async with self._lock.writer_lock:
             if cron_uuid in self._tasks:
                 logger.warning(
                     f"periodic task '{cron_uuid}' is already scheduled, skipping setup"
@@ -262,7 +305,7 @@ class PeriodicTracker:
         not enabled before we run the next `_setup_task()`.
         """
         logger.info(f"periodic task '{cron_uuid}' finished")
-        async with self._lock:
+        async with self._lock.writer_lock:
             del self._tasks[cron_uuid]
 
             if disable and (desc := self._tasks_descs.get(cron_uuid, None)):
@@ -328,3 +371,60 @@ class PeriodicTracker:
             f"max backoff of {backoff} seconds reached for '{cron_uuid}', disable task."
         )
         await on_finished(cron_uuid, True)
+
+    async def _load(self) -> None:
+        """Load the database of periodic tasks from disk."""
+        logger.info("loading periodic tasks database from disk")
+        async with self._lock.writer_lock:
+            try:
+                with sqlite3.open(self._db_file_path, "c") as db:
+                    for cron_uuid_key in db:
+                        task_data = db[cron_uuid_key]
+                        task_desc = PeriodicBuildTask.model_validate_json(task_data)
+
+                        try:
+                            _ = await self._add_periodic_task(
+                                cron_uuid=task_desc.cron_uuid, periodic_task=task_desc
+                            )
+                        except BadCronFormatError as e:
+                            logger.error(
+                                f"error parsing cron format for task from db: {e} "
+                                + "-- ignore task."
+                            )
+
+            except pydantic.ValidationError as e:
+                msg = f"error loading periodic task from db:\n{e}"
+                logger.error(msg)
+                raise PeriodicTrackerError(msg) from e
+
+            except PeriodicTrackerError as e:
+                raise e from e
+
+            except Exception as e:
+                msg = f"error loading periodic tasks from db: {e}"
+                logger.error(msg)
+                raise PeriodicTrackerError(msg) from e
+
+            logger.info(f"loaded {len(self._tasks_descs)} periodic tasks from database")
+
+    async def _save_task(self, periodic_task: PeriodicBuildTask) -> None:
+        """Store a periodic task to the database on disk."""
+        logger.info(f"saving periodic task '{periodic_task.cron_uuid}' to disk")
+
+        db_key = periodic_task.cron_uuid.bytes
+        db_data = periodic_task.model_dump_json()
+
+        # acquire lock to ensure no other operation is modifying the database as
+        # we write to it.
+        async with self._lock.writer_lock:
+            try:
+                with sqlite3.open(self._db_file_path, "c") as db:
+                    db[db_key] = db_data
+            except Exception as e:
+                msg = (
+                    f"error saving periodic task '{periodic_task.cron_uuid}' to db: {e}"
+                )
+                logger.error(msg)
+                raise PeriodicTrackerError(msg) from e
+
+        logger.info(f"saved periodic task '{periodic_task.cron_uuid}' to disk")
