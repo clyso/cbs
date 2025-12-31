@@ -83,8 +83,8 @@ class CBCClient:
             raise CBCConnectionError(msg) from e
         except httpx.HTTPStatusError as e:
             if (
-                e.response.status_code == httpx.codes.UNAUTHORIZED
-                or e.response.status_code == httpx.codes.FORBIDDEN
+                e.response.status_code == httpx.codes.UNAUTHORIZED.value
+                or e.response.status_code == httpx.codes.FORBIDDEN.value
             ):
                 msg = f"authentication error accessing '{ep}': {e}"
                 self._logger.error(msg)
@@ -113,8 +113,8 @@ class CBCClient:
             raise CBCConnectionError(msg) from e
         except httpx.HTTPStatusError as e:
             if (
-                e.response.status_code == httpx.codes.UNAUTHORIZED
-                or e.response.status_code == httpx.codes.FORBIDDEN
+                e.response.status_code == httpx.codes.UNAUTHORIZED.value
+                or e.response.status_code == httpx.codes.FORBIDDEN.value
             ):
                 msg = f"authentication error accessing '{ep}': {e}"
                 self._logger.error(msg)
@@ -141,8 +141,8 @@ class CBCClient:
             raise CBCConnectionError(msg) from e
         except httpx.HTTPStatusError as e:
             if (
-                e.response.status_code == httpx.codes.UNAUTHORIZED
-                or e.response.status_code == httpx.codes.FORBIDDEN
+                e.response.status_code == httpx.codes.UNAUTHORIZED.value
+                or e.response.status_code == httpx.codes.FORBIDDEN.value
             ):
                 msg = f"authentication error accessing '{ep}': {e}"
                 self._logger.error(msg)
