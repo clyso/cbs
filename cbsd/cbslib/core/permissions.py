@@ -33,6 +33,16 @@ logger = parent_logger.getChild("permissions")
 logger.setLevel(logging.INFO)
 
 
+class PermissionsError(CESError):
+    pass
+
+
+class NotAuthorizedError(PermissionsError):
+    """User is not authorized to perform an operation."""
+
+    pass
+
+
 class _PermissionsCapsMeta(abc.ABCMeta, enum.EnumMeta):
     pass
 
@@ -73,6 +83,10 @@ class RoutesCaps(_PermissionsCaps):
     ROUTES_BUILDS_REVOKE = enum.auto()
     ROUTES_BUILDS_STATUS = enum.auto()
     ROUTES_BUILDS_INSPECT = enum.auto()
+
+    ROUTES_PERIODIC_BUILDS_NEW = enum.auto()
+    ROUTES_PERIODIC_BUILDS_LIST = enum.auto()
+    ROUTES_PERIODIC_BUILDS_UPDATE = enum.auto()
 
 
 def _caps_from_str_lst_for(

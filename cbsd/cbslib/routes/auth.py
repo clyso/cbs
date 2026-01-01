@@ -19,17 +19,23 @@
 from typing import cast
 
 import pydantic
+from cbsdcore.api.responses import BaseErrorModel
 from cbsdcore.auth.user import User, UserConfig
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from cbslib.auth import AuthError
-from cbslib.auth.caps import RequiredRouteCaps
 from cbslib.auth.oauth import CBSOAuth, oauth_google_user_info
-from cbslib.auth.users import CBSAuthUser, CBSAuthUsersDB
+from cbslib.auth.users import CBSAuthUsersDB
 from cbslib.core.mgr import CBSMgr
 from cbslib.core.permissions import AuthorizationEntry, RoutesCaps
 from cbslib.routes import logger as parent_logger
+from cbslib.routes._utils import (
+    CBSAuthUser,
+    RequiredRouteCaps,
+    responses_auth,
+    responses_caps,
+)
 
 logger = parent_logger.getChild("auth")
 
@@ -37,8 +43,12 @@ router = APIRouter(prefix="/auth")
 permissions_router = APIRouter(prefix="/auth/permissions")
 
 
-@router.get("/login")
+@router.get(
+    "/login",
+    summary="Start login process",
+)
 async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
+    """Start the login process, redirecting the user to google's SSO."""
     logger.debug(f"req base url: {req.base_url}")
     redirect_uri = req.url_for("auth_callback")  # takes function name
     logger.debug(f"redirect uri: {redirect_uri}")
@@ -64,10 +74,26 @@ async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
     )
 
 
-@router.get("/callback")
+@router.get(
+    "/callback",
+    summary="Authentication callback from SSO",
+    responses={
+        401: {"description": "User not authorized", "model": BaseErrorModel},
+        200: {"description": "Authorized user", "model": UserConfig},
+    },
+)
 async def auth_callback(
     oauth: CBSOAuth, users: CBSAuthUsersDB, req: Request
 ) -> Response:
+    """
+    Handle the redirect from the SSO service.
+
+    Will handle the callback token issued by the Google SSO,
+    thus authorizing the user.
+
+    In case of success, will redirect the user to download a configuration
+    file to interact with the build service.
+    """
     google = cast(oauth.oauth2_client_cls, oauth.google)
     try:
         token = await google.authorize_access_token(req)
@@ -99,8 +125,19 @@ async def auth_callback(
     )
 
 
-@router.get("/whoami")
+@router.get(
+    "/whoami",
+    summary="Returns information about the authenticated user",
+    responses={
+        **responses_auth,
+        200: {
+            "description": "User information",
+            "model": User,
+        },
+    },
+)
 async def auth_whoami(user: CBSAuthUser) -> User:
+    """Return information about the authenticated user, if any."""
     logger.debug(f"auth token info: {user}")
     return user
 
@@ -120,11 +157,21 @@ class _UserPermissionsListResponse(pydantic.BaseModel):
 
 
 @permissions_router.get(
-    "/", dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_AUTH_PERMISSIONS))]
+    "/",
+    summary="List the user's known capabilities",
+    responses={
+        **responses_caps,
+        200: {
+            "description": "User's capabilities",
+            "model": _UserPermissionsListResponse,
+        },
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_AUTH_PERMISSIONS))],
 )
 def auth_permissions_list(
     user: CBSAuthUser, mgr: CBSMgr
 ) -> _UserPermissionsListResponse:
+    """Return the user's known capabilities."""
     authorizations, from_groups = mgr.permissions.list_caps_for(user.email)
 
     return _UserPermissionsListResponse(

@@ -1,4 +1,4 @@
-# CBS server library - routes - builds
+# CBS service library - routes - builds
 # Copyright (C) 2025  Clyso GmbH
 #
 # This program is free software: you can redistribute it and/or modify
@@ -21,15 +21,21 @@ from celery.result import AsyncResult
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from cbslib.auth.caps import RequiredRouteCaps
-from cbslib.auth.users import CBSAuthUser
+from cbslib.builds.mgr import NotAvailableError
 from cbslib.builds.tracker import (
     BuildExistsError,
     UnauthorizedTrackerError,
 )
-from cbslib.core.mgr import CBSMgr, NotAuthorizedError, NotAvailableError
-from cbslib.core.permissions import RoutesCaps
+from cbslib.core.permissions import NotAuthorizedError, RoutesCaps
 from cbslib.routes import logger as parent_logger
+from cbslib.routes._utils import (
+    CBSAuthUser,
+    CBSBuildsMgr,
+    RequiredRouteCaps,
+    responses_auth,
+    responses_builds,
+    responses_caps,
+)
 from cbslib.worker.celery import celery_app
 
 logger = parent_logger.getChild("builds")
@@ -38,37 +44,38 @@ router = APIRouter(prefix="/builds")
 
 
 _responses = {
-    401: {
-        "model": BaseErrorModel,
-        "description": "Not authorized to perform request",
-    },
-    403: {
-        "model": BaseErrorModel,
-        "description": "User not authenticated",
-    },
     500: {
         "model": BaseErrorModel,
-        "description": "An internal error occurred, please check CBS logs",
+        "description": "An internal error occurred, please check CBS service logs",
     },
 }
 
 
 @router.post(
     "/new",
+    summary="Issues a new build",
     responses={
+        **responses_auth,
+        **responses_caps,
+        **responses_builds,
         **_responses,
-        200: {
+        409: {
             "model": BaseErrorModel,
             "description": "A build already exists for the same version",
+        },
+        200: {
+            "model": NewBuildResponse,
+            "description": "New build successfully issued",
         },
     },
     dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_NEW))],
 )
 async def builds_new(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
     descriptor: BuildDescriptor,
 ) -> NewBuildResponse:
+    """Issue a new build to the build service."""
     logger.info(f"build new version: {descriptor}, user: {user}")
 
     user_info = descriptor.signed_off_by
@@ -107,13 +114,28 @@ async def builds_new(
 
 @router.get(
     "/status",
-    responses={**_responses},
+    summary="Obtain build status for builds",
+    responses={
+        **responses_auth,
+        **responses_caps,
+        **responses_builds,
+        **_responses,
+    },
 )
 async def get_builds_status(
     user: CBSAuthUser,
-    mgr: CBSMgr,
-    all: bool,
+    mgr: CBSBuildsMgr,
+    all: bool = False,
 ) -> list[tuple[BuildID, BuildEntry]]:
+    """
+    Obtain the status for all builds.
+
+    This operation will either be for all builds across the service, regardless of
+    their issuing user, or for just for the authenticated user.
+
+    Whether the `all` paramenter will be accepted will depend on the user's
+    available capabilities.
+    """
     logger.debug("obtain builds status for " + (f"{user.email}" if not all else "all"))
 
     owner = user.email if not all else None
@@ -127,8 +149,12 @@ async def get_builds_status(
         ) from e
 
 
-@router.get("/status/{task_id}")
+@router.get(
+    "/status/{task_id}",
+    summary="Obtain the status for a given build",
+)
 async def get_task_status(task_id: str) -> JSONResponse:
+    """Obtain status for a given build, by ID."""
     task_result = AsyncResult(task_id)  # pyright: ignore[reportUnknownVariableType]
     result = {  # pyright: ignore[reportUnknownVariableType]
         "task_id": task_id,
@@ -140,15 +166,26 @@ async def get_task_status(task_id: str) -> JSONResponse:
 
 @router.delete(
     "/revoke/{build_id}",
-    responses={**_responses},
+    summary="Revokes a build",
+    responses={
+        **responses_auth,
+        **responses_caps,
+        **responses_builds,
+        **_responses,
+        200: {
+            "description": "Whether the specified build was successfully revoked",
+            "model": bool,
+        },
+    },
     dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_REVOKE))],
 )
 async def revoke_build_id(
     user: CBSAuthUser,
-    mgr: CBSMgr,
+    mgr: CBSBuildsMgr,
     build_id: BuildID,
     force: bool = False,
 ) -> bool:
+    """Revoke a given build by its ID."""
     logger.debug(f"revoke task '{build_id}'")
 
     try:
@@ -173,9 +210,21 @@ async def revoke_build_id(
 
 @router.get(
     "/inspect",
+    summary="Inspect builds across workers",
+    responses={
+        **responses_caps,
+        200: {
+            "description": "builds status",
+        },
+    },
     dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_BUILDS_INSPECT))],
 )
 async def get_status() -> JSONResponse:
+    """
+    Inspect builds across workers.
+
+    Requires enhanced capabilities.
+    """
     inspct = celery_app.control.inspect()
 
     active = inspct.active()

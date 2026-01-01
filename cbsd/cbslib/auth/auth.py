@@ -12,24 +12,26 @@
 # GNU Affero General Public License for more details.
 
 import datetime
+import logging
 from datetime import datetime as dt
 from datetime import timedelta as td
-from typing import Annotated, cast
+from typing import cast
 
 import pydantic
 import pydantic_core
 import pyseto
 from cbsdcore.auth.token import Token, TokenInfo
-from fastapi import Depends, HTTPException, status
-from fastapi.security import (
-    HTTPAuthorizationCredentials,
-    HTTPBearer,
-)
 
+from cbslib.auth import AuthError
 from cbslib.auth import logger as parent_logger
 from cbslib.config.config import get_config
 
 logger = parent_logger.getChild("auth")
+logger.setLevel(logging.ERROR)
+
+
+class UnauthorizedTokenError(AuthError):
+    pass
 
 
 def token_create(user: str) -> Token:
@@ -55,29 +57,9 @@ def token_create(user: str) -> Token:
     return Token(token=pydantic.SecretBytes(token), info=info)
 
 
-_http_bearer = HTTPBearer()
-
-
-def _token_auth(
-    authorization: Annotated[HTTPAuthorizationCredentials, Depends(_http_bearer)],
-) -> str:
-    failed_error = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid authorization",
-        headers={"WWW-Authorization": "Bearer"},
-    )
-
-    if authorization.scheme.lower() != "bearer" or not authorization.credentials:
-        raise failed_error
-
-    return authorization.credentials
-
-
-_AuthToken = Annotated[str, Depends(_token_auth)]
-
-
-def token_decode(token: _AuthToken) -> TokenInfo:
-    print(f"token_decode, token: {token}")
+def token_decode(token: str) -> TokenInfo:
+    """Decode the provided token."""
+    logger.debug(f"decode token: {token}")
 
     config = get_config()
     assert config.server, "unexpected server config missing"
@@ -87,17 +69,13 @@ def token_decode(token: _AuthToken) -> TokenInfo:
     try:
         decoded_token = pyseto.decode(key, token)
     except Exception as e:
-        logger.exception("error decoding token")
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
-        ) from e
+        msg = f"error decoding provided token: {e}"
+        logger.warning(msg)
+        raise UnauthorizedTokenError(msg=msg) from None
 
     try:
         return TokenInfo.model_validate_json(cast(bytes, decoded_token.payload))
-    except pydantic.ValidationError:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Invalid user token"
-        ) from None
-
-
-AuthTokenInfo = Annotated[TokenInfo, Depends(token_decode)]
+    except pydantic.ValidationError as e:
+        msg = "malformed user token"
+        logger.error(f"{msg}: {e}")
+        raise UnauthorizedTokenError(msg=msg) from None

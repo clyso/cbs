@@ -113,36 +113,44 @@ class PathsConfig(pydantic.BaseModel):
     ccache: Path | None = None
 
 
-class ArtifactsS3Config(pydantic.BaseModel):
-    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        validate_by_alias=True,
-        validate_by_name=True,
-        serialize_by_alias=True,
-    )
+class S3LocationConfig(pydantic.BaseModel):
+    """Describes an S3 location for artifacts."""
 
-    s3_artifact_bucket: Annotated[str, pydantic.Field(alias="s3-artifact-bucket")]
-    s3_releases_bucket: Annotated[str, pydantic.Field(alias="s3-releases-bucket")]
+    bucket: str
+    loc: str
 
 
-class ArtifactsConfig(pydantic.BaseModel):
-    s3: ArtifactsS3Config | None = pydantic.Field(default=None)
+class S3StorageConfig(pydantic.BaseModel):
+    """Describes S3 storage configuration."""
+
+    url: str
+    artifacts: S3LocationConfig
+    releases: S3LocationConfig
 
 
-class DefaultSecretsConfig(pydantic.BaseModel):
-    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
-        populate_by_name=True,
-        validate_by_alias=True,
-        serialize_by_alias=True,
-    )
+class RegistryStorageConfig(pydantic.BaseModel):
+    """
+    Describes registry storage configuration.
 
-    storage: str | None = None
-    gpg_signing: Annotated[
-        str | None, pydantic.Field(alias="gpg-signing", default=None)
-    ] = None
-    transit_signing: Annotated[
-        str | None, pydantic.Field(alias="transit-signing", default=None)
-    ] = None
-    registry: str | None = None
+    FIXME: currently ignored, as we consume the image's destination
+    registry from the version descriptor itself.
+    """
+
+    url: str
+
+
+class StorageConfig(pydantic.BaseModel):
+    """Describes storage configuration."""
+
+    s3: S3StorageConfig | None = pydantic.Field(default=None)
+    registry: RegistryStorageConfig | None = pydantic.Field(default=None)
+
+
+class SigningConfig(pydantic.BaseModel):
+    """Describes artifacts signing configuration."""
+
+    gpg: str | None = pydantic.Field(default=None)
+    transit: str | None = pydantic.Field(default=None)
 
 
 class Config(pydantic.BaseModel):
@@ -153,11 +161,8 @@ class Config(pydantic.BaseModel):
     )
 
     paths: PathsConfig
-    artifacts: ArtifactsConfig | None = pydantic.Field(default=None)
-    secrets_config: Annotated[
-        DefaultSecretsConfig | None,
-        pydantic.Field(default=None, alias="secrets-config"),
-    ]
+    storage: StorageConfig | None = pydantic.Field(default=None)
+    signing: SigningConfig | None = pydantic.Field(default=None)
     secrets: list[Path] = pydantic.Field(default=[])
     vault: Path | None = pydantic.Field(default=None)
 

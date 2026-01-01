@@ -92,27 +92,23 @@ async def runner(
     vault_config_path_str = f"{config.vault}" if config.vault else "not using vault"
     timeout_str = f"{timeout} seconds" if timeout else "no timeout"
     upload_to_str = (
-        config.secrets_config.storage
-        if config.secrets_config is not None
-        and config.secrets_config.storage is not None
+        config.storage.s3.url
+        if config.storage is not None and config.storage.s3 is not None
         else "not uploading"
     )
     sign_with_gpg_str = (
-        config.secrets_config.gpg_signing
-        if config.secrets_config is not None
-        and config.secrets_config.gpg_signing is not None
+        config.signing.gpg
+        if config.signing is not None and config.signing.gpg is not None
         else "not gpg signing"
     )
     sign_with_transit_str = (
-        config.secrets_config.transit_signing
-        if config.secrets_config is not None
-        and config.secrets_config.transit_signing is not None
+        config.signing.transit
+        if config.signing is not None and config.signing.transit is not None
         else "not transit signing"
     )
     registry_str = (
-        config.secrets_config.registry
-        if config.secrets_config is not None
-        and config.secrets_config.registry is not None
+        config.storage.registry.url
+        if config.storage is not None and config.storage.registry is not None
         else "not pushing to registry"
     )
 

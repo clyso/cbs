@@ -34,7 +34,7 @@ from cbslib.core.mgr import MgrError, mgr_init
 from cbslib.core.monitor import Monitor
 from cbslib.logger import logger as parent_logger
 from cbslib.logger import setup_logging, uvicorn_logging_config
-from cbslib.routes import auth, builds, components
+from cbslib.routes import auth, builds, components, periodic
 from cbslib.worker.celery import celery_app
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
@@ -67,7 +67,7 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, Any]:
         logger.error(f"error initializing manager: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    monitor = Monitor(mgr.tracker, asyncio.get_event_loop())
+    monitor = Monitor(mgr.builds_mgr.tracker, asyncio.get_event_loop())
     monitor.start()
 
     logger.info("Starting cbs service server...")
@@ -87,8 +87,8 @@ def factory() -> FastAPI:
 
     app = FastAPI(docs_url=None, lifespan=lifespan)
     api = FastAPI(
-        title="CES builder API",
-        description="CES release builder",
+        title="CBS service API",
+        description="CBS builder service",
         version="1.0.0",
         openapi_tags=api_tags_meta,
     )
@@ -114,6 +114,7 @@ def factory() -> FastAPI:
     api.include_router(auth.permissions_router)
     api.include_router(builds.router)
     api.include_router(components.router)
+    api.include_router(periodic.router)
     app.mount("/api", api)
 
     return app

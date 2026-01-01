@@ -1,0 +1,160 @@
+# CBS service library - routes - periodic tasks
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+
+import uuid
+from typing import Annotated
+
+import fastapi
+from cbsdcore.api.requests import NewPeriodicBuildTaskRequest
+from cbsdcore.api.responses import BaseErrorModel, PeriodicBuildTaskResponseEntry
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from cbslib.core.periodic import (
+    BadCronFormatError,
+    NoSuchTaskError,
+    PeriodicTrackerError,
+)
+from cbslib.core.permissions import RoutesCaps
+from cbslib.routes import logger as parent_logger
+from cbslib.routes._utils import (
+    CBSAuthUser,
+    CBSPeriodicTracker,
+    RequiredRouteCaps,
+    responses_caps,
+)
+
+logger = parent_logger.getChild("periodic")
+
+router = APIRouter(prefix="/periodic")
+
+
+_responses = {
+    400: {"description": "Invalid request data", "model": BaseErrorModel},
+    401: {"description": "Not authorized to perform request"},
+    403: {"description": "User not authenticated"},
+}
+
+
+@router.post(
+    "/build",
+    summary="Create new periodic build task",
+    responses={
+        **_responses,
+        200: {"description": "Periodic build task created"},
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_PERIODIC_BUILDS_NEW))],
+)
+async def periodic_build_task(
+    user: CBSAuthUser,
+    tracker: CBSPeriodicTracker,
+    req: NewPeriodicBuildTaskRequest,
+) -> uuid.UUID:
+    """Create a new periodic build task."""
+    logger.info(f"creating new periodic build task, user: {user.email}")
+
+    if not req.cron_format:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="missing 'cron format' information",
+        )
+    elif not req.tag_format:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="missing 'tag format' information",
+        )
+
+    try:
+        cron_uuid = await tracker.add_build_task(
+            cron_format=req.cron_format,
+            tag_format=req.tag_format,
+            created_by=user.email,
+            descriptor=req.descriptor,
+            summary=req.summary,
+        )
+    except BadCronFormatError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except PeriodicTrackerError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"unexpected error: {e}",
+        ) from e
+
+    return cron_uuid
+
+
+@router.get(
+    "/build",
+    summary="List periodic build tasks",
+    responses={
+        **responses_caps,
+        200: {"description": "List of periodic build tasks"},
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_PERIODIC_BUILDS_LIST))],
+)
+async def periodic_builds_list(
+    tracker: CBSPeriodicTracker,
+) -> list[PeriodicBuildTaskResponseEntry]:
+    """List all periodic build tasks known to the build service."""
+    res_lst: list[PeriodicBuildTaskResponseEntry] = []
+
+    for next_run, entry in await tracker.ls():
+        res_lst.append(
+            PeriodicBuildTaskResponseEntry(
+                uuid=entry.cron_uuid,
+                enabled=entry.enabled,
+                next_run=next_run,
+                created_by=entry.created_by_user,
+                cron_format=entry.cron_format,
+                tag_format=entry.tag_format,
+                summary=entry.summary,
+                descriptor=entry.descriptor,
+            )
+        )
+
+    return res_lst
+
+
+@router.put(
+    "/build/{build_uuid}/disable",
+    summary="Disable a given periodic build",
+    responses={
+        **responses_caps,
+        404: {"description": "No such task"},
+        200: {"description": "Periodic build disabled"},
+    },
+    dependencies=[Depends(RequiredRouteCaps(RoutesCaps.ROUTES_PERIODIC_BUILDS_UPDATE))],
+)
+async def periodic_builds_disable(
+    tracker: CBSPeriodicTracker,
+    build_uuid: Annotated[
+        uuid.UUID, fastapi.Path(description="Periodic build task's UUID")
+    ],
+) -> None:
+    try:
+        await tracker.disable(build_uuid)
+    except NoSuchTaskError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        ) from None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        ) from None
