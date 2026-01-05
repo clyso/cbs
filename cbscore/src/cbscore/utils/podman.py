@@ -11,11 +11,15 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
+import errno
+import tempfile
+from pathlib import Path
 from typing import override
 
 from cbscore.errors import CESError
 
-from . import CmdArgs, async_run_cmd
+from . import AsyncRunCmdOutCallback, CmdArgs, async_run_cmd
 from . import logger as parent_logger
 
 logger = parent_logger.getChild("podman")
@@ -47,8 +51,22 @@ async def podman_run(
     use_host_network: bool = False,
     unconfined: bool = False,
     replace_if_exists: bool = False,
+    output_cb: AsyncRunCmdOutCallback | None = None,
 ) -> tuple[int, str, str]:
-    cmd: CmdArgs = ["podman", "run", "--security-opt", "label=disable"]
+    """Run a podman container with the specified parameters."""
+    _, cidfile = tempfile.mkstemp(prefix="cbscore-", suffix=".podman.cid")
+    cmd: CmdArgs = [
+        "podman",
+        "run",
+        "--security-opt",
+        "label=disable",
+        "--cidfile",
+        cidfile,
+        "--attach",
+        "stdout",
+        "--attach",
+        "stderr",
+    ]
 
     if name:
         cmd.extend(["--name", name])
@@ -87,12 +105,26 @@ async def podman_run(
     if args is not None:
         cmd.extend(args)
 
-    def cb(s: str) -> None:
-        logger.debug(s)
+    async def cb(s: str) -> None:
+        if output_cb:
+            await output_cb(s)
+        else:
+            logger.debug(s.rstrip())
 
-    rc, stdout, stderr = await async_run_cmd(cmd, timeout=timeout, outcb=cb)
-    if rc != 0:
-        logger.error(f"running podman: {stderr} ({rc})")
+    try:
+        rc, stdout, stderr = await async_run_cmd(cmd, timeout=timeout, outcb=cb)
+        if rc != 0:
+            logger.error(f"running podman: {stderr} ({rc})")
+    except (asyncio.CancelledError, TimeoutError):
+        logger.warning("podman command either timed out or was cancelled")
+        cidfile_path = Path(cidfile)
+        if cidfile_path.exists():
+            cid = cidfile_path.read_text().strip()
+            await podman_stop(name=cid)
+        raise PodmanError(
+            errno.ETIMEDOUT, "podman command timed out or was cancelled"
+        ) from None
+
     return rc, stdout, stderr
 
 

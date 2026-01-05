@@ -46,7 +46,7 @@ class BuildComponentInfo(pydantic.BaseModel):
 
 
 async def prepare_builder() -> None:
-    def _cb(s: str) -> None:
+    async def _cb(s: str) -> None:
         logger.debug(s)
 
     try:

@@ -76,7 +76,9 @@ logger = parent_logger.getChild("builds")
     "--timeout",
     help="Specify how long the build should be allowed to take",
     type=float,
-    required=False,
+    required=True,
+    default=4 * 3600.0,
+    show_default=True,
 )
 @click.option(
     "--sign-with-gpg-id",
@@ -93,6 +95,22 @@ logger = parent_logger.getChild("builds")
     type=str,
     required=False,
     metavar="TRANSIT_SECRET_ID",
+)
+@click.option(
+    "--log-file",
+    "log_file_path",
+    help="Path to a log file to write build logs to.",
+    type=click.Path(
+        exists=False,
+        dir_okay=False,
+        file_okay=True,
+        readable=True,
+        writable=True,
+        resolve_path=True,
+        path_type=Path,
+    ),
+    required=False,
+    metavar="PATH",
 )
 @click.option(
     "--skip-build",
@@ -112,9 +130,10 @@ def cmd_build(
     desc_path: Path,
     cbscore_path: Path,
     cbs_entrypoint_path: Path | None,
-    timeout: float | None,
+    timeout: float,
     sign_with_gpg_id: str | None,
     sign_with_transit: str | None,
+    log_file_path: Path | None,
     skip_build: bool,
     force: bool,
 ) -> None:
@@ -136,6 +155,15 @@ def cmd_build(
         assert config.signing
         config.signing.transit = sign_with_transit
 
+    if log_file_path:
+        if log_file_path.exists():
+            click.echo(
+                f"log file '{log_file_path}' already exists, please remove it first",
+                err=True,
+            )
+            sys.exit(errno.EEXIST)
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+
     try:
         secrets = config.get_secrets()
     except ConfigError as e:
@@ -153,19 +181,33 @@ def cmd_build(
 
     try:
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(
+        asyncio.set_event_loop(loop)
+        task = loop.create_task(
             runner(
                 desc_path,
                 cbscore_path,
                 config,
                 entrypoint_path=cbs_entrypoint_path,
                 timeout=timeout,
+                log_file_path=log_file_path,
                 skip_build=skip_build,
                 force=force,
             )
         )
+
+        try:
+            loop.run_until_complete(task)
+        except KeyboardInterrupt:
+            click.echo("received keyboard interrupt, cancelling build...")
+            _ = task.cancel()
+            try:
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                click.echo("task successfully cancelled")
+
+            loop.close()
     except (RunnerError, Exception):
-        logger.exception(f"error building '{desc_path}'")
+        logger.error(f"error building '{desc_path}'")
         sys.exit(1)
     finally:
         secrets_path.unlink()

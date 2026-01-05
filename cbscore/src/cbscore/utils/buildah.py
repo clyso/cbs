@@ -15,14 +15,19 @@
 import datetime
 import os
 import tempfile
-from collections.abc import Callable
 from datetime import datetime as dt
 from pathlib import Path
 from typing import override
 
 from cbscore.errors import CESError
 from cbscore.images.signing import SigningError, async_sign
-from cbscore.utils import CmdArgs, CommandError, Password, async_run_cmd
+from cbscore.utils import (
+    AsyncRunCmdOutCallback,
+    CmdArgs,
+    CommandError,
+    Password,
+    async_run_cmd,
+)
 from cbscore.utils import logger as parent_logger
 from cbscore.utils.containers import (
     get_container_canonical_uri,
@@ -47,7 +52,7 @@ async def _buildah_run(
     cid: str | None = None,
     args: list[str] | None = None,
     with_args_divider: bool = False,
-    outcb: Callable[[str], None] | None = None,
+    outcb: AsyncRunCmdOutCallback | None = None,
 ) -> tuple[int, str, str]:
     if len(cmd) == 0:
         msg = "no commands provided to buildah"
@@ -153,7 +158,7 @@ class BuildahContainer:
             raise BuildahError(msg)
 
     async def run(self, args: list[str]) -> None:
-        def _out(s: str) -> None:
+        async def _out(s: str) -> None:
             logger.debug(s)
 
         logger.debug(f"run '{args}'")
@@ -182,7 +187,7 @@ class BuildahContainer:
         sign_with_transit: str | None = None,
     ) -> None:
         # output to logger
-        def _out(s: str) -> None:
+        async def _out(s: str) -> None:
             logger.debug(s)
 
         creation_time = dt.now(tz=datetime.UTC).isoformat(timespec="seconds")

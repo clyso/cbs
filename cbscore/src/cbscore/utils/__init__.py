@@ -17,10 +17,11 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+from asyncio.streams import StreamReader
+from collections.abc import Callable, Coroutine
 from io import StringIO
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
@@ -199,11 +200,14 @@ def _reset_python_env(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
+AsyncRunCmdOutCallback = Callable[[str], Coroutine[Any, Any, None]]  # pyright: ignore[reportExplicitAny]
+
+
 async def async_run_cmd(
     cmd: CmdArgs,
     *,
-    outcb: Callable[[str], None] | None = None,
-    timeout: float | None = None,  # 2h in seconds, because why not.
+    outcb: AsyncRunCmdOutCallback | None = None,
+    timeout: float | None = None,
     cwd: Path | None = None,
     reset_python_env: bool = False,
     extra_env: dict[str, str] | None = None,
@@ -217,6 +221,7 @@ async def async_run_cmd(
     if extra_env:
         env.update(extra_env)
 
+    logger.debug(f"run async subprocess, cwd: {cwd}, cmd: {cmd}")
     p = await asyncio.create_subprocess_exec(
         *(get_unsecured_cmd(cmd)),
         stdout=asyncio.subprocess.PIPE,
@@ -224,34 +229,39 @@ async def async_run_cmd(
         cwd=cwd,
         env=env,
     )
-    assert p.stdout
-    assert p.stderr
 
-    logger.debug(f"env path: {os.environ['PATH']}")
+    async def read_stream(stream: StreamReader | None) -> str:
+        collected = StringIO()
+
+        if not stream:
+            return ""
+
+        async for line in stream:
+            ln = line.decode("utf-8")
+            if outcb:
+                await outcb(ln)
+            else:
+                _ = collected.write(ln)
+
+        return collected.getvalue()
+
+    async def monitor():
+        return await asyncio.gather(
+            read_stream(p.stdout),
+            read_stream(p.stderr),
+        )
 
     try:
-        stdout, stderr = await asyncio.gather(
-            _tee(p.stdout, outcb), _tee(p.stderr, outcb)
+        retcode, (stdout, stderr) = await asyncio.wait_for(
+            asyncio.gather(p.wait(), monitor()), timeout=timeout
         )
-        retcode = await asyncio.wait_for(p.wait(), timeout)
-    except TimeoutError:
-        # attempt to kill the process, if possible. Some states may prevent it from
-        # being killed.
+    except (TimeoutError, asyncio.CancelledError):
+        # FIXME: evaluate all callers for whether they are properly handling these
+        # exceptions, vs handling  a 'CommandError'. Or implement specific
+        # 'CommandError' exceptions for timeout and cancellation.
+        logger.error("async subprocess timed out or was cancelled")
         p.kill()
-        logger.exception(f"running exceeded timeout ({timeout} secs)")
-        raise CommandError(msg="timeout exceeded") from None
+        _ = await p.wait()
+        raise
 
     return retcode, stdout, stderr
-
-
-async def _tee(
-    reader: asyncio.StreamReader, cb: Callable[[str], None] | None = None
-) -> str:
-    collected = StringIO()
-    async for line in reader:
-        ln = line.decode("utf-8")
-        _ = collected.write(ln)
-        if cb is not None:
-            cb(ln.rstrip())
-
-    return collected.getvalue()

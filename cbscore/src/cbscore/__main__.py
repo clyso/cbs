@@ -13,7 +13,9 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import errno
 import logging
+import sys
 from pathlib import Path
 
 import click
@@ -67,5 +69,13 @@ cmd_main.add_command(config.cmd_config)
 cmd_main.add_command(advanced.cmd_advanced)
 
 
+def main() -> None:
+    try:
+        cmd_main(standalone_mode=True)
+    except Exception as e:
+        click.echo(f"unhandled error:\n-> {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+
 if __name__ == "__main__":
-    cmd_main()
+    main()

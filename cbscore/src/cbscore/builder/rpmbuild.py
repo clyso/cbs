@@ -73,7 +73,7 @@ async def _build_component(
     mlog = logger.getChild(f"comp[{comp_name}]")
     mlog.info(f"build component {comp_name} in '{repo_path}' using '{script_path}'")
 
-    def _outcb(s: str) -> None:
+    async def _outcb(s: str) -> None:
         mlog.debug(s)
 
     comp_rpms_path = _setup_rpm_topdir(rpms_path, comp_name, version)
@@ -138,7 +138,7 @@ async def _install_deps(
 
         clog = logger.getChild(f"comp[{name}]")
 
-        def _comp_out(s: str) -> None:
+        async def _comp_out(s: str) -> None:
             clog.debug(s)  # noqa: B023
 
         repo_path = comp.worktree_path.resolve()

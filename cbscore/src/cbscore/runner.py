@@ -17,10 +17,14 @@ import random
 import shutil
 import string
 import tempfile
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
-from cbscore.config import Config, ConfigError
+import aiofiles
+
+from cbscore.config import Config, ConfigError, LoggingConfig
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
 from cbscore.utils.podman import PodmanError, podman_run, podman_stop
@@ -69,6 +73,28 @@ def _cleanup_components_dir(components_path: Path) -> None:
         raise RunnerError(msg) from e
 
 
+@asynccontextmanager
+async def _log_file_callback(
+    log_file_path: Path | None,
+) -> AsyncGenerator[Callable[[str], Coroutine[Any, Any, None]] | None]:  # pyright: ignore[reportExplicitAny]
+    if not log_file_path:
+        yield None
+        return
+
+    async with aiofiles.open(log_file_path, "a") as fd:
+
+        async def _log_cb(s: str) -> None:
+            # remove excess newlines, ensure single newline at end
+            s = s.lstrip("\n\r").rstrip() + "\n"
+            _ = await fd.write(s)
+            await fd.flush()
+
+        yield _log_cb
+
+        await fd.flush()
+        await fd.close()
+
+
 async def runner(
     desc_file_path: Path,
     cbscore_path: Path,
@@ -77,7 +103,8 @@ async def runner(
     run_name: str | None = None,
     replace_run: bool = False,
     entrypoint_path: Path | None = None,
-    timeout: float | None = None,
+    timeout: float = 4 * 3600,  # 4 hours, and that's too much!
+    log_file_path: Path | None = None,
     skip_build: bool = False,
     force: bool = False,
 ) -> None:
@@ -133,6 +160,7 @@ async def runner(
     sign with gpg:           {sign_with_gpg_str}
     sign with transit:       {sign_with_transit_str}
     registry:                {registry_str}
+    log to file:             {log_file_path if log_file_path else "not logging to file"}
     skip build:              {skip_build}
     force:                   {force}
 """)
@@ -191,6 +219,13 @@ async def runner(
     new_config.paths.scratch_containers = Path("/var/lib/containers")
     new_config.paths.components = [Path("/runner/components")]
     new_config.paths.ccache = Path("/runner/ccache") if config.paths.ccache else None
+
+    if log_file_path:
+        logger.debug(f"preparing log file at '{log_file_path}'")
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file_path.touch(exist_ok=True)
+        new_config.logging = LoggingConfig(log_file=Path("/runner/logs/cbs-build.log"))
+
     _, new_config_tmp_file = tempfile.mkstemp(
         suffix=".config.yaml", prefix="cbs-build-"
     )
@@ -233,31 +268,33 @@ async def runner(
     ctr_name = run_name if run_name else gen_run_name()
 
     try:
-        rc, _, stderr = await podman_run(
-            image=desc.distro,
-            env={
-                "CBS_DEBUG": "1"
-                if logger.getEffectiveLevel() == logging.DEBUG
-                else "0",
-            },
-            args=podman_args,
-            volumes=podman_volumes,
-            devices={"/dev/fuse": "/dev/fuse:rw"},
-            entrypoint="/runner/entrypoint.sh",
-            name=ctr_name,
-            use_user_ns=False,
-            timeout=timeout,
-            use_host_network=True,
-            unconfined=True,
-            replace_if_exists=replace_run,
-        )
+        async with _log_file_callback(log_file_path) as log_cb:
+            rc, _, stderr = await podman_run(
+                image=desc.distro,
+                env={
+                    "CBS_DEBUG": "1"
+                    if logger.getEffectiveLevel() == logging.DEBUG
+                    else "0",
+                },
+                args=podman_args,
+                volumes=podman_volumes,
+                devices={"/dev/fuse": "/dev/fuse:rw"},
+                entrypoint="/runner/entrypoint.sh",
+                name=ctr_name,
+                use_user_ns=False,
+                timeout=timeout,
+                use_host_network=True,
+                unconfined=True,
+                replace_if_exists=replace_run,
+                output_cb=log_cb,
+            )
     except PodmanError as e:
         msg = f"error running build: {e}"
-        logger.exception(msg)
+        logger.error(msg)
         raise RunnerError(msg) from e
     except Exception as e:
         msg = f"unknown error running build: {e}"
-        logger.exception(msg)
+        logger.error(msg)
         raise RunnerError(msg) from e
     finally:
         _cleanup_components_dir(components_path)
