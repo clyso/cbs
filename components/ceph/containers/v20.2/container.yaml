@@ -23,7 +23,7 @@ pre:
     - epel-release
     - jq
     - dnf-plugins-core
-    - https://ces-packages.s3.clyso.com/ceph/rpm-{version}/el{el}.clyso/noarch/ceph-release-2-1.el{el}.clyso.noarch.rpm
+    - https://ces-packages.s3.clyso.com/components/ceph/rpm-{version}/el{el}.clyso/noarch/ceph-release-2-1.el{el}.clyso.noarch.rpm
 
   repos:
     - name: ganesha

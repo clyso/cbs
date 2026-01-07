@@ -74,7 +74,7 @@ build_ceph_release_rpm() {
   epoch=1 # means a non-development release (0 would be development)
   base_url="https://s3.clyso.com/ces-packages"
   target="el${el_version}.clyso"
-  repo_base_url="${base_url}/ceph/rpm-${version}/${target}"
+  repo_base_url="${base_url}/components/ceph/rpm-${version}/${target}"
   # repo_base_url="http://download.ceph.com/rpm-${ceph_release}/${target}"
   gpgcheck=1
   gpgkey=https://s3.clyso.com/ces-packages/release.asc
