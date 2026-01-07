@@ -47,15 +47,17 @@ build_ceph_rpms() {
 
   echo "building srpms"
   rpmbuild \
+    --without=crimson \
     --define "_topdir ${topdir}" \
     --define "dist ${dist_version}" \
-    -bs ceph.spec
+    -bs ceph.spec || exit 1
 
   echo "building rpms"
   rpmbuild \
+    --without=crimson \
     --define "_topdir ${topdir}" \
     --define "dist ${dist_version}" \
-    -rb "${topdir}"/SRPMS/*.src.rpm
+    -rb "${topdir}"/SRPMS/*.src.rpm || exit 1
 
   popd >/dev/null || exit 1
 }
