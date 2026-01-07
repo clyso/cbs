@@ -37,6 +37,7 @@ build_ceph_rpms() {
   echo "Build Ceph SRPMs and RPMs"
 
   pushd "${ceph_dir}" >/dev/null || exit 1
+  git submodule sync --recursive || exit 1
   git submodule update --init --recursive || exit 1
   ./do_cmake.sh -DCMAKE_BUILD_TYPE=RelWithDebInfo ${ccache} || exit 1
   ./make-dist "${version}" || exit 1
