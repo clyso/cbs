@@ -205,14 +205,18 @@ class ContainerBuilder:
         logger.info("apply POST from components")
         assert self.container
 
-        logger.info("run final container update")
-        try:
-            cmd = ["dnf", "update", "-y"]
-            await self.container.run(cmd)
-        except (BuildahError, Exception) as e:
-            msg = f"error running final container update: {e}"
-            logger.exception(msg)
-            raise ContainerError(msg) from e
+        # FIXME: understand whether we really need this, because this might actually
+        # break pinned packages by attempting to update all packages after they've
+        # been installed.
+        #
+        # logger.info("run final container update")
+        # try:
+        #     cmd = ["dnf", "update", "-y"]
+        #     await self.container.run(cmd)
+        # except (BuildahError, Exception) as e:
+        #     msg = f"error running final container update: {e}"
+        #     logger.exception(msg)
+        #     raise ContainerError(msg) from e
 
         for comp_name, comp_container in components.items():
             logger.info(f"apply POST for component '{comp_name}'")

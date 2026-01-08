@@ -37,6 +37,7 @@ build_ceph_rpms() {
   echo "Build Ceph SRPMs and RPMs"
 
   pushd "${ceph_dir}" >/dev/null || exit 1
+  git submodule sync --recursive || exit 1
   git submodule update --init --recursive || exit 1
   ./do_cmake.sh -DCMAKE_BUILD_TYPE=RelWithDebInfo ${ccache} || exit 1
   ./make-dist "${version}" || exit 1
@@ -46,15 +47,17 @@ build_ceph_rpms() {
 
   echo "building srpms"
   rpmbuild \
+    --without=crimson \
     --define "_topdir ${topdir}" \
     --define "dist ${dist_version}" \
-    -bs ceph.spec
+    -bs ceph.spec || exit 1
 
   echo "building rpms"
   rpmbuild \
+    --without=crimson \
     --define "_topdir ${topdir}" \
     --define "dist ${dist_version}" \
-    -rb "${topdir}"/SRPMS/*.src.rpm
+    -rb "${topdir}"/SRPMS/*.src.rpm || exit 1
 
   popd >/dev/null || exit 1
 }
@@ -74,7 +77,7 @@ build_ceph_release_rpm() {
   epoch=1 # means a non-development release (0 would be development)
   base_url="https://s3.clyso.com/ces-packages"
   target="el${el_version}.clyso"
-  repo_base_url="${base_url}/ceph/rpm-${version}/${target}"
+  repo_base_url="${base_url}/components/ceph/rpm-${version}/${target}"
   # repo_base_url="http://download.ceph.com/rpm-${ceph_release}/${target}"
   gpgcheck=1
   gpgkey=https://s3.clyso.com/ces-packages/release.asc
