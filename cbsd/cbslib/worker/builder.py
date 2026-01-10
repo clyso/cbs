@@ -25,10 +25,12 @@ from cbscore.runner import gen_run_name, runner, stop
 from cbscore.versions.create import version_create_helper
 from cbscore.versions.desc import VersionDescriptor
 from cbscore.versions.errors import VersionError
+from cbsdcore.builds.types import BuildID
 from cbsdcore.versions import BuildDescriptor
 from celery import signals
 
 from cbslib.config.config import Config, get_config
+from cbslib.config.worker import WorkerConfig
 from cbslib.worker import WorkerError
 from cbslib.worker.celery import logger as parent_logger
 
@@ -54,6 +56,7 @@ class BuildOSVersionNotPermittedError(WorkerBuilderError):
 
 
 class _WorkerBuildEntry(pydantic.BaseModel):
+    build_id: BuildID
     run_name: str
     version_desc: VersionDescriptor
 
@@ -107,20 +110,28 @@ class WorkerBuilder:
     """Handles builds in a worker node."""
 
     _config: Config
+    _worker_config: WorkerConfig
     _cbscore_config: CBSCoreConfig
     _build: _WorkerBuildEntry | None
     _name: str
+    _our_loop: asyncio.AbstractEventLoop
+    _build_task: asyncio.Task[None] | None
 
-    def __init__(self) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         self._config = get_config()
         if not self._config.worker:
             msg = "unexpected missing worker config"
             logger.error(msg)
             raise WorkerBuilderError(msg)
 
-        self._cbscore_config = self._config.worker.get_cbscore_config()
+        self._worker_config = self._config.worker
+        self._cbscore_config = self._worker_config.get_cbscore_config()
         self._build = None
         self._name = gen_run_name("cbs_worker_")
+
+        self._our_loop = loop or asyncio.new_event_loop()
+        self._build_task = None
+
         logger.info(f"init builder, name: {self._name}")
 
         if not self._config.broker_url or not self._config.results_backend_url:
@@ -134,15 +145,40 @@ class WorkerBuilder:
     async def pretend_kill(self) -> None:
         logger.info(f"kill builder {self._name}")
 
-    async def build(self, build_desc: BuildDescriptor) -> None:
+    @property
+    def our_build(self) -> _WorkerBuildEntry | None:
+        logger.info(f"obtained build: {self._build}, self={hex(id(self))}")
+        return self._build
+
+    @our_build.setter
+    def our_build(self, value: _WorkerBuildEntry | None) -> None:
+        self._build = value
+
+    def build(self, build_id: BuildID, build_desc: BuildDescriptor) -> None:
         """Start a build in the worker node."""
-        if not self._config.worker:
-            msg = "worker config missing"
+        assert self._our_loop, "Missing event loop for worker builder"
+        if self._build_task:
+            msg = "on-going build task found, ignore build request"
             logger.error(msg)
             raise WorkerBuilderError(msg)
 
-        logger.debug(f"starting build for version '{build_desc.version}'")
-        if self._build:
+        asyncio.set_event_loop(self._our_loop)
+        self._build_task = self._our_loop.create_task(
+            self._do_build(build_id, build_desc)
+        )
+
+        try:
+            self._our_loop.run_until_complete(self._build_task)
+        except Exception as e:
+            logger.error(f"build task failed: {e}")
+            _ = self._build_task.cancel()
+        finally:
+            self._build_task = None
+
+    async def _do_build(self, build_id: BuildID, build_desc: BuildDescriptor) -> None:
+        """Run a build in the worker node."""
+        logger.debug(f"starting build '{build_id}' for version '{build_desc.version}'")
+        if self.our_build:
             raise WorkerBuilderError(msg="already building?")
 
         try:
@@ -165,18 +201,22 @@ class WorkerBuilder:
         with desc_file_path.open("+w") as fd:
             _ = fd.write(version_desc.model_dump_json())
 
-        self._build = _WorkerBuildEntry(run_name=self._name, version_desc=version_desc)
+        self.our_build = _WorkerBuildEntry(
+            build_id=build_id,
+            run_name=self._name,
+            version_desc=version_desc,
+        )
 
         try:
             await runner(
                 desc_file_path,
-                self._config.worker.cbscore_path,
+                self._worker_config.cbscore_path,
                 self._cbscore_config,
                 run_name=self._name,
                 replace_run=True,
                 timeout=(
-                    self._config.worker.build_timeout_seconds
-                    if self._config.worker.build_timeout_seconds
+                    self._worker_config.build_timeout_seconds
+                    if self._worker_config.build_timeout_seconds
                     else 2 * 60 * 60
                 ),
             )
@@ -187,9 +227,25 @@ class WorkerBuilder:
         finally:
             logger.info("no longer building")
             desc_file_path.unlink()
-            self._build = None
+            self.our_build = None
 
-    async def kill(self) -> None:
+    def kill(self) -> None:
+        """Kill the currently on-going build, if any."""
+        assert self._our_loop, "Missing event loop for worker builder"
+        asyncio.set_event_loop(self._our_loop)
+
+        if self._build_task:
+            _ = self._build_task.cancel()
+            self._build_task = None
+
+        task = self._our_loop.create_task(self._do_kill())
+        try:
+            self._our_loop.run_until_complete(task)
+        except Exception as e:
+            logger.error(f"build task failed: {e}")
+            _ = task.cancel()
+
+    async def _do_kill(self) -> None:
         """Kill an on-going build."""
         try:
             await stop(name=self._name)

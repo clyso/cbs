@@ -86,23 +86,38 @@ class BuildsTracker:
             # request comes twice, and it's either in-progress or queued, then
             # we return its build ID.
 
-            # schedule version for building
-            task = tasks.build.apply_async((desc,), serializer="pydantic")
-
             build_entry = BuildEntry(
-                task_id=task.task_id,
+                task_id=None,
                 desc=desc,
                 user=desc.signed_off_by.email,
                 submitted=dt.now(tz=datetime.UTC),
-                state=EntryState(task.state.upper()),
+                state=EntryState.new,
                 started=None,
                 finished=None,
             )
-
             build_id = await self._db.new(build_entry)
+
+            # schedule version for building
+            task = tasks.build.apply_async(
+                (
+                    build_id,
+                    desc,
+                ),
+                serializer="pydantic",
+            )
+
+            build_entry.task_id = task.task_id
+            build_entry.state = EntryState(task.state.upper())
+            await self._db.update(build_id, build_entry)
+
             self._builds_by_task_id[build_entry.task_id] = build_id
             self._builds_by_build_id[build_id] = build_entry.task_id
 
+        except Exception as e:
+            msg = f"error scheduling new build: {e}"
+            logger.error(msg)
+            raise TrackerError(msg) from e
+        else:
             return (build_id, build_entry.state)
         finally:
             self._lock.release()
@@ -157,6 +172,17 @@ class BuildsTracker:
                 raise UnauthorizedTrackerError(user, f"revoke build '{build_id}'")
 
             entry = db_entry.entry
+            if not entry.task_id:
+                if entry.state != EntryState.new:
+                    msg = (
+                        "unexpected missing task id for "
+                        + f"non-new task (state '{entry.state.value}')"
+                    )
+                    logger.error(msg)
+                    raise TrackerError(msg)
+                else:
+                    raise NoSuchBuildError(f"build '{build_id}' yet to be scheduled")
+
             try:
                 task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
                     entry.task_id,

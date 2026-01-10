@@ -24,24 +24,18 @@ from kombu.serialization import register
 from cbslib.config.config import config_init
 from cbslib.worker.serializer import pydantic_dumps
 
-celery_app = Celery(
-    __name__,
-    # include the tasks module, so the worker knows where to find them.
-    include=["cbslib.worker.tasks"],
-)
-
-logger = celery_app.log.get_default_logger(__name__)
+# include the tasks module, so the worker knows where to find them.
+_CELERY_WORKER_TASKS = [
+    "cbslib.worker.tasks",
+]
 
 
-def _init() -> None:
+def _celery_create() -> Celery:
     try:
         config = config_init()
     except (CESError, Exception) as e:
         logger.error(f"unable to init config: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
-
-    celery_app.conf.broker_url = config.broker_url
-    celery_app.conf.result_backend = config.results_backend_url
 
     register(
         "pydantic",
@@ -50,6 +44,19 @@ def _init() -> None:
         content_type="application/json",
         content_encoding="utf-8",
     )
+
+    return Celery(
+        __name__,
+        backend=config.results_backend_url,
+        broker=config.broker_url,
+        include=_CELERY_WORKER_TASKS,
+        worker_cancel_long_running_tasks_on_connection_loss=True,
+    )
+
+
+celery_app = _celery_create()
+
+logger = celery_app.log.get_default_logger(__name__)
 
 
 # pyright: reportUnknownArgumentType=false
@@ -69,6 +76,3 @@ def setup_task_logger(
 ) -> None:
     if os.environ.get("CBS_DEBUG"):
         logging.getLogger("cbscore").setLevel(logging.DEBUG)
-
-
-_init()

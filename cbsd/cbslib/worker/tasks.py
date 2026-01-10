@@ -11,12 +11,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-import asyncio
+from __future__ import annotations
+
 from typing import Any, ParamSpec, cast, override
 
 import pydantic
 from cbscore.core.component import load_components
 from cbsdcore.api.responses import AvailableComponent
+from cbsdcore.builds.types import BuildID
 from cbsdcore.versions import BuildDescriptor
 from celery import Task
 from celery.worker.request import Request
@@ -48,7 +50,7 @@ class BuilderRequest(Request):
     ) -> None:
         logger.info(f"request terminated: {self.task_id}, signal: {signal}")
         super().terminate(pool, signal)  # pyright: ignore[reportAny]
-        task = cast("BuilderTask[None]", self.task)
+        task = cast(BuilderTask[None], self.task)
         task.on_termination(self.task_id)
 
 
@@ -62,23 +64,23 @@ class BuilderTask(Task[_P, None]):
         logger.info(f"initted task {self.name}")
 
     def on_termination(self, task_id: str) -> None:
-        logger.info(f"revoked {task_id}")
+        logger.info(f"revoked {task_id}, killing build")
         builder = get_builder()
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(builder.kill())
+        builder.kill()
 
 
 @celery_app.task(pydantic=True, base=BuilderTask, bind=True, track_started=True)
-def build(_self: BuilderTask[None], build_desc: BuildDescriptor) -> None:
-    logger.info(f"build descriptor: {build_desc}")
+def build(
+    _self: BuilderTask[None], build_id: BuildID, build_desc: BuildDescriptor
+) -> None:
+    logger.info(f"build id '{build_id}':\n{build_desc.model_dump_json(indent=2)}")
 
     builder = get_builder()
-    loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(builder.build(build_desc))
+        builder.build(build_id, build_desc)
     except (WorkerBuilderError, Exception) as e:
-        logger.exception("error running build")
-        raise e  # noqa: TRY201
+        logger.error(f"error running build: {e}")
+        raise e from None
 
 
 @celery_app.task(pydantic=True)
