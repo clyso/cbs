@@ -7,7 +7,8 @@ if ! /usr/bin/uv --help >/dev/null 2>&1; then
   exit 1
 fi
 
-uv sync --all-packages --no-dev --no-cache || {
+uv sync --all-packages --no-dev --no-cache \
+  --group with-compose || {
   echo "error: 'uv sync' command failed." >&2 && exit 1
 }
 
@@ -34,6 +35,8 @@ if [ "${1}" = "server" ]; then
 
 elif [ "${1}" = "worker" ]; then
   uv run --no-sync \
+    watchmedo auto-restart \
+    --directory=/cbs/server --pattern='*.py' --recursive -- \
     celery -A cbslib.worker worker \
     -E --loglevel=info --concurrency=1 || (echo "error: failed to start worker." >&2 && exit 1)
 
