@@ -1,0 +1,51 @@
+# CBS service library - core - backend
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+
+import redis.asyncio as redis
+from cbscore.errors import CESError
+
+from cbslib.config.config import Config
+from cbslib.core import logger as parent_logger
+
+logger = parent_logger.getChild("backend")
+
+
+_CELERY_WORKER_TASKS = [
+    "cbslib.worker.tasks",
+]
+
+
+class BackendError(CESError):
+    """Base backend error."""
+
+    pass
+
+
+class Backend:
+    _redis_url: str
+    _redis: redis.Redis
+
+    def __init__(self, config: Config) -> None:
+        self._redis_url = config.redis_backend_url
+        try:
+            self._redis = redis.from_url(f"{self._redis_url}?decode_responses=True")  # pyright: ignore[reportUnknownMemberType]
+        except Exception as e:
+            msg = f"error opening connection to redis backend: {e}"
+            logger.error(msg)
+            raise BackendError(msg) from e
+
+    @property
+    def redis(self) -> redis.Redis:
+        """Obtains the redis client for this backend instance."""
+        return self._redis

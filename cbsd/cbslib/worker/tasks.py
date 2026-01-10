@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ParamSpec, cast, override
+from typing import Any, ParamSpec, override
 
 import pydantic
 from cbscore.core.component import load_components
@@ -27,6 +27,7 @@ from cbslib.config.config import get_config
 from cbslib.worker import WorkerError
 from cbslib.worker.builder import WorkerBuilderError, get_builder
 from cbslib.worker.celery import celery_app, logger
+from cbslib.worker.worker import get_worker
 
 Task.__class_getitem__ = classmethod(  # pyright: ignore[reportAttributeAccessIssue]
     lambda cls, *args, **kwargs: cls,
@@ -43,6 +44,11 @@ class BuilderRequest(Request):
     """Defines a request for a given worker's builder task."""
 
     @override
+    def on_accepted(self, pid: str, time_accepted: float) -> None:
+        logger.info(f"request accepted: {self.task_id}, pid: {pid}")
+        return super().on_accepted(pid, time_accepted)
+
+    @override
     def terminate(
         self,
         pool: Any,  # pyright: ignore[reportExplicitAny,reportAny]
@@ -50,8 +56,8 @@ class BuilderRequest(Request):
     ) -> None:
         logger.info(f"request terminated: {self.task_id}, signal: {signal}")
         super().terminate(pool, signal)  # pyright: ignore[reportAny]
-        task = cast(BuilderTask[None], self.task)
-        task.on_termination(self.task_id)
+        worker = get_worker()
+        worker.terminate_build(self.task_id)
 
 
 class BuilderTask(Task[_P, None]):
@@ -59,25 +65,22 @@ class BuilderTask(Task[_P, None]):
 
     Request = BuilderRequest  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    def __init__(self) -> None:
-        super().__init__()
-        logger.info(f"initted task {self.name}")
-
-    def on_termination(self, task_id: str) -> None:
-        logger.info(f"revoked {task_id}, killing build")
-        builder = get_builder()
-        builder.kill()
-
 
 @celery_app.task(pydantic=True, base=BuilderTask, bind=True, track_started=True)
 def build(
-    _self: BuilderTask[None], build_id: BuildID, build_desc: BuildDescriptor
+    self: BuilderTask[None], build_id: BuildID, build_desc: BuildDescriptor
 ) -> None:
-    logger.info(f"build id '{build_id}':\n{build_desc.model_dump_json(indent=2)}")
+    task_id = self.request.id
+    logger.info(
+        f"build id '{build_id}', task id: {task_id}:\n"
+        + f"{build_desc.model_dump_json(indent=2)}"
+    )
+
+    assert task_id, "unexpected missing request id for task"
 
     builder = get_builder()
     try:
-        builder.build(build_id, build_desc)
+        builder.build(task_id, build_id, build_desc)
     except (WorkerBuilderError, Exception) as e:
         logger.error(f"error running build: {e}")
         raise e from None

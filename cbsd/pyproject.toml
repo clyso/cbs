@@ -19,7 +19,7 @@ dependencies = [
     "pydantic>=2.11.6",
     "pyseto==1.8.3",
     "pyyaml==6.0.2",
-    "redis==5.2.1",
+    "redis[hiredis]>=6.0.0",
     "types-aioboto3[full]==13.3.0.post1",
     "uvicorn==0.34.0",
     "httpx>=0.28.1",

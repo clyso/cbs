@@ -119,6 +119,9 @@ prepare() {
   [[ ! -e "${rundir}"/data ]] &&
     mkdir "${rundir}"/data
 
+  [[ ! -e "${rundir}"/redis ]] &&
+    mkdir "${rundir}"/redis
+
   [[ ! -e "${configdir}" ]] &&
     mkdir -p "${configdir}"
 

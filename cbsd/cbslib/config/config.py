@@ -40,6 +40,7 @@ class Config(pydantic.BaseModel):
     worker: WorkerConfig | None = pydantic.Field(default=None)
     broker_url: Annotated[str, pydantic.Field(alias="broker-url")]
     results_backend_url: Annotated[str, pydantic.Field(alias="results-backend-url")]
+    redis_backend_url: Annotated[str, pydantic.Field(alias="redis-backend-url")]
 
     @classmethod
     def load(cls, *, path: Path | None = None) -> Config:

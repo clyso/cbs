@@ -8,6 +8,7 @@
 # podman's internal network name.
 broker-url: redis://127.0.0.1:6379/0
 results-backend-url: redis://127.0.0.1:6379/0
+redis-backend-url: redis://127.0.0.1:6379/1
 worker:
   # we rely on cbscore's config to set up paths, and consume both the vault and
   # secrets files.
