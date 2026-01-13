@@ -12,7 +12,7 @@
 # GNU Affero General Public License for more details.
 
 
-import redis.asyncio as redis
+import redis.asyncio as aioredis
 from cbscore.errors import CESError
 
 from cbslib.config.config import Config
@@ -34,18 +34,15 @@ class BackendError(CESError):
 
 class Backend:
     _redis_url: str
-    _redis: redis.Redis
+    # _redis: aioredis.Redis
 
     def __init__(self, config: Config) -> None:
         self._redis_url = config.redis_backend_url
+
+    async def redis(self) -> aioredis.Redis:
         try:
-            self._redis = redis.from_url(f"{self._redis_url}?decode_responses=True")  # pyright: ignore[reportUnknownMemberType]
+            return aioredis.from_url(f"{self._redis_url}?decode_responses=True")  # pyright: ignore[reportUnknownMemberType]
         except Exception as e:
             msg = f"error opening connection to redis backend: {e}"
             logger.error(msg)
             raise BackendError(msg) from e
-
-    @property
-    def redis(self) -> redis.Redis:
-        """Obtains the redis client for this backend instance."""
-        return self._redis

@@ -187,7 +187,7 @@ class BuildsTracker:
                 task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
                     entry.task_id,
                 )
-                task.revoke(terminate=True, signal="KILL", wait=False)
+                task.revoke(terminate=True, signal="TERM", wait=False)
             except Exception as e:
                 msg = f"failed to revoke build '{build_id}': {e}"
                 logger.error(msg)

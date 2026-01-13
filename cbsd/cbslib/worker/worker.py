@@ -17,6 +17,7 @@ from typing import Any, Literal, cast
 
 import pydantic
 from cbscore.runner import stop
+from cbsdcore.builds.types import BuildID
 from celery import signals
 
 from cbslib.config.config import Config, get_config
@@ -34,7 +35,6 @@ class Worker:
     _config: Config
     _worker_config: WorkerConfig
     _instance_name: str
-    _our_loop: asyncio.AbstractEventLoop
 
     def __init__(self, instance_name: str) -> None:
         self._instance_name = instance_name
@@ -51,9 +51,6 @@ class Worker:
             msg = f"unable to init backend: {e}"
             logger.error(msg)
             raise WorkerError(msg) from e
-
-        # worker-specific asyncio loop
-        self._our_loop = asyncio.new_event_loop()
 
     @property
     def backend(self) -> Backend:
@@ -75,7 +72,8 @@ class Worker:
         ).model_dump_json()
 
         try:
-            async with self._backend.redis.pipeline(transaction=True) as pipe:
+            redis = await self._backend.redis()
+            async with redis.pipeline(transaction=True) as pipe:
                 _ = pipe.sadd(f"cbs:worker:{self._instance_name}:tasks", task_id)
                 _ = pipe.set(f"cbs:worker:tasks:{task_id}", build_task_json)
                 _ = pipe.set(f"cbs:builds:{entry.build_id}", build_task_json)
@@ -95,7 +93,7 @@ class Worker:
         """Finish a build on the worker, cleaning up as necessary."""
         logger.info(f"finish build on worker '{self._instance_name}', task '{task_id}'")
 
-        redis = self._backend.redis
+        redis = await self._backend.redis()
 
         if not await self._with_redis(
             redis.sismember(f"cbs:worker:{self._instance_name}:tasks", task_id)
@@ -169,12 +167,16 @@ class Worker:
 
     def terminate_build(self, task_id: str) -> None:
         """Force termination of a given task."""
-        assert self._our_loop, "missing event loop in worker"
-        asyncio.set_event_loop(self._our_loop)
-        task = self._our_loop.create_task(self.finish_build(task_id, revoke=True))
-
         try:
-            self._our_loop.run_until_complete(task)
+            loop = asyncio.get_event_loop()
+        except Exception as e:
+            msg = f"failed to obtain event loop: {e}"
+            logger.error(msg)
+            raise WorkerError(msg) from e
+
+        task = loop.create_task(self.finish_build(task_id, revoke=True))
+        try:
+            loop.run_until_complete(task)
         except Exception as e:
             logger.error(f"failed to terminate task '{task_id}': {e}")
             _ = task.cancel()

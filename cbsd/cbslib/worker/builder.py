@@ -128,6 +128,7 @@ class WorkerBuilder:
 
         self._build_task = None
         self._our_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._our_loop)
 
         logger.info(f"init worker builder, name: {self._name}")
 
@@ -149,9 +150,8 @@ class WorkerBuilder:
             logger.error(msg)
             raise WorkerBuilderError(msg)
 
-        asyncio.set_event_loop(self._our_loop)
         self._build_task = self._our_loop.create_task(
-            self._do_build(task_id, build_id, build_desc)
+            self._do_build(task_id, build_id, build_desc), name=f"do-build-{self._name}"
         )
 
         try:
@@ -226,6 +226,13 @@ class WorkerBuilder:
             desc_file_path.unlink()
             await self._worker.finish_build(task_id, error=has_error)
 
+    def shutdown(self) -> None:
+        logger.info(f"shutting down worker '{self._name}'")
+        if self._build_task:
+            _ = self._build_task.cancel()
+        self._our_loop.stop()
+        self._our_loop.close()
+
 
 # the worker's builder will only be initialized at individual worker process init.
 # this will be handled by the signal handler later in this file.
@@ -242,6 +249,13 @@ def handle_worker_process_init(**_kwargs: Any) -> None:  # pyright: ignore[repor
     global _worker_builder
     if not _worker_builder:
         _worker_builder = WorkerBuilder(get_worker())
+
+
+@signals.worker_process_shutdown.connect
+def handle_worker_process_shutdown(**_kwargs: Any) -> None:  # pyright: ignore[reportExplicitAny, reportAny]
+    logger.info("worker process shutting down")
+    if _worker_builder:
+        _worker_builder.shutdown()
 
 
 def get_builder() -> WorkerBuilder:
