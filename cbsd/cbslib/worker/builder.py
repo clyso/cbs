@@ -200,6 +200,9 @@ class WorkerBuilder:
             version_desc=version_desc,
         )
 
+        async def _log_cb(msg: str) -> None:
+            await self._worker.log_for_build(build_id, msg)
+
         await self._worker.start_build(task_id, build_entry)
 
         has_error = False
@@ -215,6 +218,7 @@ class WorkerBuilder:
                     if self._worker_config.build_timeout_seconds
                     else 2 * 60 * 60
                 ),
+                log_out_cb=_log_cb,
             )
         except Exception as e:
             msg = f"error building '{version_desc.version}': {e}"

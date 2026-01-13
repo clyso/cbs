@@ -17,16 +17,17 @@ import random
 import shutil
 import string
 import tempfile
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, override
+from typing import override
 
 import aiofiles
 
 from cbscore.config import Config, ConfigError, LoggingConfig
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
+from cbscore.utils import AsyncRunCmdOutCallback
 from cbscore.utils.podman import PodmanError, podman_run, podman_stop
 from cbscore.utils.secrets import SecretsError
 from cbscore.versions.desc import VersionDescriptor
@@ -74,13 +75,22 @@ def _cleanup_components_dir(components_path: Path) -> None:
 
 
 @asynccontextmanager
-async def _log_file_callback(
-    log_file_path: Path | None,
-) -> AsyncGenerator[Callable[[str], Coroutine[Any, Any, None]] | None]:  # pyright: ignore[reportExplicitAny]
-    if not log_file_path:
+async def _log_callback(
+    log_file_path: Path | None, log_cb: AsyncRunCmdOutCallback | None
+) -> AsyncGenerator[AsyncRunCmdOutCallback | None]:
+    if not log_file_path and not log_cb:
         yield None
         return
 
+    assert (log_file_path and not log_cb) or (not log_file_path and log_cb), (
+        "only one of 'log_file_path' or 'log_cb' must be specified"
+    )
+
+    if log_cb:
+        yield log_cb
+        return
+
+    assert log_file_path
     async with aiofiles.open(log_file_path, "a") as fd:
 
         async def _log_cb(s: str) -> None:
@@ -105,6 +115,7 @@ async def runner(
     entrypoint_path: Path | None = None,
     timeout: float = 4 * 3600,  # 4 hours, and that's too much!
     log_file_path: Path | None = None,
+    log_out_cb: AsyncRunCmdOutCallback | None = None,
     skip_build: bool = False,
     force: bool = False,
 ) -> None:
@@ -268,7 +279,7 @@ async def runner(
     ctr_name = run_name if run_name else gen_run_name()
 
     try:
-        async with _log_file_callback(log_file_path) as log_cb:
+        async with _log_callback(log_file_path, log_out_cb) as log_cb:
             rc, _, stderr = await podman_run(
                 image=desc.distro,
                 env={

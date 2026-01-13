@@ -181,6 +181,11 @@ class Worker:
             logger.error(f"failed to terminate task '{task_id}': {e}")
             _ = task.cancel()
 
+    async def log_for_build(self, build_id: BuildID, msg: str) -> None:
+        """Store to redis a new log message for a given build."""
+        redis = await self._backend.redis()
+        await redis.xadd(f"cbs:logs:builds:{build_id}", {"msg": msg})
+
     async def _with_redis[R, T](self, op: Awaitable[R] | Literal[0, 1]) -> R:
         """
         Handle typing properly for some redis operations.
