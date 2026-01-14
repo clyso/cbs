@@ -19,7 +19,7 @@ from datetime import datetime as dt
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
 import celery
-import celery.events  # pyright: ignore[reportMissingImports]
+import celery.events  # pyright: ignore[reportMissingTypeStubs]
 import kombu
 import pydantic
 
@@ -68,7 +68,7 @@ class _EventTaskRejected(pydantic.BaseModel):
 class _EventTaskRevoked(pydantic.BaseModel):
     uuid: str
     terminated: bool
-    signum: int
+    signum: int | None
     expired: bool
 
 
@@ -76,19 +76,37 @@ _ModelFn = Callable[Concatenate[BuildsTracker, _BM, _P], Coroutine[None, None, _
 _DictFn = Callable[Concatenate[_EventDict, _P], _R]
 
 
+async def _event_or_ignore(
+    tracker: BuildsTracker,
+    fn: _ModelFn[_BM, _P, _R],
+    mv: _BM | None,
+    *args: _P.args,
+    **kwargs: _P.kwargs,
+) -> _R | None:
+    if not mv:
+        return None
+    return await fn(tracker, mv, *args, **kwargs)
+
+
 def _with_tracker(
     tracker: BuildsTracker,
     bm: type[_BM],
-    fn: _ModelFn[_BM, _P, _R],
+    fn: _ModelFn[_BM, _P, _R | None],
     event_loop: asyncio.AbstractEventLoop,
-) -> _DictFn[_P, _R]:
-    def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R:
-        m = bm(**e)
+) -> _DictFn[_P, _R | None]:
+    def wrapper(e: _EventDict, *args: _P.args, **kwargs: _P.kwargs) -> _R | None:
+        m: _BM | None = None
+        try:
+            m = bm(**e)
+        except pydantic.ValidationError as exc:
+            logger.warning(f"error decoding event type '{bm}', event: {e}:\n{exc}")
+            m = None
+
         loop = event_loop
-        logger.info(f"running '{fn}' in loop '{loop}'")
+        logger.debug(f"running '{fn}' in loop '{loop}'")
         try:
             ftr = asyncio.run_coroutine_threadsafe(
-                fn(tracker, m, *args, **kwargs), loop
+                _event_or_ignore(tracker, fn, m, *args, **kwargs), loop
             )
         except Exception as exc:
             logger.error(f"unable to run '{fn}' in loop '{loop}': {exc}")
@@ -217,7 +235,7 @@ class Monitor:
 
         assert self._receiver is not None
         try:
-            self._receiver.capture(limit=None, timeout=None, wakeup=None)
+            _ = self._receiver.capture(limit=None, timeout=None, wakeup=True)
         except Exception as e:
             logger.error(f"error capturing events: {e}")
             return
