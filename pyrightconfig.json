@@ -4,13 +4,11 @@
   "exclude": [
     "**/__pycache__",
     "**/.venv/",
-    "local",
+    "_local/",
+    "_versions/",
     "**/venv/",
     "**/node_modules"
   ],
   "baselineFile": ".basedpyright/baseline.json",
-  "extraPaths": [
-    "cbscore/src",
-    "crt/src"
-  ]
+  "extraPaths": ["cbscore/src", "crt/src"]
 }
