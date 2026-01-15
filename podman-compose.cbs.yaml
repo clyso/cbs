@@ -25,6 +25,7 @@ services:
     volumes:
       - ./_local/cbs/config/server:/cbs/config
       - ./_local/cbs/data:/cbs/data
+      - ./_local/cbs/logs:/cbs/logs
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -87,4 +88,3 @@ services:
       - ./_local/cbs/redis:/data
     security_opt:
       - label=disable
-

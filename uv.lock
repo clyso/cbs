@@ -371,6 +371,7 @@ version = "0.1.0"
 source = { virtual = "cbsd" }
 dependencies = [
     { name = "aioboto3" },
+    { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "aiorwlock" },
     { name = "authlib" },
@@ -403,6 +404,7 @@ with-compose = [
 [package.metadata]
 requires-dist = [
     { name = "aioboto3", specifier = "==13.3.0" },
+    { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiohttp", specifier = "==3.13.3" },
     { name = "aiorwlock", specifier = ">=1.5.0" },
     { name = "authlib", specifier = "==1.6.5" },

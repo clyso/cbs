@@ -25,6 +25,7 @@ services:
     volumes:
       - ./_local/cbs/config/server:/cbs/config
       - ./_local/cbs/data:/cbs/data
+      - ./_local/cbs/logs:/cbs/logs
 
       - ./cbsd:/cbs/server/cbsd
       - ./cbscore:/cbs/server/cbscore

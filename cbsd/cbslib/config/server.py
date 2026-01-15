@@ -99,5 +99,9 @@ class ServerConfig(pydantic.BaseModel):
     #
     secrets: ServerSecretsConfig
 
+    # logs file path
+    #
+    logs: Path
+
     def get_oauth_config(self) -> GoogleOAuthSecrets:
         return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))

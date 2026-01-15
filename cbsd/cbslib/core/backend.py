@@ -15,7 +15,6 @@
 import redis.asyncio as aioredis
 from cbscore.errors import CESError
 
-from cbslib.config.config import Config
 from cbslib.core import logger as parent_logger
 
 logger = parent_logger.getChild("backend")
@@ -36,8 +35,8 @@ class Backend:
     _redis_url: str
     # _redis: aioredis.Redis
 
-    def __init__(self, config: Config) -> None:
-        self._redis_url = config.redis_backend_url
+    def __init__(self, backend_url: str) -> None:
+        self._redis_url = backend_url
 
     async def redis(self) -> aioredis.Redis:
         try:

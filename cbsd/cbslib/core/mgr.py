@@ -12,7 +12,6 @@
 # GNU Affero General Public License for more details.
 
 
-from pathlib import Path
 from typing import Annotated
 
 from cbscore.errors import CESError
@@ -21,6 +20,8 @@ from fastapi import Depends
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.mgr import BuildsMgr
 from cbslib.config.config import get_config
+from cbslib.config.server import ServerConfig
+from cbslib.core.backend import Backend
 from cbslib.core.periodic import PeriodicTracker, PeriodicTrackerError
 from cbslib.core.permissions import Permissions
 
@@ -39,10 +40,15 @@ class Mgr:
     """
 
     _permissions: Permissions
+    _backend: Backend
     _builds_mgr: BuildsMgr
     _periodic_tracker: PeriodicTracker
 
-    def __init__(self, db_path: Path, permissions_path: Path) -> None:
+    def __init__(self, config: ServerConfig, backend_url: str) -> None:
+        db_path = config.db
+        logs_path = config.logs
+        permissions_path = config.permissions
+
         if not db_path.exists():
             db_path.mkdir(parents=True)
 
@@ -64,7 +70,10 @@ class Mgr:
             + f"{len(self._permissions.rules)} rules"
         )
 
-        self._builds_mgr = BuildsMgr(db_path, self._permissions)
+        self._backend = Backend(backend_url)
+        self._builds_mgr = BuildsMgr(
+            db_path, logs_path, self._permissions, self._backend
+        )
         self._periodic_tracker = PeriodicTracker(self._builds_mgr, db_path)
 
     async def init(self) -> None:
@@ -105,7 +114,7 @@ def mgr_init() -> Mgr:
     if not _mgr:
         config = get_config()
         assert config.server, "unexpected missing server config"
-        _mgr = Mgr(config.server.db, config.server.permissions)
+        _mgr = Mgr(config.server, config.redis_backend_url)
 
     return _mgr
 

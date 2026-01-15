@@ -16,4 +16,5 @@ worker:
   # path to the cbscore package's directory. We need this on the worker to be
   # able to install (and thus use) the package.
   cbscore-path: /cbs/src
+  # maximum time a build is allowed to take before it's killed.
   build-timeout-seconds: 7200 # 2 hours

@@ -46,7 +46,7 @@ class Worker:
         self._worker_config = self._config.worker
 
         try:
-            self._backend = Backend(self._config)
+            self._backend = Backend(self._config.redis_backend_url)
         except BackendError as e:
             msg = f"unable to init backend: {e}"
             logger.error(msg)

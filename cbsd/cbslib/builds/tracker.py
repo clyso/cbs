@@ -23,6 +23,7 @@ from celery.result import AsyncResult as CeleryTaskResult
 
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB, BuildsDBError
+from cbslib.builds.logs import BuildLogsHandler
 from cbslib.worker import tasks
 
 logger = parent_logger.getChild("tracker")
@@ -67,12 +68,14 @@ class BuildsTracker:
     """Tracks existing builds, tracking them as they are sent to workers."""
 
     _db: BuildsDB
+    _logs: BuildLogsHandler
     _builds_by_task_id: dict[str, BuildID]
     _builds_by_build_id: dict[BuildID, str]
     _lock: asyncio.Lock
 
-    def __init__(self, db: BuildsDB) -> None:
+    def __init__(self, db: BuildsDB, logs: BuildLogsHandler) -> None:
         self._db = db
+        self._logs = logs
         self._builds_by_task_id = {}
         self._builds_by_build_id = {}
         self._lock = asyncio.Lock()
@@ -96,6 +99,9 @@ class BuildsTracker:
                 finished=None,
             )
             build_id = await self._db.new(build_entry)
+
+            # start tracking and handling logs for this build
+            await self._logs.new(build_id)
 
             # schedule version for building
             task = tasks.build.apply_async(
@@ -236,6 +242,9 @@ class BuildsTracker:
                 )
                 del self._builds_by_task_id[task_id]
                 del self._builds_by_build_id[build_id]
+
+                # finish log gathering for this build
+                await self._logs.finish(build_id)
 
     async def mark_started(self, task_id: str, ts: dt) -> None:
         logger.info(f"task {task_id} started, ts = {ts}")
