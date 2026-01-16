@@ -149,12 +149,13 @@ async def get_builds_status(
         ) from e
 
 
+# FIXME: this function must be converted to taking a build id instead of the task id.
 @router.get(
     "/status/{task_id}",
-    summary="Obtain the status for a given build",
+    summary="Obtain the status for a given build task",
 )
 async def get_task_status(task_id: str) -> JSONResponse:
-    """Obtain status for a given build, by ID."""
+    """Obtain status for a given build, by **Task ID**."""
     task_result = AsyncResult(task_id)  # pyright: ignore[reportUnknownVariableType]
     result = {  # pyright: ignore[reportUnknownVariableType]
         "task_id": task_id,
