@@ -115,6 +115,9 @@ class BuildsMgr:
         # hard shutdown.
         await self._db.gc()
 
+        # garbage collect old logs, especially from the redis in-memory store.
+        await self._logs.gc(all=True)
+
         # update our known components.
         await self._update_components()
 
