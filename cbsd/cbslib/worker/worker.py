@@ -184,7 +184,9 @@ class Worker:
     async def log_for_build(self, build_id: BuildID, msg: str) -> None:
         """Store to redis a new log message for a given build."""
         redis = await self._backend.redis()
-        await redis.xadd(f"cbs:logs:builds:{build_id}", {"msg": msg})
+        # limit the stream to 100 entries, we'll likely not need more than that for
+        # immediate, in-memory context.
+        await redis.xadd(f"cbs:logs:builds:{build_id}", {"msg": msg}, maxlen=100)
 
     async def _with_redis[R, T](self, op: Awaitable[R] | Literal[0, 1]) -> R:
         """
