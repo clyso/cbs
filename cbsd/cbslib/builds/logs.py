@@ -17,6 +17,7 @@ import logging
 import os
 import stat
 from asyncio.tasks import Task
+from collections.abc import AsyncGenerator, Callable
 from datetime import datetime as dt
 from pathlib import Path
 from typing import Any, cast
@@ -39,6 +40,7 @@ logger.setLevel(logging.INFO)
 
 _BUILD_LOGS_DIR = "builds"
 _LOG_STREAM_TTL_SECS = 3600 * 6  # 6 hours
+_LOG_READ_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
 class BuildLogsHandlerError(CESError):
@@ -180,6 +182,36 @@ class BuildLogsHandler:
             pass
         except Exception as e:
             logger.error(f"error canceling build logs gc task: {e}")
+
+    async def get_log_file(
+        self, build_id: BuildID
+    ) -> Callable[[], AsyncGenerator[str]]:
+        """
+        Obtain log file for a given build.
+
+        This is a generator that will yield multiple chunks until the
+        entire file is read.
+        """
+        log_file_path = self.get_log_path_for(build_id)
+        if not log_file_path.exists():
+            raise utils.FileNotFoundError()
+
+        if not log_file_path.is_file():
+            msg = f"path at '{log_file_path}' is not a file"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg)
+
+        async def _get_log() -> AsyncGenerator[str]:
+            try:
+                async with aiofiles.open(log_file_path, "rb") as fd:
+                    while chunk := await fd.read(_LOG_READ_CHUNK_SIZE):
+                        yield chunk.decode("utf-8")
+            except Exception as e:
+                msg = f"error opening and reading log file '{log_file_path}': {e}"
+                logger.error(msg)
+                raise BuildLogsHandlerError(msg) from e
+
+        return _get_log
 
     async def _tail(
         self, build_id: BuildID, max_msgs: int = 100

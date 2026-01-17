@@ -16,6 +16,7 @@ import errno
 import logging
 import sys
 import time
+from pathlib import Path
 
 import click
 import pydantic
@@ -91,6 +92,34 @@ def _tail_builds_log(
     return _obtain_log_part(
         logger, client, real_ep, build_id, {"n": max_msgs} if max_msgs else None
     )
+
+
+@endpoint("/builds/logs/{build_id}")
+def _download_log_file(
+    logger: logging.Logger,
+    client: CBCClient,
+    ep: str,
+    build_id: int,
+    *,
+    dest_path: Path | None = None,
+) -> Path:
+    """Download a log file for a given build from the server."""
+    real_ep = ep.format(build_id=build_id)
+
+    try:
+        with client.download(real_ep) as (fname, response):
+            client.maybe_handle_error(response)
+            fpath = Path(fname) if fname else None
+            dpath = (dest_path or fpath) or Path(f"build-{build_id}.log")
+
+            assert dpath, "no path defined to write file to"
+            with dpath.open("w+") as fd:
+                for chunk in response.iter_text():
+                    _ = fd.write(chunk)
+
+            return dpath
+    except CBCError as e:
+        raise e from None
 
 
 @click.group("logs", help="build logs related commands")
@@ -177,3 +206,31 @@ def cmd_build_logs_tail(
             break
 
         time.sleep(probe_frequency)
+
+
+@cmd_build_logs_grp.command("get", help="Tail a build's log")
+@click.argument("build_id", type=int, metavar="ID", required=True)
+@click.option(
+    "-o",
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False, file_okay=True),
+    required=False,
+    help="Destination file",
+)
+@update_ctx
+@pass_logger
+@pass_config
+def cmd_build_logs_get(
+    config: UserConfig,
+    logger: logging.Logger,
+    build_id: int,
+    output_path: Path | None,
+) -> None:
+    try:
+        dpath = _download_log_file(logger, config, build_id, dest_path=output_path)
+    except CBCError as e:
+        click.echo(f"error downloading log file for build {build_id}: {e}", err=True)
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    click.echo(f"log file written to '{dpath}'")
