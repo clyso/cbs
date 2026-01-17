@@ -26,7 +26,7 @@ from cbsdcore.versions import (
 
 from cbc import CBCError
 from cbc.client import CBCClient
-from cbc.cmds import endpoint, pass_config, pass_logger, periodic, update_ctx
+from cbc.cmds import endpoint, logs, pass_config, pass_logger, periodic, update_ctx
 from cbc.cmds._shared import build_descriptor_options, new_build_descriptor_helper
 
 # pyright: reportUnusedParameter=false, reportUnusedFunction=false
@@ -242,3 +242,4 @@ def cmd_build_revoke(
 
 
 cmd_build.add_command(periodic.cmd_periodic_build_grp)
+cmd_build.add_command(logs.cmd_build_logs_grp)

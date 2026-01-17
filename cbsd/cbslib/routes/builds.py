@@ -28,6 +28,7 @@ from cbslib.builds.tracker import (
 )
 from cbslib.core.permissions import NotAuthorizedError, RoutesCaps
 from cbslib.routes import logger as parent_logger
+from cbslib.routes import logs
 from cbslib.routes._utils import (
     CBSAuthUser,
     CBSBuildsMgr,
@@ -257,3 +258,6 @@ async def get_status() -> JSONResponse:
             "reserved": reserved_info,
         }
     )
+
+
+router.include_router(logs.router)

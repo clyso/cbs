@@ -39,6 +39,7 @@ services:
     environment:
       CBS_CONFIG: /cbs/config/cbsd.server.config.yaml
       CBS_DEBUG: 1
+      CBS_DEBUG_BUILDS: 1
     depends_on:
       redis:
         condition: service_started

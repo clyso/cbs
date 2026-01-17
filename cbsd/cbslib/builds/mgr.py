@@ -207,3 +207,7 @@ class BuildsMgr:
     @property
     def tracker(self) -> BuildsTracker:
         return self._tracker
+
+    @property
+    def logs(self) -> BuildLogsHandler:
+        return self._logs

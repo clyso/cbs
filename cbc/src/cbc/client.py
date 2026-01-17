@@ -38,6 +38,9 @@ class CBCPermissionDeniedError(CBCError):
         return "Permission denied" + (f": {self.msg}" if self.msg else "")
 
 
+QueryParams = httpx_types.QueryParamTypes
+
+
 class CBCClient:
     _client: httpx.Client
     _logger: logging.Logger
@@ -70,9 +73,7 @@ class CBCClient:
 
             raise CBCError(msg)
 
-    def get(
-        self, ep: str, *, params: httpx_types.QueryParamTypes | None = None
-    ) -> httpx.Response:
+    def get(self, ep: str, *, params: QueryParams | None = None) -> httpx.Response:
         """Send a GET request to the given CBS endpoint."""
         try:
             res = self._client.get(ep, params=params)
@@ -159,9 +160,7 @@ class CBCClient:
             raise CBCError(msg) from e
         return res
 
-    def delete(
-        self, ep: str, params: httpx_types.QueryParamTypes | None = None
-    ) -> httpx.Response:
+    def delete(self, ep: str, params: QueryParams | None = None) -> httpx.Response:
         """Send a DELETE request to the given CBS endpoint."""
         try:
             res = self._client.delete(ep, params=params)
