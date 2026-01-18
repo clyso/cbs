@@ -9,6 +9,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
   "aioboto3==13.3.0",
+  "aiofiles>=25.1.0",
   "click>=8.1.8",
   "hvac>=2.3.0",
   "pydantic>=2.11.6",
@@ -17,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-cbsbuild = "cbscore.__main__:cmd_main"
+cbsbuild = "cbscore.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]

@@ -1,0 +1,573 @@
+# CBS server library - builds - logs handler
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+import asyncio
+import datetime
+import logging
+import os
+import stat
+from asyncio.tasks import Task
+from collections.abc import AsyncGenerator, Callable
+from datetime import datetime as dt
+from pathlib import Path
+from typing import Any, cast
+
+import aiofiles
+import aiorwlock
+import redis.asyncio as aioredis
+from cbscore.errors import CESError
+from cbsdcore.builds.types import BuildID
+
+from cbslib.builds import logger as parent_logger
+from cbslib.core import utils
+from cbslib.core.backend import Backend
+
+logger = parent_logger.getChild("logs")
+# by default, make sure we're not too verbose. This can be adjusted
+# if needed by calling the logger's name on server init.
+logger.setLevel(logging.INFO)
+
+
+_BUILD_LOGS_DIR = "builds"
+_LOG_STREAM_TTL_SECS = 3600 * 6  # 6 hours
+_LOG_READ_CHUNK_SIZE = 1024 * 1024  # 1 MB
+
+
+class BuildLogsHandlerError(CESError):
+    """Generic build logs handler error."""
+
+    pass
+
+
+class BuildLogsHandler:
+    """Handle logs for all builds."""
+
+    _logs_path: Path
+    _backend: Backend
+    _tasks: dict[BuildID, Task[None]]
+    _finished_streams: dict[dt, list[BuildID]]
+    _finished_streams_event: asyncio.Event
+    _gc_task: asyncio.Task[None]
+    _lock: aiorwlock.RWLock
+
+    def __init__(self, logs_path: Path, backend: Backend) -> None:
+        """
+        Handle logs for all builds, capturing from redis.
+
+        As the worker produces build logs and pushes them to the build's corresponding
+        redis stream, we will consume those using build-specific tasks. These will be
+        written to disk as they are produced.
+
+        :param Path logs_path: the base path for log files (e.g., /cbs/logs)
+        :param Backend backend: the backend to be used for redis connections
+        :raises BuildLogsHandlerError: if the logs path exists and is not a directory
+        :raises BuildLogsHandlerError: if the log file is not readable/writeable
+        """
+        self._logs_path = logs_path / _BUILD_LOGS_DIR
+        self._backend = backend
+        self._tasks = {}
+        self._finished_streams = {}
+        self._finished_streams_event = asyncio.Event()
+        self._lock = aiorwlock.RWLock()
+
+        if self._logs_path.exists() and not self._logs_path.is_dir():
+            msg = f"logs path at '{self._logs_path} exist but not a directory"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg)
+
+        if self._logs_path.exists() and not self._logs_path.lstat().st_mode & (
+            stat.S_IWRITE | stat.S_IREAD
+        ):
+            msg = f"logs path at '{self._logs_path} is not read/writable"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg)
+
+        self._logs_path.mkdir(parents=True, exist_ok=True)
+
+        if (env := os.getenv("CBS_DEBUG_BUILDS")) and int(env) == 1:
+            logger.setLevel(logging.DEBUG)
+
+        try:
+            self._gc_task = asyncio.create_task(
+                self._gc_task_fn(), name="log-handler-gc"
+            )
+        except Exception as e:
+            msg = f"error starting log handler gc task: {e}"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+    async def new(self, build_id: BuildID) -> None:
+        """
+        Start log gathering for a new build.
+
+        Will create a background task to handle incoming log messages for a given build,
+        keeping track of said task. Will require a build to be marked as finished to
+        free up resources.
+
+        :param BuildID build_id: The ID for the build being started
+        """
+        logger.info(f"tracking logs for build '{build_id}'")
+        async with self._lock.writer:
+            if build_id in self._tasks:
+                logger.warning(
+                    f"build '{build_id}' already being tracked by log handler"
+                )
+                return
+
+            self._tasks[build_id] = asyncio.create_task(
+                self._logger(build_id), name=f"log-handler-build:{build_id}"
+            )
+
+    async def finish(self, build_id: BuildID) -> None:
+        """
+        Finishes a log gathering task for a given build.
+
+        Will cancel the background task responsible for gathering the logs for the
+        specified build, cleaning up as necessary.
+
+        :param BuildID build_id: The ID for the build being finished
+        """
+        logger.info(f"finishing tracking logs for build '{build_id}'")
+        async with self._lock.writer:
+            if build_id not in self._tasks:
+                logger.warning(f"build '{build_id}' not being tracked for logs")
+                return
+
+            try:
+                _ = self._tasks[build_id].cancel()
+                await self._tasks[build_id]
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(
+                    f"error canceling log tracking task for build '{build_id}': {e}"
+                )
+                return
+
+            del self._tasks[build_id]
+
+            # TODO: Maybe get reason from arguments, like 'revoked', 'finished', etc.
+            log_file_path = self.get_log_path_for(build_id)
+            async with aiofiles.open(log_file_path, "+a") as fd:
+                _ = await fd.write("--- build log end ---\n")
+                await fd.flush()
+
+            finished_at = dt.now(datetime.UTC)
+            if finished_at not in self._finished_streams:
+                self._finished_streams[finished_at] = []
+            self._finished_streams[finished_at].append(build_id)
+
+            # signal the gc task that we now have at least one value to look out for.
+            self._finished_streams_event.set()
+
+    async def shutdown(self) -> None:
+        """Shutdown the builds log handler instance."""
+        if not self._gc_task:
+            return
+
+        _ = self._gc_task.cancel()
+        try:
+            await self._gc_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"error canceling build logs gc task: {e}")
+
+    async def get_log_file(
+        self, build_id: BuildID
+    ) -> Callable[[], AsyncGenerator[str]]:
+        """
+        Obtain log file for a given build.
+
+        This is a generator that will yield multiple chunks until the
+        entire file is read.
+        """
+        log_file_path = self.get_log_path_for(build_id)
+        if not log_file_path.exists():
+            raise utils.FileNotFoundError()
+
+        if not log_file_path.is_file():
+            msg = f"path at '{log_file_path}' is not a file"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg)
+
+        async def _get_log() -> AsyncGenerator[str]:
+            try:
+                async with aiofiles.open(log_file_path, "rb") as fd:
+                    while chunk := await fd.read(_LOG_READ_CHUNK_SIZE):
+                        yield chunk.decode("utf-8")
+            except Exception as e:
+                msg = f"error opening and reading log file '{log_file_path}': {e}"
+                logger.error(msg)
+                raise BuildLogsHandlerError(msg) from e
+
+        return _get_log
+
+    async def _tail(
+        self, build_id: BuildID, max_msgs: int = 100
+    ) -> tuple[bool, str | None, list[str]]:
+        """
+        Obtain the tail of a given build's log messages.
+
+        Returns a tuple, where:
+           - the first element is a boolean denoting whether we know that the end of
+             the stream has been reached
+           - the second element is the last stream id in the list, or None if no
+             messages are available
+           - the third element is the list of available messages
+        """
+        max_msgs = max_msgs if max_msgs <= 100 and max_msgs > 0 else 100
+
+        # We'll need to check two potential sources for messages, based on three
+        # different criteria:
+        #   - if build_id is in self._tasks, this means the build is running and we can
+        #     get the logs from the current stream
+        #   - if build_id is not in self._tasks but there are available messages in the
+        #     stream, we'll get the messages from the stream
+        #   - if build_id is not in self._tasks and there are no messages in the stream,
+        #     we'll need to obtain log messages from file. If the log file does not
+        #     exist, then the build must not exist.
+        #
+        # Easiest approach is to check if we have messages in the stream, and, if not,
+        # whether the build is running (by checking self._tasks). If neither are true,
+        # we will attempt to go to the log file, and bail out if the log file does not
+        # exist. We'll read it otherwise.
+        #
+        async with self._lock.reader:
+            has_running_build = build_id in self._tasks
+
+        try:
+            redis = await self._backend.redis()
+        except Exception as e:
+            msg = f"error connecting to redis backend: {e}"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+        build_stream_key = self._get_build_stream_key(build_id)
+        try:
+            res = cast(
+                list[tuple[str, dict[str, str]]],
+                await redis.xrevrange(build_stream_key, count=max_msgs),
+            )
+        except Exception as e:
+            msg = (
+                "error obtaining log messages "
+                + f"from redis stream '{build_stream_key}: {e}"
+            )
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+        msg_res_lst: list[str] = []
+        for _, entry in reversed(res):
+            if "msg" not in entry:
+                logger.warning(f"missing 'msg' in log entry: {entry}")
+                continue
+            msg_res_lst.append(entry["msg"])
+
+        if len(msg_res_lst) > 0:
+            # we've got messages out of 'res', so we'll send out a response containing
+            # these messages (in proper order, considering that we obtained the messages
+            # in reversed order), and we will also send the last obtained id depending
+            # on whether the build is running or not.
+            last_id = res[-1][0] if has_running_build else None
+            # if we don't have a running build, this means we've reached the end of the
+            # stream.
+            return (not has_running_build, last_id, msg_res_lst)
+
+        # we clearly didn't find anything in the stream, so lets get the messages from
+        # a log file.
+        log_file_path = self.get_log_path_for(build_id)
+        try:
+            msg_res_lst = utils.tail_file(log_file_path, max_msgs)
+        except utils.FileNotFoundError:
+            raise utils.FileNotFoundError(
+                f"log file for build '{build_id}' not found"
+            ) from None
+        except Exception as e:
+            msg = f"error reading log file for build '{build_id}': {e}"
+            logger.warning(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+        return (True, None, msg_res_lst)
+
+    async def tail(
+        self, build_id: BuildID, n: int = 30
+    ) -> tuple[bool, str | None, list[str]]:
+        """Obtain log's tail for a given build."""
+        logger.debug(f"tail build log '{build_id}' max '{n}'")
+        return await self._tail(build_id, n)
+
+    async def follow(
+        self,
+        build_id: BuildID,
+        since: str | None = None,
+        *,
+        max_msgs: int = 30,
+    ) -> tuple[bool, str | None, list[str]]:
+        """
+        Obtain the latest log messages for a build, as they become available.
+
+        If `since` is provided, then also include all the messages since the provided
+        stream id. This is relevant so the client doesn't get truncated messages if they
+        are slower requesting them than we are at generating them.
+
+        Result will always be capped at 100 messages.
+        """
+        # '(<ID>' notation denotes an open interval: start at <ID>, not included.
+        from_id = f"({since}" if since else "-"
+        max_msgs = max_msgs if max_msgs <= 100 and max_msgs > 0 else 100
+        logger.debug(f"follow build log '{build_id}' from '{from_id}' max '{max_msgs}'")
+
+        async with self._lock.reader:
+            if build_id not in self._tasks:
+                # if we don't have the build in the active logger tasks, attempt to
+                # return the tail of an existing build log.
+                # propagate exceptions, especially on a non-existing build.
+                return await self._tail(build_id, max_msgs)
+
+        try:
+            redis = await self._backend.redis()
+        except Exception as e:
+            msg = f"error connecting to redis backend: {e}"
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+        build_stream_key = self._get_build_stream_key(build_id)
+        try:
+            res = cast(
+                list[tuple[str, dict[str, str]]],
+                await redis.xrange(build_stream_key, from_id, "+", count=max_msgs),
+            )
+        except Exception as e:
+            msg = (
+                "error obtaining log messages from "
+                + f"redis stream '{build_stream_key}': {e}"
+            )
+            logger.error(msg)
+            raise BuildLogsHandlerError(msg) from e
+
+        logger.debug(
+            f"follow build stream: {build_stream_key}, since: {since}, res: {res}"
+        )
+
+        msg_res_lst: list[str] = []
+        for _, entry in res:
+            # NOTE: not doing a list comprehension to check and warn on missing 'msg'
+            if "msg" not in entry:
+                logger.warning(f"missing 'msg' in log entry: {entry}")
+                continue
+            msg_res_lst.append(entry["msg"])
+
+        last_id = res[-1][0] if len(res) > 0 else None
+        # tuple includes the last stream id as first element.
+        return (False, last_id, msg_res_lst)
+
+    def get_log_path_for(self, build_id: BuildID) -> Path:
+        """Obtain the log file path for a given build."""
+        return self._logs_path / f"build-{build_id}.log"
+
+    def _get_build_stream_key(self, build_id: BuildID) -> str:
+        """Obtain the stream key for a given build."""
+        return f"cbs:logs:builds:{build_id}"
+
+    async def _logger(self, build_id: BuildID) -> None:
+        """
+        Handle log messages for a given build, writing them to disk.
+
+        Log messages will be consumed from a redis stream, as messages are added to the
+        stream by the worker.
+
+        :param BuildID build_id: The ID for the build being handled.
+        """
+        build_log_path = self.get_log_path_for(build_id)
+        build_stream = self._get_build_stream_key(build_id)
+        async with aiofiles.open(build_log_path, "+a") as fd:
+            redis = await self._backend.redis()
+            while True:
+                logger.debug(f"reading from redis stream '{build_stream}'")
+                res = await redis.xread(  # pyright: ignore[reportAny]
+                    streams={build_stream: "$"}, count=None, block=0
+                )
+                if not isinstance(res, list):
+                    logger.warning(f"got erroneous result from redis: {res} -- stop")
+                    return
+
+                # format coming out of res is something like:
+                # res = [['cbs:logs:builds:123', [('1768401181174-0', {'msg': '\n'})]]]
+
+                res = cast(
+                    list[list[str | list[tuple[str, dict[str, Any]]]]],  # pyright: ignore[reportExplicitAny]
+                    res,
+                )
+                logger.debug(f"from redis stream '{build_stream}': {res}")
+                for stream_lst in res:
+                    logger.debug(f"stream lst: {stream_lst}")
+                    while len(stream_lst) % 2 == 0 and len(stream_lst) > 0:
+                        stream_key, stream_entries_lst = stream_lst[:2]
+                        stream_lst = stream_lst[2:]
+
+                        if not isinstance(stream_key, str) or not isinstance(
+                            stream_entries_lst, list
+                        ):
+                            logger.warning(
+                                f"malformed stream entry: {stream_key}, "
+                                + f"{stream_entries_lst}"
+                            )
+                            continue
+
+                        if stream_key != build_stream:
+                            continue
+
+                        for _, stream_entry in stream_entries_lst:
+                            log_msg = cast(str | None, stream_entry.get("msg"))
+                            if not log_msg:
+                                logger.warning(
+                                    "unexpected missing 'msg' in stream log entry"
+                                )
+                                continue
+
+                            _ = await fd.write(f"{log_msg.strip()}\n")
+
+                await fd.flush()
+
+    async def _gc_task_fn(self) -> None:
+        """Garbage collect finished streams after a given TTL."""
+        while True:
+            try:
+                _ = await self._lock.writer.acquire()
+                logger.debug("build logs gc fn lock acquired")
+            except Exception as e:
+                logger.warning(f"error acquiring logs streams lock: {e}")
+                await asyncio.sleep(0.01)
+                continue
+
+            if len(self._finished_streams) == 0:
+                # relinquish lock before waiting on event
+                logger.debug("build logs gc fn release lock")
+                self._lock.writer.release()
+                _ = await self._finished_streams_event.wait()
+                self._finished_streams_event.clear()
+                # then start from the top
+                continue
+
+            try:
+                redis = await self._backend.redis()
+            except Exception as e:
+                logger.error(f"error obtaining redis handle: {e}")
+                logger.error("retry in 30 seconds")
+                self._lock.writer.release()
+                await asyncio.sleep(10)
+                # retry from the top
+                continue
+
+            time_to_ttl = await self._gc_finished_streams(redis)
+            self._lock.writer.release()
+            if time_to_ttl:
+                logger.info(f"build logs gc waiting for {time_to_ttl} seconds")
+                await asyncio.sleep(time_to_ttl)
+
+    async def _gc_finished_streams(self, redis: aioredis.Redis) -> float | None:
+        """Garbage collect all finished build log streams."""
+        gc_start = dt.now(datetime.UTC)
+        logger.info("start gc finished build log streams")
+        wait_until: float | None = None
+        for finished_at, builds_lst in self._finished_streams.items():
+            # check what time it is on each iteration, so we always have an
+            # up-to-date value in case we have waited for a significant long
+            # time doing gc.
+            now = dt.now(datetime.UTC)
+            ttl_diff = (now - finished_at).total_seconds()
+            if ttl_diff <= _LOG_STREAM_TTL_SECS:
+                # nothing to do for the rest of the iterator.
+                # return how long we need to wait until the next stream reaches its TTL.
+                wait_until = _LOG_STREAM_TTL_SECS - ttl_diff
+                break
+
+            for build_id in builds_lst:
+                logger.info(
+                    f"gc build '{build_id}' logs, exceeded TTL {ttl_diff} seconds"
+                )
+                await self._gc_stream_key(redis, self._get_build_stream_key(build_id))
+            del self._finished_streams[finished_at]
+
+        delta = (dt.now(datetime.UTC) - gc_start).total_seconds()
+        logger.info(f"finish gc build log streams in {delta} seconds")
+        return wait_until
+
+    async def gc(self, *, all: bool = False) -> None:
+        """Garbage collect in-redis log messages from old streams."""
+        logger.info("start gc build logs")
+        gc_start = dt.now(datetime.UTC)
+        async with self._lock.writer:
+            logger.debug("build logs gc lock acquired")
+            try:
+                redis = await self._backend.redis()
+            except Exception as e:
+                logger.error(f"error obtaining redis handle: {e}")
+                logger.error("skip build logs gc")
+                return
+
+            if all:
+                await self._gc_collect_redis(redis)
+
+            _ = await self._gc_finished_streams(redis)
+
+        total_secs = (dt.now(datetime.UTC) - gc_start).total_seconds()
+        logger.info(f"build logs gc took {total_secs} seconds")
+
+    async def _gc_collect_redis(self, redis: aioredis.Redis) -> None:
+        """Collect log messages from all existing stream keys."""
+        gc_start = dt.now(datetime.UTC)
+        total_keys = 0
+        cursor_id = 0
+        maybe_has_keys = True
+        logger.info("start gc redis log streams")
+        while maybe_has_keys:
+            res: tuple[int, list[str]] = cast(
+                tuple[int, list[str]],
+                await redis.scan(  # pyright: ignore[reportUnknownMemberType]
+                    cursor_id, match="cbs:logs:builds:*", _type="stream"
+                ),
+            )
+            logger.debug(f"gc redis collect: {res}")
+            if len(res) != 2:
+                logger.warning(f"malformed scan result: {res}")  # pyright: ignore[reportUnreachable]
+                break
+
+            cursor_id, key_lst = res
+            if cursor_id == 0:
+                # A zero cursor id means the redis server signalled that this
+                # will be the last iteration.
+                logger.debug("no more stream keys from redis to gc")
+                maybe_has_keys = False
+
+            for key in key_lst:
+                if not key:
+                    logger.warning(f"malformed stream key in '{res}'")
+                    continue
+
+                await self._gc_stream_key(redis, key)
+                total_keys += 1
+
+        total_secs = (dt.now(datetime.UTC) - gc_start).total_seconds()
+        logger.info(
+            f"gc redis log streams took {total_secs} seconds, {total_keys} keys"
+        )
+
+    async def _gc_stream_key(self, redis: aioredis.Redis, stream_key: str) -> None:
+        """Collect log messages from a given stream."""
+        if await redis.xlen(stream_key) > 0:
+            await redis.xtrim(stream_key, maxlen=0)
+        pass
+
+    pass

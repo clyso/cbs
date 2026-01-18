@@ -49,3 +49,11 @@ class PeriodicBuildTaskResponseEntry(pydantic.BaseModel):
     tag_format: str
     summary: str | None
     descriptor: BuildDescriptor
+
+
+class BuildLogsFollowResponse(pydantic.BaseModel):
+    """Represents a response to a build log follow request."""
+
+    last_id: str | None
+    msgs: list[str]
+    end_of_stream: bool

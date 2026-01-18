@@ -153,6 +153,18 @@ class SigningConfig(pydantic.BaseModel):
     transit: str | None = pydantic.Field(default=None)
 
 
+class LoggingConfig(pydantic.BaseModel):
+    """Describes log file location."""
+
+    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    log_file: Annotated[Path, pydantic.Field(alias="log-file")]
+
+
 class Config(pydantic.BaseModel):
     model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
         populate_by_name=True,
@@ -163,6 +175,7 @@ class Config(pydantic.BaseModel):
     paths: PathsConfig
     storage: StorageConfig | None = pydantic.Field(default=None)
     signing: SigningConfig | None = pydantic.Field(default=None)
+    logging: LoggingConfig | None = pydantic.Field(default=None)
     secrets: list[Path] = pydantic.Field(default=[])
     vault: Path | None = pydantic.Field(default=None)
 

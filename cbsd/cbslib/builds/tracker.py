@@ -23,6 +23,7 @@ from celery.result import AsyncResult as CeleryTaskResult
 
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB, BuildsDBError
+from cbslib.builds.logs import BuildLogsHandler
 from cbslib.worker import tasks
 
 logger = parent_logger.getChild("tracker")
@@ -67,12 +68,14 @@ class BuildsTracker:
     """Tracks existing builds, tracking them as they are sent to workers."""
 
     _db: BuildsDB
+    _logs: BuildLogsHandler
     _builds_by_task_id: dict[str, BuildID]
     _builds_by_build_id: dict[BuildID, str]
     _lock: asyncio.Lock
 
-    def __init__(self, db: BuildsDB) -> None:
+    def __init__(self, db: BuildsDB, logs: BuildLogsHandler) -> None:
         self._db = db
+        self._logs = logs
         self._builds_by_task_id = {}
         self._builds_by_build_id = {}
         self._lock = asyncio.Lock()
@@ -86,23 +89,41 @@ class BuildsTracker:
             # request comes twice, and it's either in-progress or queued, then
             # we return its build ID.
 
-            # schedule version for building
-            task = tasks.build.apply_async((desc,), serializer="pydantic")
-
             build_entry = BuildEntry(
-                task_id=task.task_id,
+                task_id=None,
                 desc=desc,
                 user=desc.signed_off_by.email,
                 submitted=dt.now(tz=datetime.UTC),
-                state=EntryState(task.state.upper()),
+                state=EntryState.new,
                 started=None,
                 finished=None,
             )
-
             build_id = await self._db.new(build_entry)
+
+            # start tracking and handling logs for this build
+            await self._logs.new(build_id)
+
+            # schedule version for building
+            task = tasks.build.apply_async(
+                (
+                    build_id,
+                    desc,
+                ),
+                serializer="pydantic",
+            )
+
+            build_entry.task_id = task.task_id
+            build_entry.state = EntryState(task.state.upper())
+            await self._db.update(build_id, build_entry)
+
             self._builds_by_task_id[build_entry.task_id] = build_id
             self._builds_by_build_id[build_id] = build_entry.task_id
 
+        except Exception as e:
+            msg = f"error scheduling new build: {e}"
+            logger.error(msg)
+            raise TrackerError(msg) from e
+        else:
             return (build_id, build_entry.state)
         finally:
             self._lock.release()
@@ -157,11 +178,22 @@ class BuildsTracker:
                 raise UnauthorizedTrackerError(user, f"revoke build '{build_id}'")
 
             entry = db_entry.entry
+            if not entry.task_id:
+                if entry.state != EntryState.new:
+                    msg = (
+                        "unexpected missing task id for "
+                        + f"non-new task (state '{entry.state.value}')"
+                    )
+                    logger.error(msg)
+                    raise TrackerError(msg)
+                else:
+                    raise NoSuchBuildError(f"build '{build_id}' yet to be scheduled")
+
             try:
                 task = CeleryTaskResult(  # pyright: ignore[reportUnknownVariableType]
                     entry.task_id,
                 )
-                task.revoke(terminate=True, signal="KILL", wait=False)
+                task.revoke(terminate=True, signal="TERM", wait=False)
             except Exception as e:
                 msg = f"failed to revoke build '{build_id}': {e}"
                 logger.error(msg)
@@ -210,6 +242,9 @@ class BuildsTracker:
                 )
                 del self._builds_by_task_id[task_id]
                 del self._builds_by_build_id[build_id]
+
+                # finish log gathering for this build
+                await self._logs.finish(build_id)
 
     async def mark_started(self, task_id: str, ts: dt) -> None:
         logger.info(f"task {task_id} started, ts = {ts}")

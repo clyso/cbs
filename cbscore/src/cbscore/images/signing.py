@@ -91,7 +91,7 @@ def sign(
 
 
 async def async_sign(img: str, secrets: SecretsMgr, transit: str) -> None:
-    def _out(s: str) -> None:
+    async def _out(s: str) -> None:
         logger.debug(s)
 
     if not secrets.has_vault():

@@ -7,13 +7,17 @@
 # so we can reference it by its instance name.
 broker-url: redis://cbs-redis:6379/0
 results-backend-url: redis://cbs-redis:6379/0
+redis-backend-url: redis://cbs-redis:6379/1
 server:
   # ssl certificates for SSL/TLS
   cert: /cbs/config/cbs.cert.pem
   key: /cbs/config/cbs.key.pem
   # database for persistent storage
   db: /cbs/data/db/
+  # permissions definitions file
   permissions: /cbs/config/permissions.yaml
+  # path where build logs will be written to.
+  logs: /cbs/logs
   secrets:
     # config file for google's oauth2 application (currently mandatory).
     oauth2-secrets-file: /cbs/config/google-client-cbs.json

@@ -12,7 +12,11 @@
 # GNU General Public License for more details.
 
 import logging
+import re
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any, override
+from urllib.parse import unquote
 
 import httpx
 import pydantic
@@ -38,6 +42,37 @@ class CBCPermissionDeniedError(CBCError):
         return "Permission denied" + (f": {self.msg}" if self.msg else "")
 
 
+QueryParams = httpx_types.QueryParamTypes
+
+
+# Generated using GitHub Copilot, Claude Code Sonnet 4.5
+#   on Jan 17 2026, by Joao Eduardo Luis <joao@clyso.com>
+#
+# Edited to make ajust to our needs.
+#
+def _get_download_filename(content_disposition: str) -> str | None:
+    """Extract filename from Content-Disposition header."""
+    if not content_disposition:
+        return None
+
+    # Try RFC 5987 filename* first (e.g., filename*=UTF-8''file%20name.pdf)
+    match = re.search(
+        r"filename\*=([^']+)''(.+?)(?:;|$)", content_disposition, re.IGNORECASE
+    )
+    if match:
+        encoding = match.group(1) or "utf-8"
+        return unquote(match.group(2), encoding=encoding)
+
+    # Fall back to regular filename (e.g., filename="file.pdf" or filename=file.pdf)
+    match = re.search(
+        r'filename=(["\']?)(.+?)\1(?:;|$)', content_disposition, re.IGNORECASE
+    )
+    if match:
+        return match.group(2).strip("'\"")
+
+    return None
+
+
 class CBCClient:
     _client: httpx.Client
     _logger: logging.Logger
@@ -60,23 +95,38 @@ class CBCClient:
             verify=verify,
         )
 
-    def _maybe_handle_error(self, res: httpx.Response) -> None:
-        if res.is_error:
-            try:
-                err = BaseErrorModel.model_validate(res.json())
-                msg = err.detail
-            except pydantic.ValidationError:
-                msg = res.read().decode("utf-8")
+    def maybe_handle_error(self, res: httpx.Response) -> None:
+        if not res.is_error:
+            return
 
-            raise CBCError(msg)
+        res_value = res.read()
 
-    def get(
-        self, ep: str, *, params: httpx_types.QueryParamTypes | None = None
-    ) -> httpx.Response:
+        try:
+            err = BaseErrorModel.model_validate_json(res_value)
+            msg = err.detail
+        except pydantic.ValidationError:
+            msg = res.read().decode("utf-8")
+
+        raise CBCError(msg)
+
+    @contextmanager
+    def download(self, ep: str) -> Generator[tuple[str | None, httpx.Response]]:
+        try:
+            with self._client.stream("GET", ep) as response:
+                filename: str | None = None
+                if content_disposition := response.headers.get("content-disposition"):
+                    filename = _get_download_filename(content_disposition)
+
+                yield (filename, response)
+
+        except Exception as e:
+            raise CBCError(f"error downloading file: {e}") from e
+
+    def get(self, ep: str, *, params: QueryParams | None = None) -> httpx.Response:
         """Send a GET request to the given CBS endpoint."""
         try:
             res = self._client.get(ep, params=params)
-            self._maybe_handle_error(res)
+            self.maybe_handle_error(res)
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
@@ -106,7 +156,7 @@ class CBCClient:
         """Send a POST request to the given CBS endpoint."""
         try:
             res = self._client.post(ep, json=data)  # pyright: ignore[reportAny]
-            self._maybe_handle_error(res)
+            self.maybe_handle_error(res)
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
@@ -137,7 +187,7 @@ class CBCClient:
         """Send a PUT request to the given CBS endpoint."""
         try:
             res = self._client.put(ep, json=data)
-            self._maybe_handle_error(res)
+            self.maybe_handle_error(res)
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)
@@ -159,13 +209,11 @@ class CBCClient:
             raise CBCError(msg) from e
         return res
 
-    def delete(
-        self, ep: str, params: httpx_types.QueryParamTypes | None = None
-    ) -> httpx.Response:
+    def delete(self, ep: str, params: QueryParams | None = None) -> httpx.Response:
         """Send a DELETE request to the given CBS endpoint."""
         try:
             res = self._client.delete(ep, params=params)
-            self._maybe_handle_error(res)
+            self.maybe_handle_error(res)
         except httpx.ConnectError as e:
             msg = f"error connecting to '{self._client.base_url}': {e}"
             self._logger.error(msg)

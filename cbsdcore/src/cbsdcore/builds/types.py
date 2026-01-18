@@ -20,6 +20,15 @@ from cbsdcore.versions import BuildDescriptor
 
 
 class EntryState(str, enum.Enum):
+    #
+    # NEW represents a newly created build entry, but not yet scheduled.
+    # This is an internal state only, and should just exist between the time
+    # the build entry is created and the time it is scheduled for execution.
+    #
+    new = "NEW"
+    #
+    # the following states map to Celery task states.
+    #
     pending = "PENDING"
     started = "STARTED"
     retry = "RETRY"
@@ -30,7 +39,7 @@ class EntryState(str, enum.Enum):
 
 
 class BuildEntry(pydantic.BaseModel):
-    task_id: str
+    task_id: str | None = None
     desc: BuildDescriptor
     user: str
     submitted: dt

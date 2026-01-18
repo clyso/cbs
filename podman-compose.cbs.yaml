@@ -25,6 +25,7 @@ services:
     volumes:
       - ./_local/cbs/config/server:/cbs/config
       - ./_local/cbs/data:/cbs/data
+      - ./_local/cbs/logs:/cbs/logs
     security_opt:
       - label=disable
       - seccomp=unconfined
@@ -79,6 +80,11 @@ services:
 
   redis:
     container_name: cbs-redis
-    image: docker.io/redis:7
+    image: docker.io/redis:8.4
+    entrypoint: ["redis-server", "--save", "60", "1"]
     ports:
       - "6379:6379"
+    volumes:
+      - ./_local/cbs/redis:/data
+    security_opt:
+      - label=disable

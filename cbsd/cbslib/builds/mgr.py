@@ -26,7 +26,9 @@ from cbsdcore.versions import BuildDescriptor
 
 from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB
+from cbslib.builds.logs import BuildLogsHandler
 from cbslib.builds.tracker import BuildsTracker
+from cbslib.core.backend import Backend
 from cbslib.core.permissions import AuthorizationCaps, NotAuthorizedError, Permissions
 from cbslib.worker.celery import celery_app
 from cbslib.worker.tasks import ListComponentsTaskResponse
@@ -82,17 +84,27 @@ def _check_new_descriptor_permissions(
 class BuildsMgr:
     """Manages build-related operations."""
 
+    _backend: Backend
     _db: BuildsDB
+    _logs: BuildLogsHandler
     _permissions: Permissions
     _tracker: BuildsTracker
     _available_components: dict[str, AvailableComponent]
     _started: bool
     _init_task: asyncio.Task[None] | None
 
-    def __init__(self, db_path: Path, permissions: Permissions) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        logs_path: Path,
+        permissions: Permissions,
+        backend: Backend,
+    ) -> None:
+        self._backend = backend
         self._db = BuildsDB(db_path)
+        self._logs = BuildLogsHandler(logs_path, self._backend)
         self._permissions = permissions
-        self._tracker = BuildsTracker(self._db)
+        self._tracker = BuildsTracker(self._db, self._logs)
         self._available_components = {}
         self._started = False
         self._init_task = None
@@ -102,6 +114,9 @@ class BuildsMgr:
         # garbage collect old unfinished builds that may have lingered if we were
         # hard shutdown.
         await self._db.gc()
+
+        # garbage collect old logs, especially from the redis in-memory store.
+        await self._logs.gc(all=True)
 
         # update our known components.
         await self._update_components()
@@ -192,3 +207,7 @@ class BuildsMgr:
     @property
     def tracker(self) -> BuildsTracker:
         return self._tracker
+
+    @property
+    def logs(self) -> BuildLogsHandler:
+        return self._logs
