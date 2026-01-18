@@ -21,7 +21,7 @@ if ! podman --version >/dev/null 2>&1; then
   exit 1
 fi
 
-repo_tag="$(git rev-parse --short HEAD 2>/dev/null)"
+repo_tag="$(git describe --always 2>/dev/null)"
 [[ -z "${repo_tag}" ]] &&
   echo "error: failed to determine git commit hash" >/dev/stderr &&
   exit 1
