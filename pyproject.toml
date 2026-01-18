@@ -10,7 +10,7 @@ dependencies = []
 members = ["cbscore", "cbsdcore", "cbsd", "cbc", "crt"]
 
 [dependency-groups]
-dev = ["basedpyright>=1.29.0", "lefthook>=1.11.11", "ruff>=0.14.9"]
+dev = ["basedpyright==1.37.1", "lefthook==2.0.15", "ruff==0.14.13"]
 
 [tool.ruff.lint]
 select = [
