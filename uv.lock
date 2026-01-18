@@ -334,7 +334,7 @@ wheels = [
 
 [[package]]
 name = "cbc"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "cbc" }
 dependencies = [
     { name = "click" },
@@ -351,7 +351,7 @@ requires-dist = [
 
 [[package]]
 name = "cbscore"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "cbscore" }
 dependencies = [
     { name = "aioboto3" },
@@ -376,7 +376,7 @@ requires-dist = [
 
 [[package]]
 name = "cbsd"
-version = "0.1.0"
+version = "1.0.0"
 source = { virtual = "cbsd" }
 dependencies = [
     { name = "aioboto3" },
@@ -443,7 +443,7 @@ with-compose = [{ name = "watchdog", extras = ["watchmedo"], specifier = ">=6.0.
 
 [[package]]
 name = "cbsdcore"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "cbsdcore" }
 dependencies = [
     { name = "cbscore" },
@@ -634,7 +634,7 @@ wheels = [
 
 [[package]]
 name = "clyso-cbs"
-version = "0.0.0"
+version = "1.0.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

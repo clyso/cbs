@@ -1,6 +1,6 @@
 [project]
 name = "clyso-cbs"
-version = "0.0.0"
+version = "1.0.0"
 description = "Clyso Enterprise Storage Build Service"
 readme = "README.md"
 requires-python = ">=3.13"
