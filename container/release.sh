@@ -146,7 +146,7 @@ fi
 rm "${tmp_msg_file}"
 
 echo -e "${_CHECKMARK} created tag '${version}'"
-echo "${_INFOMARK} pushing to remote '${push_remote}'..."
+echo -e "${_INFOMARK} pushing to remote '${push_remote}'..."
 
 if ! git push "${push_remote}" tag "${version}"; then
   echo "error: unable to push tag '${version}' to remote '${push_remote}'" >/dev/null
