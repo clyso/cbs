@@ -92,15 +92,7 @@ deployment_name="${deployment_name#cbsd-}"
   exit 1
 }
 
-# service_name="${service#cbsd-}"
-# [[ -z "${service_name}" || "${service_name}" == "${service}" ]] && {
-#   echo "error: invalid service name: ${service}" >/dev/stderr
-#   usage
-#   exit 1
-# }
-
 service_type="${service%%.*}"
-# [[ -z "${service_type}" || "${service_type}" == "${service_name}" ]] && {
 [[ -z "${service_type}" ]] && {
   echo "error: invalid service name '${service}'" >/dev/stderr
   usage
@@ -140,7 +132,7 @@ redis_start() {
     --replace \
     -p "${REDIS_BIND_ADDR}":"${REDIS_PORT}":6379 \
     --name "${ctr_name}" \
-    docker.io/redis:7 || {
+    docker.io/redis:8.4 || {
     echo "error: failed to start redis '${ctr_name}'" >/dev/stderr
     exit 1
   }
