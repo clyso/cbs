@@ -1,6 +1,6 @@
 [project]
 name = "cbscore"
-version = "1.0.0"
+version = "1.0.1"
 description = "Clyso Build System core library"
 readme = "README.md"
 authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
