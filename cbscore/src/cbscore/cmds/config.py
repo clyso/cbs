@@ -299,6 +299,7 @@ def config_init(
         click.echo("do not write config files")
         sys.exit(errno.ENOTRECOVERABLE)
 
+    config_path.parent.mkdir(exist_ok=True, parents=True)
     try:
         config.store(config_path)
     except ConfigError as e:
@@ -388,6 +389,31 @@ def cmd_config() -> None:
     required=False,
     help="Specify secrets files paths.",
 )
+@click.option(
+    "--for-systemd-install",
+    "paths_for_systemd_install",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Initialize paths for a systemd install.",
+)
+@click.option(
+    "--systemd-deployment",
+    "systemd_deployment",
+    type=str,
+    required=False,
+    default="default",
+    show_default=True,
+    help="Systemd deployment name.",
+)
+@click.option(
+    "--for-containerized-run",
+    "paths_for_containerized_run",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Initialize paths for a containerized run.",
+)
 @pass_ctx
 def cmd_config_init(
     ctx: Ctx,
@@ -397,11 +423,26 @@ def cmd_config_init(
     ccache_path: Path | None,
     vault_config_path: Path | None,
     secrets_files_paths: tuple[Path, ...] | None,
+    paths_for_systemd_install: bool,
+    systemd_deployment: str | None,
+    paths_for_containerized_run: bool,
 ) -> None:
     assert ctx.config_path
     config_path = ctx.config_path
 
     cwd = Path.cwd()
+
+    if paths_for_systemd_install or paths_for_containerized_run:
+        components_paths = [Path("/cbs/components")]
+        scratch_path = Path("/cbs/scratch")
+        containers_scratch_path = Path("/var/lib/containers")
+        ccache_path = Path("/cbs/ccache")
+        secrets_files_paths = [Path("/cbs/config/secrets.yaml")]
+        vault_config_path = Path("/cbs/config/vault.yaml")
+
+    if paths_for_systemd_install:
+        config_dir_path = Path.home() / f".config/cbsd/{systemd_deployment}/worker"
+        config_path = config_dir_path / "cbscore.config.yaml"
 
     config_init(
         config_path,

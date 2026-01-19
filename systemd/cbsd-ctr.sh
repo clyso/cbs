@@ -92,15 +92,7 @@ deployment_name="${deployment_name#cbsd-}"
   exit 1
 }
 
-# service_name="${service#cbsd-}"
-# [[ -z "${service_name}" || "${service_name}" == "${service}" ]] && {
-#   echo "error: invalid service name: ${service}" >/dev/stderr
-#   usage
-#   exit 1
-# }
-
 service_type="${service%%.*}"
-# [[ -z "${service_type}" || "${service_type}" == "${service_name}" ]] && {
 [[ -z "${service_type}" ]] && {
   echo "error: invalid service name '${service}'" >/dev/stderr
   usage
@@ -131,16 +123,27 @@ source_config() {
 redis_start() {
   echo "starting redis '${ctr_name}'..."
 
+  redis_data_dir="${data_dir}/${deployment_name}/${service}/data"
+
   REDIS_BIND_ADDR="127.0.0.1"
   REDIS_PORT="6379"
   source_config
+
+  [[ ! -d "${redis_data_dir}" ]] && {
+    mkdir -p "${redis_data_dir}" || {
+      echo "error: unable to create redis data directory at '${redis_data_dir}" \
+        >/dev/stderr
+      exit 1
+    }
+  }
 
   podman run \
     -d \
     --replace \
     -p "${REDIS_BIND_ADDR}":"${REDIS_PORT}":6379 \
+    -v "${redis_data_dir}":/data:rw \
     --name "${ctr_name}" \
-    docker.io/redis:7 || {
+    docker.io/redis:8.4 || {
     echo "error: failed to start redis '${ctr_name}'" >/dev/stderr
     exit 1
   }
@@ -159,6 +162,7 @@ server_start() {
 
   server_config_dir="${config_dir}/${deployment_name}/${service}"
   server_data_dir="${data_dir}/${deployment_name}/${service}"
+  server_logs_dir="${data_dir}/${deployment_name}/${service}/logs"
 
   DEBUG=0
   SERVER_BIND_ADDR="127.0.0.1"
@@ -167,13 +171,23 @@ server_start() {
   source_config
 
   [[ ! -d "${server_config_dir}" ]] && {
-    echo "error: server config directory '${server_config_dir}' does not exist" >/dev/stderr
+    echo "error: server config directory '${server_config_dir}'" \
+      "does not exist" >/dev/stderr
     exit 1
   }
 
   [[ ! -d "${server_data_dir}" ]] && {
     mkdir -p "${server_data_dir}" || {
-      echo "error: failed to create server data directory '${server_data_dir}'" >/dev/stderr
+      echo "error: failed to create server data directory" \
+        "'${server_data_dir}'" >/dev/stderr
+      exit 1
+    }
+  }
+
+  [[ ! -d "${server_logs_dir}" ]] && {
+    mkdir -p "${server_logs_dir}" || {
+      echo "error: failed to create server logs directory '${server_logs_dir}'" \
+        >/dev/stderr
       exit 1
     }
   }
@@ -188,8 +202,9 @@ server_start() {
     -d \
     --replace \
     -p "${SERVER_BIND_ADDR}":"${SERVER_BIND_PORT}":8080 \
-    -v "${server_config_dir}":/cbs/config:Z \
-    -v "${server_data_dir}":/cbs/data:Z \
+    -v "${server_config_dir}":/cbs/config:rw \
+    -v "${server_data_dir}":/cbs/data:rw \
+    -v "${server_logs_dir}":/cbs/logs:rw \
     -e CBS_CONFIG=/cbs/config/cbsd.server.config.yaml ${debug_args} \
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
@@ -228,32 +243,37 @@ worker_start() {
   }
 
   [[ ! -d "${worker_config_dir}" ]] && {
-    echo "error: worker config directory '${worker_config_dir}' does not exist" >/dev/stderr
+    echo "error: worker config directory '${worker_config_dir}' does not exist" \
+      >/dev/stderr
     exit 1
   }
 
   [[ ! -d "${worker_components_dir}" ]] && {
-    echo "error: worker components directory '${worker_components_dir}' does not exist" >/dev/stderr
+    echo "error: worker components directory '${worker_components_dir}'" \
+      "does not exist" >/dev/stderr
     exit 1
   }
 
   [[ ! -d "${WORKER_SCRATCH_DIR}" ]] && {
     mkdir -p "${WORKER_SCRATCH_DIR}" || {
-      echo "error: failed to create worker scratch directory '${WORKER_SCRATCH_DIR}'" >/dev/stderr
+      echo "error: failed to create worker scratch directory" \
+        "'${WORKER_SCRATCH_DIR}'" >/dev/stderr
       exit 1
     }
   }
 
   [[ ! -d "${WORKER_CONTAINERS_DIR}" ]] && {
     mkdir -p "${WORKER_CONTAINERS_DIR}" || {
-      echo "error: failed to create worker containers directory '${WORKER_CONTAINERS_DIR}'" >/dev/stderr
+      echo "error: failed to create worker containers directory" \
+        "'${WORKER_CONTAINERS_DIR}'" >/dev/stderr
       exit 1
     }
   }
 
   [[ ! -d "${WORKER_CCACHE_DIR}" ]] && {
     mkdir -p "${WORKER_CCACHE_DIR}" || {
-      echo "error: failed to create worker ccache directory '${WORKER_CCACHE_DIR}'" >/dev/stderr
+      echo "error: failed to create worker ccache directory" \
+        "'${WORKER_CCACHE_DIR}'" >/dev/stderr
       exit 1
     }
   }
@@ -262,11 +282,11 @@ worker_start() {
   podman run \
     -d \
     --replace \
-    -v "${worker_config_dir}":/cbs/config:Z \
-    -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:Z \
-    -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:Z \
-    -v "${WORKER_CCACHE_DIR}":/cbs/ccache:Z \
-    -v "${worker_components_dir}":/cbs/components:Z \
+    -v "${worker_config_dir}":/cbs/config:rw \
+    -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:rw \
+    -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:rw \
+    -v "${WORKER_CCACHE_DIR}":/cbs/ccache:rw \
+    -v "${worker_components_dir}":/cbs/components:rw \
     -v /dev/fuse:/dev/fuse:rw \
     -e CBS_CONFIG=/cbs/config/cbsd.worker.config.yaml ${debug_args} \
     --cap-add SYS_ADMIN \
