@@ -145,6 +145,7 @@ redis_start() {
     -v "${redis_data_dir}":/data:Z \
     --security-opt label=disable \
     --network "cbsd-${deployment_name}" \
+    --userns keep-id \
     --name "${ctr_name}" \
     docker.io/redis:8.4 || {
     echo "error: failed to start redis '${ctr_name}'" >&2
