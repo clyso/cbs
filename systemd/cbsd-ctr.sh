@@ -142,6 +142,7 @@ redis_start() {
     --replace \
     -p "${REDIS_BIND_ADDR}":"${REDIS_PORT}":6379 \
     -v "${redis_data_dir}":/data:rw \
+    --network "cbsd-${deployment_name}" \
     --name "${ctr_name}" \
     docker.io/redis:8.4 || {
     echo "error: failed to start redis '${ctr_name}'" >&2
@@ -209,6 +210,7 @@ server_start() {
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
     --privileged \
+    --network "cbsd-${deployment_name}" \
     --name "${ctr_name}" \
     "${IMAGE}" || {
     echo "error: failed to start server '${ctr_name}'" >&2
@@ -294,6 +296,7 @@ worker_start() {
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
     --privileged \
+    --network "cbsd-${deployment_name}" \
     --name "${ctr_name}" \
     "${IMAGE}" || {
     echo "error: failed to start worker '${ctr_name}'" >&2

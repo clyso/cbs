@@ -240,6 +240,23 @@ if [[ ! -e "${systemd_dir}/cbsd-${deployment}@.service" ]]; then
 
 fi
 
+if [[ ! -e "${systemd_dir}/cbsd-network@.service" ]]; then
+
+  cp "${our_dir}"/templates/systemd/cbsd-network@.service \
+    "${systemd_dir}"/cbsd-network@.service || {
+    echo "error: failed to install cbsd-network service file" >&2
+    exit 1
+  }
+
+  echo -e "${_INFOMARK} enable cbsd network for deployment '${deployment}'..."
+  systemctl --user enable "cbsd-network@${deployment}" || {
+    echo "error: unable to enable cbsd network for deployment '${deployment}'" >&2
+    exit 1
+  }
+  echo -e "${_CHECKMARK} cbsd network enabled for deployment '${deployment}'"
+
+fi
+
 [[ ! -e "${systemd_dir}/cbsd.target" ]] && {
   cp "${our_dir}/templates/systemd/cbsd.target" \
     "${systemd_dir}/cbsd.target" ||

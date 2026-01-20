@@ -13,8 +13,8 @@
 
 [Unit]
 Description=CBSD Init Container Services for %i on deployment '{{deployment}}'
-After=network.target local-fs.target
-Wants=network-online.target local-fs.target
+After=network.target local-fs.target cbsd-network@{{deployment}}
+Wants=network-online.target local-fs.target cbsd-network@{{deployment}}
 PartOf=cbsd-{{deployment}}.target
 Before=cbsd-{{deployment}}.target
 
