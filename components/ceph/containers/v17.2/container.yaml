@@ -81,11 +81,19 @@ packages:
     - section: nfs-ganesha
       packages:
         - dbus-daemon
-        - nfs-ganesha-ceph
-        - nfs-ganesha-rados-grace
-        - nfs-ganesha-rados-urls
-        - nfs-ganesha-rgw
-        - nfs-ganesha
+        # there's a mismatch between rockylinux 9.7 (latest atm) and stream's
+        # ganesha repo, on the 'selinux-policy' package version. We need to
+        # rely on the old ganesha package until 9.8 is officially out.
+        # - nfs-ganesha-ceph
+        # - nfs-ganesha-rados-grace
+        # - nfs-ganesha-rados-urls
+        # - nfs-ganesha-rgw
+        # - nfs-ganesha
+        - nfs-ganesha-ceph-5.9-1.el9s
+        - nfs-ganesha-rados-grace-5.9-1.el9s
+        - nfs-ganesha-rados-urls-5.9-1.el9s
+        - nfs-ganesha-rgw-5.9-1.el9s
+        - nfs-ganesha-5.9-1.el9s
         - rpcbind
         - sssd-client
 
