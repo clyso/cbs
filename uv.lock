@@ -376,7 +376,7 @@ requires-dist = [
 
 [[package]]
 name = "cbsd"
-version = "1.0.1"
+version = "1.0.2"
 source = { virtual = "cbsd" }
 dependencies = [
     { name = "aioboto3" },
@@ -634,7 +634,7 @@ wheels = [
 
 [[package]]
 name = "clyso-cbs"
-version = "1.0.1"
+version = "1.0.2"
 source = { virtual = "." }
 
 [package.dev-dependencies]
