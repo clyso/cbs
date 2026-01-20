@@ -36,6 +36,9 @@ VOLUME [ "/cbs/config" ]
 #
 FROM base AS cbsd-prod-base
 
+# hadolint ignore=DL3018
+RUN apk add bash
+
 COPY ./pyproject.toml ./
 COPY ./cbsd/pyproject.toml ./cbsd/
 COPY ./cbsd/cbslib/ ./cbslib/
@@ -56,16 +59,11 @@ RUN uv sync --all-packages --no-cache --no-dev || exit 1
 FROM cbsd-prod-base AS cbsd-server
 
 COPY ./cbsd/cbs-server.py ./
+COPY ./container/entrypoint.sh ./entrypoint.sh
 
-ENTRYPOINT [ "uv", "run", "--no-sync", \
-  "uvicorn", \
-  "--factory", \
-  "--host", "0.0.0.0", \
-  "--port", "8080", \ 
-  "--ssl-keyfile", "/cbs/config/cbs.key.pem", \
-  "--ssl-certfile", "/cbs/config/cbs.cert.pem", \
-  "cbs-server:factory" \
-  ]
+ENV CBSD_CONFIG=/cbs/config
+
+ENTRYPOINT [ "/cbs/server/entrypoint.sh" ]
 
 
 # CBSD production worker
@@ -112,4 +110,3 @@ ENTRYPOINT [ \
   "/cbs/server/cbsd/entrypoint-dev.sh", \
   "worker" \
   ]
-

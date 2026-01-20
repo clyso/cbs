@@ -15,6 +15,7 @@
 
 _CHECKMARK="\u2713"
 _INFOMARK="\u2139"
+_WARNMARK="\u26A0"
 
 print_boxed() {
   in_str="${1}"
@@ -62,11 +63,11 @@ print_boxed() {
 }
 
 [[ ! -e ".git" ]] &&
-  echo "warning: this script is intended to be run from the CBS source tree root" >/dev/stderr &&
+  echo "warning: this script is intended to be run from the CBS source tree root" >&2 &&
   exit 1
 
 usage() {
-  cat <<EOF >/dev/stderr
+  cat <<EOF >&2
 usage: $0 [SERVICE] [options...]
 
 Services:
@@ -101,7 +102,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -d | --deployment)
       [[ -z $2 ]] && {
-        echo "error: '--deployment' requires an argument" >/dev/stderr
+        echo "error: '--deployment' requires an argument" >&2
         usage
         exit 1
       }
@@ -110,7 +111,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -n | --name)
       [[ -z $2 ]] && {
-        echo "error: '--name' requires an argument" >/dev/stderr
+        echo "error: '--name' requires an argument" >&2
         usage
         exit 1
       }
@@ -119,7 +120,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --config)
       [[ -z $2 ]] && {
-        echo "error: '--config' requires an argument" >/dev/stderr
+        echo "error: '--config' requires an argument" >&2
         usage
         exit 1
       }
@@ -128,7 +129,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --data)
       [[ -z $2 ]] && {
-        echo "error: '--data' requires an argument" >/dev/stderr
+        echo "error: '--data' requires an argument" >&2
         usage
         exit 1
       }
@@ -136,7 +137,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     -*)
-      echo "error: unknown option: $1" >/dev/stderr
+      echo "error: unknown option: $1" >&2
       usage
       exit 1
       ;;
@@ -169,7 +170,7 @@ else
       do_worker=1
       ;;
     *)
-      echo "error: unknown service: ${positional_args[0]}" >/dev/stderr
+      echo "error: unknown service: ${positional_args[0]}" >&2
       usage
       exit 1
       ;;
@@ -182,7 +183,7 @@ deployment_data_dir="${data_dir}/${deployment}"
 [[ ! -d "${deployment_config_dir}" ]] && {
   mkdir -p "${deployment_config_dir}" ||
     {
-      echo "error: failed to create config directory: ${deployment_config_dir}" >/dev/stderr
+      echo "error: failed to create config directory: ${deployment_config_dir}" >&2
       exit 1
     }
 }
@@ -190,21 +191,21 @@ deployment_data_dir="${data_dir}/${deployment}"
 [[ ! -d "${deployment_data_dir}" ]] && {
   mkdir -p "${deployment_data_dir}" ||
     {
-      echo "error: failed to create data directory: ${deployment_data_dir}" >/dev/stderr
+      echo "error: failed to create data directory: ${deployment_data_dir}" >&2
       exit 1
     }
 }
 
 cp "${our_dir}/cbsd-ctr.sh" \
   "${data_dir}/cbsd-ctr.sh" || {
-  echo "error: failed to install cbsd-ctr.sh to ${data_dir}" >/dev/stderr
+  echo "error: failed to install cbsd-ctr.sh to ${data_dir}" >&2
   exit 1
 }
 
 [[ ! -d "${systemd_dir}" ]] && {
   mkdir -p "${systemd_dir}" ||
     {
-      echo "error: failed to create systemd user directory: ${systemd_dir}" >/dev/stderr
+      echo "error: failed to create systemd user directory: ${systemd_dir}" >&2
       exit 1
     }
 }
@@ -214,7 +215,7 @@ if [[ ! -e "${systemd_dir}/cbsd-${deployment}@.service" ]]; then
   cp "${our_dir}/templates/systemd/cbsd-.service.in" \
     "${systemd_dir}/cbsd-${deployment}@.service" ||
     {
-      echo "error: failed to install cbsd service file for ${deployment}" >/dev/stderr
+      echo "error: failed to install cbsd service file for ${deployment}" >&2
       exit 1
     }
 
@@ -222,21 +223,38 @@ if [[ ! -e "${systemd_dir}/cbsd-${deployment}@.service" ]]; then
     s|{{cbsd_data}}|${data_dir}|g;
     s|{{cbsd_config}}|${config_dir}|g" \
     "${systemd_dir}/cbsd-${deployment}@.service" || {
-    echo "error: failed to configure cbsd service file for ${deployment}" >/dev/stderr
+    echo "error: failed to configure cbsd service file for ${deployment}" >&2
     exit 1
   }
 
   cp "${our_dir}/templates/systemd/cbsd-.target.in" \
     "${systemd_dir}/cbsd-${deployment}.target" ||
     {
-      echo "error: failed to install cbsd target file for ${deployment}" >/dev/stderr
+      echo "error: failed to install cbsd target file for ${deployment}" >&2
       exit 1
     }
 
   sed -i "s|{{deployment}}|${deployment}|g" "${systemd_dir}/cbsd-${deployment}.target" || {
-    echo "error: failed to configure cbsd target file for ${deployment}" >/dev/stderr
+    echo "error: failed to configure cbsd target file for ${deployment}" >&2
     exit 1
   }
+
+fi
+
+if [[ ! -e "${systemd_dir}/cbsd-network@.service" ]]; then
+
+  cp "${our_dir}"/templates/systemd/cbsd-network@.service \
+    "${systemd_dir}"/cbsd-network@.service || {
+    echo "error: failed to install cbsd-network service file" >&2
+    exit 1
+  }
+
+  echo -e "${_INFOMARK} enable cbsd network for deployment '${deployment}'..."
+  systemctl --user enable "cbsd-network@${deployment}" || {
+    echo "error: unable to enable cbsd network for deployment '${deployment}'" >&2
+    exit 1
+  }
+  echo -e "${_CHECKMARK} cbsd network enabled for deployment '${deployment}'"
 
 fi
 
@@ -244,7 +262,7 @@ fi
   cp "${our_dir}/templates/systemd/cbsd.target" \
     "${systemd_dir}/cbsd.target" ||
     {
-      echo "error: failed to install cbsd target file" >/dev/stderr
+      echo "error: failed to install cbsd target file" >&2
       exit 1
     }
 }
@@ -253,7 +271,7 @@ enable_service() {
   svc_name="${1}"
   systemctl --user enable "cbsd-${deployment}@${svc_name}.service" || {
     echo "error: failed to enable cbsd service '${svc_name}' for" \
-      "deployment '${deployment}'" >/dev/stderr
+      "deployment '${deployment}'" >&2
     exit 1
   }
 }
@@ -262,11 +280,21 @@ install_redis() {
   echo -e "${_INFOMARK} installing redis service for" \
     "deployment '${deployment}'..."
 
+  dst_redis_conf="${deployment_config_dir}/redis.conf"
+  [[ -e "${dst_redis_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing redis.conf at" \
+      "${dst_redis_conf}, moving to '.old'"
+    mv "${dst_redis_conf}" "${dst_redis_conf}.old" || {
+      echo "error: unable to move '${dst_redis_conf}' to '.old'" >&2
+      exit 1
+    }
+  }
+
   cp "${our_dir}/templates/config/redis.conf.in" \
-    "${deployment_config_dir}/redis.conf" ||
+    "${dst_redis_conf}" ||
     {
       echo "error: failed to install redis config for" \
-        "deployment '${deployment}'" >/dev/stderr
+        "deployment '${deployment}'" >&2
       exit 1
     }
 
@@ -278,11 +306,31 @@ install_server() {
   echo -e "${_INFOMARK} installing server service for" \
     "deployment '${deployment}'..."
 
+  old_config_warning=
+  dst_server_conf="${deployment_config_dir}/server.conf"
+  [[ -e "${dst_server_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing server.conf at" \
+      "${dst_server_conf}, moving to '.old'"
+    mv "${dst_server_conf}" "${dst_server_conf}.old" || {
+      echo "error: unable to move '${dst_server_conf}' to '.old'" >&2
+      exit 1
+    }
+
+    old_config_warning="$(
+      cat <<EOF
+
+Old config file can be found at:
+  ${dst_server_conf}.old
+
+EOF
+    )"
+  }
+
   cp "${our_dir}/templates/config/server.conf.in" \
-    "${deployment_config_dir}/server.conf" ||
+    "${dst_server_conf}" ||
     {
       echo "error: failed to install server config for" \
-        "deployment '${deployment}'" >/dev/stderr
+        "deployment '${deployment}'" >&2
       exit 1
     }
 
@@ -290,7 +338,7 @@ install_server() {
     mkdir -p "${deployment_config_dir}/server" ||
       {
         echo "error: failed to create server config directory" \
-          "for deployment '${deployment}'" >/dev/stderr
+          "for deployment '${deployment}'" >&2
         exit 1
       }
   }
@@ -306,7 +354,8 @@ CBS service 'server' installed for deployment '${deployment}'.
 This service *requires* further configuration before it can be started.
 
 systemd unit configuration can be found at:
-  ${deployment_config_dir}/server.conf
+  ${dst_server_conf}
+${old_config_warning}
 
 CBSD server configuration must exist in:
   ${deployment_config_dir}/server/
@@ -333,20 +382,40 @@ install_worker() {
   svc_name="worker"
   svc_name+="${service_name:+.${service_name}}"
 
+  old_config_warning=
+  dst_worker_conf="${deployment_config_dir}/${svc_name}.conf"
+  [[ -e "${dst_worker_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing ${svc_name}.conf at" \
+      "${dst_worker_conf}, moving to '.old'"
+    mv "${dst_worker_conf}" "${dst_worker_conf}.old" || {
+      echo "error: unable to move '${dst_worker_conf}' to '.old'" >&2
+      exit 1
+    }
+
+    old_config_warning="$(
+      cat <<EOF
+
+Old config file can be found at:
+  ${dst_worker_conf}.old
+
+EOF
+    )"
+  }
+
   cp "${our_dir}/templates/config/worker.conf.in" \
-    "${deployment_config_dir}/${svc_name}.conf" ||
+    "${dst_worker_conf}" ||
     {
       echo "error: failed to install worker config" \
-        "for deployment '${deployment}'" >/dev/stderr
+        "for deployment '${deployment}'" >&2
       exit 1
     }
 
   sed -i "s|{{cbsd_data}}|${data_dir}|g;
     s|{{deployment}}|${deployment}|g;
     s|{{svc_name}}|${svc_name}|g" \
-    "${deployment_config_dir}/${svc_name}.conf" || {
+    "${dst_worker_conf}" || {
     echo "error: failed to configure worker config" \
-      "for deployment '${deployment}'" >/dev/stderr
+      "for deployment '${deployment}'" >&2
     exit 1
   }
 
@@ -356,7 +425,7 @@ install_worker() {
     mkdir -p "${components_dir}" ||
       {
         echo "error: failed to create worker components directory" \
-          "for deployment '${deployment}'" >/dev/stderr
+          "for deployment '${deployment}'" >&2
         exit 1
       }
   }
@@ -365,7 +434,7 @@ install_worker() {
     "${deployment_data_dir}/components/" ||
     {
       echo "error: failed to install worker components" \
-        "for deployment '${deployment}'" >/dev/stderr
+        "for deployment '${deployment}'" >&2
       exit 1
     }
 
@@ -373,7 +442,7 @@ install_worker() {
     mkdir -p "${deployment_config_dir}/${svc_name}" ||
       {
         echo "error: failed to create worker config directory" \
-          "for deployment '${deployment}'" >/dev/stderr
+          "for deployment '${deployment}'" >&2
         exit 1
       }
   }
@@ -389,10 +458,11 @@ CBS service '${svc_name}' installed for deployment '${deployment}'.
 This service *requires* further configuration before it can be started.
 
 systemd unit configuration can be found at:
-  ${deployment_config_dir}/${svc_name}.conf
+  ${dst_worker_conf}
 
 Consider editing this file to adjust paths for the worker's scratch,
 containers, and ccache directories.
+${old_config_warning}
 
 CBSD worker configuration must exist in:
   ${deployment_config_dir}/${svc_name}/
@@ -425,6 +495,6 @@ EOF
 }
 
 systemctl --user daemon-reload || {
-  echo "error: failed to reload systemd user daemon" >/dev/stderr
+  echo "error: failed to reload systemd user daemon" >&2
   exit 1
 }
