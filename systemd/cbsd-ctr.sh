@@ -14,7 +14,7 @@
 # GNU General Public License for more details.
 
 usage() {
-  cat <<EOF >/dev/stderr
+  cat <<EOF >&2
 usage: $0 ACTION DEPLOYMENT SERVICE [options...]
 
 Actions:
@@ -41,7 +41,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -c | --config)
       [[ -z $2 ]] && {
-        echo "error: '--config' requires an argument" >/dev/stderr
+        echo "error: '--config' requires an argument" >&2
         usage
         exit 1
       }
@@ -50,7 +50,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -d | --data)
       [[ -z $2 ]] && {
-        echo "error: '--data' requires an argument" >/dev/stderr
+        echo "error: '--data' requires an argument" >&2
         usage
         exit 1
       }
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
       shift 1
       ;;
     -*)
-      echo "error: unknown option: ${1}" >/dev/stderr
+      echo "error: unknown option: ${1}" >&2
       usage
       exit 1
       ;;
@@ -70,7 +70,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ ${#positional_args[@]} -lt 3 ]] && {
-  echo "error: ACTION, DEPLOYMENT, and SERVICE must be specified" >/dev/stderr
+  echo "error: ACTION, DEPLOYMENT, and SERVICE must be specified" >&2
   usage
   exit 1
 }
@@ -80,21 +80,21 @@ deployment_name="${positional_args[1]}"
 service="${positional_args[2]}"
 
 [[ "${action}" != "start" && "${action}" != "stop" ]] && {
-  echo "error: unknown action: ${action}" >/dev/stderr
+  echo "error: unknown action: ${action}" >&2
   usage
   exit 1
 }
 
 deployment_name="${deployment_name#cbsd-}"
 [[ -z "${deployment_name}" || "${deployment_name}" == "${deployment_name}" ]] && {
-  echo "error: invalid deployment name: ${deployment_name}" >/dev/stderr
+  echo "error: invalid deployment name: ${deployment_name}" >&2
   usage
   exit 1
 }
 
 service_type="${service%%.*}"
 [[ -z "${service_type}" ]] && {
-  echo "error: invalid service name '${service}'" >/dev/stderr
+  echo "error: invalid service name '${service}'" >&2
   usage
   exit 1
 }
@@ -132,7 +132,7 @@ redis_start() {
   [[ ! -d "${redis_data_dir}" ]] && {
     mkdir -p "${redis_data_dir}" || {
       echo "error: unable to create redis data directory at '${redis_data_dir}" \
-        >/dev/stderr
+        >&2
       exit 1
     }
   }
@@ -144,7 +144,7 @@ redis_start() {
     -v "${redis_data_dir}":/data:rw \
     --name "${ctr_name}" \
     docker.io/redis:8.4 || {
-    echo "error: failed to start redis '${ctr_name}'" >/dev/stderr
+    echo "error: failed to start redis '${ctr_name}'" >&2
     exit 1
   }
 }
@@ -152,7 +152,7 @@ redis_start() {
 redis_stop() {
   echo "stopping redis '${ctr_name}'..."
   podman stop "${ctr_name}" || {
-    echo "error: failed to stop redis '${ctr_name}'" >/dev/stderr
+    echo "error: failed to stop redis '${ctr_name}'" >&2
     exit 1
   }
 }
@@ -172,14 +172,14 @@ server_start() {
 
   [[ ! -d "${server_config_dir}" ]] && {
     echo "error: server config directory '${server_config_dir}'" \
-      "does not exist" >/dev/stderr
+      "does not exist" >&2
     exit 1
   }
 
   [[ ! -d "${server_data_dir}" ]] && {
     mkdir -p "${server_data_dir}" || {
       echo "error: failed to create server data directory" \
-        "'${server_data_dir}'" >/dev/stderr
+        "'${server_data_dir}'" >&2
       exit 1
     }
   }
@@ -187,7 +187,7 @@ server_start() {
   [[ ! -d "${server_logs_dir}" ]] && {
     mkdir -p "${server_logs_dir}" || {
       echo "error: failed to create server logs directory '${server_logs_dir}'" \
-        >/dev/stderr
+        >&2
       exit 1
     }
   }
@@ -211,7 +211,7 @@ server_start() {
     --privileged \
     --name "${ctr_name}" \
     "${IMAGE}" || {
-    echo "error: failed to start server '${ctr_name}'" >/dev/stderr
+    echo "error: failed to start server '${ctr_name}'" >&2
     exit 1
   }
 }
@@ -219,7 +219,7 @@ server_start() {
 server_stop() {
   echo "stopping server '${ctr_name}'..."
   podman stop "${ctr_name}" || {
-    echo "error: failed to stop server '${ctr_name}'" >/dev/stderr
+    echo "error: failed to stop server '${ctr_name}'" >&2
     exit 1
   }
 }
@@ -244,20 +244,20 @@ worker_start() {
 
   [[ ! -d "${worker_config_dir}" ]] && {
     echo "error: worker config directory '${worker_config_dir}' does not exist" \
-      >/dev/stderr
+      >&2
     exit 1
   }
 
   [[ ! -d "${worker_components_dir}" ]] && {
     echo "error: worker components directory '${worker_components_dir}'" \
-      "does not exist" >/dev/stderr
+      "does not exist" >&2
     exit 1
   }
 
   [[ ! -d "${WORKER_SCRATCH_DIR}" ]] && {
     mkdir -p "${WORKER_SCRATCH_DIR}" || {
       echo "error: failed to create worker scratch directory" \
-        "'${WORKER_SCRATCH_DIR}'" >/dev/stderr
+        "'${WORKER_SCRATCH_DIR}'" >&2
       exit 1
     }
   }
@@ -265,7 +265,7 @@ worker_start() {
   [[ ! -d "${WORKER_CONTAINERS_DIR}" ]] && {
     mkdir -p "${WORKER_CONTAINERS_DIR}" || {
       echo "error: failed to create worker containers directory" \
-        "'${WORKER_CONTAINERS_DIR}'" >/dev/stderr
+        "'${WORKER_CONTAINERS_DIR}'" >&2
       exit 1
     }
   }
@@ -273,7 +273,7 @@ worker_start() {
   [[ ! -d "${WORKER_CCACHE_DIR}" ]] && {
     mkdir -p "${WORKER_CCACHE_DIR}" || {
       echo "error: failed to create worker ccache directory" \
-        "'${WORKER_CCACHE_DIR}'" >/dev/stderr
+        "'${WORKER_CCACHE_DIR}'" >&2
       exit 1
     }
   }
@@ -296,7 +296,7 @@ worker_start() {
     --privileged \
     --name "${ctr_name}" \
     "${IMAGE}" || {
-    echo "error: failed to start worker '${ctr_name}'" >/dev/stderr
+    echo "error: failed to start worker '${ctr_name}'" >&2
     exit 1
   }
 
@@ -305,7 +305,7 @@ worker_start() {
 worker_stop() {
   echo "stopping worker '${ctr_name}'..."
   podman stop "${ctr_name}" || {
-    echo "error: failed to stop worker '${ctr_name}'" >/dev/stderr
+    echo "error: failed to stop worker '${ctr_name}'" >&2
     exit 1
   }
 }
@@ -323,7 +323,7 @@ case "${service_type}" in
     fname="worker_${action}"
     ;;
   *)
-    echo "error: unknown service: ${service_type}" >/dev/stderr
+    echo "error: unknown service: ${service_type}" >&2
     usage
     exit 1
     ;;
