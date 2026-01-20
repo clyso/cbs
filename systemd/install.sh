@@ -15,6 +15,7 @@
 
 _CHECKMARK="\u2713"
 _INFOMARK="\u2139"
+_WARNMARK="\u26A0"
 
 print_boxed() {
   in_str="${1}"
@@ -279,8 +280,18 @@ install_redis() {
   echo -e "${_INFOMARK} installing redis service for" \
     "deployment '${deployment}'..."
 
+  dst_redis_conf="${deployment_config_dir}/redis.conf"
+  [[ -e "${dst_redis_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing redis.conf at" \
+      "${dst_redis_conf}, moving to '.old'"
+    mv "${dst_redis_conf}" "${dst_redis_conf}.old" || {
+      echo "error: unable to move '${dst_redis_conf}' to '.old'" >&2
+      exit 1
+    }
+  }
+
   cp "${our_dir}/templates/config/redis.conf.in" \
-    "${deployment_config_dir}/redis.conf" ||
+    "${dst_redis_conf}" ||
     {
       echo "error: failed to install redis config for" \
         "deployment '${deployment}'" >&2
@@ -295,8 +306,28 @@ install_server() {
   echo -e "${_INFOMARK} installing server service for" \
     "deployment '${deployment}'..."
 
+  old_config_warning=
+  dst_server_conf="${deployment_config_dir}/server.conf"
+  [[ -e "${dst_server_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing server.conf at" \
+      "${dst_server_conf}, moving to '.old'"
+    mv "${dst_server_conf}" "${dst_server_conf}.old" || {
+      echo "error: unable to move '${dst_server_conf}' to '.old'" >&2
+      exit 1
+    }
+
+    old_config_warning="$(
+      cat <<EOF
+
+Old config file can be found at:
+  ${dst_server_conf}.old
+
+EOF
+    )"
+  }
+
   cp "${our_dir}/templates/config/server.conf.in" \
-    "${deployment_config_dir}/server.conf" ||
+    "${dst_server_conf}" ||
     {
       echo "error: failed to install server config for" \
         "deployment '${deployment}'" >&2
@@ -323,7 +354,8 @@ CBS service 'server' installed for deployment '${deployment}'.
 This service *requires* further configuration before it can be started.
 
 systemd unit configuration can be found at:
-  ${deployment_config_dir}/server.conf
+  ${dst_server_conf}
+${old_config_warning}
 
 CBSD server configuration must exist in:
   ${deployment_config_dir}/server/
@@ -350,8 +382,28 @@ install_worker() {
   svc_name="worker"
   svc_name+="${service_name:+.${service_name}}"
 
+  old_config_warning=
+  dst_worker_conf="${deployment_config_dir}/${svc_name}.conf"
+  [[ -e "${dst_worker_conf}" ]] && {
+    echo -e "${_WARNMARK} warning: found existing ${svc_name}.conf at" \
+      "${dst_worker_conf}, moving to '.old'"
+    mv "${dst_worker_conf}" "${dst_worker_conf}.old" || {
+      echo "error: unable to move '${dst_worker_conf}' to '.old'" >&2
+      exit 1
+    }
+
+    old_config_warning="$(
+      cat <<EOF
+
+Old config file can be found at:
+  ${dst_worker_conf}.old
+
+EOF
+    )"
+  }
+
   cp "${our_dir}/templates/config/worker.conf.in" \
-    "${deployment_config_dir}/${svc_name}.conf" ||
+    "${dst_worker_conf}" ||
     {
       echo "error: failed to install worker config" \
         "for deployment '${deployment}'" >&2
@@ -361,7 +413,7 @@ install_worker() {
   sed -i "s|{{cbsd_data}}|${data_dir}|g;
     s|{{deployment}}|${deployment}|g;
     s|{{svc_name}}|${svc_name}|g" \
-    "${deployment_config_dir}/${svc_name}.conf" || {
+    "${dst_worker_conf}" || {
     echo "error: failed to configure worker config" \
       "for deployment '${deployment}'" >&2
     exit 1
@@ -406,10 +458,11 @@ CBS service '${svc_name}' installed for deployment '${deployment}'.
 This service *requires* further configuration before it can be started.
 
 systemd unit configuration can be found at:
-  ${deployment_config_dir}/${svc_name}.conf
+  ${dst_worker_conf}
 
 Consider editing this file to adjust paths for the worker's scratch,
 containers, and ccache directories.
+${old_config_warning}
 
 CBSD worker configuration must exist in:
   ${deployment_config_dir}/${svc_name}/
