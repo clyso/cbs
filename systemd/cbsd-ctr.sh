@@ -142,7 +142,8 @@ redis_start() {
     -d \
     --replace \
     -p "${REDIS_BIND_ADDR}":"${REDIS_PORT}":6379 \
-    -v "${redis_data_dir}":/data:rw \
+    -v "${redis_data_dir}":/data:Z \
+    --security-opt label=disable \
     --network "cbsd-${deployment_name}" \
     --name "${ctr_name}" \
     docker.io/redis:8.4 || {
@@ -204,9 +205,9 @@ server_start() {
     -d \
     --replace \
     -p "${SERVER_BIND_ADDR}":"${SERVER_BIND_PORT}":8080 \
-    -v "${server_config_dir}":/cbs/config:rw \
-    -v "${server_data_dir}":/cbs/data:rw \
-    -v "${server_logs_dir}":/cbs/logs:rw \
+    -v "${server_config_dir}":/cbs/config:ro \
+    -v "${server_data_dir}":/cbs/data:Z \
+    -v "${server_logs_dir}":/cbs/logs:Z \
     -e CBS_CONFIG=/cbs/config/cbsd.server.config.yaml ${debug_args} \
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
@@ -285,11 +286,11 @@ worker_start() {
   podman run \
     -d \
     --replace \
-    -v "${worker_config_dir}":/cbs/config:rw \
-    -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:rw \
-    -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:rw \
-    -v "${WORKER_CCACHE_DIR}":/cbs/ccache:rw \
-    -v "${worker_components_dir}":/cbs/components:rw \
+    -v "${worker_config_dir}":/cbs/config:ro \
+    -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:Z \
+    -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:Z \
+    -v "${WORKER_CCACHE_DIR}":/cbs/ccache:Z \
+    -v "${worker_components_dir}":/cbs/components:ro \
     -v /dev/fuse:/dev/fuse:rw \
     -e CBS_CONFIG=/cbs/config/cbsd.worker.config.yaml ${debug_args} \
     --cap-add SYS_ADMIN \
