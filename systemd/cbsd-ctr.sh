@@ -85,12 +85,13 @@ service="${positional_args[2]}"
   exit 1
 }
 
-deployment_name="${deployment_name#cbsd-}"
-[[ -z "${deployment_name}" || "${deployment_name}" == "${deployment_name}" ]] && {
+real_deployment_name="${deployment_name#cbsd-}"
+[[ -z "${deployment_name}" || "${real_deployment_name}" == "${deployment_name}" ]] && {
   echo "error: invalid deployment name: ${deployment_name}" >&2
   usage
   exit 1
 }
+deployment_name="${real_deployment_name}"
 
 service_type="${service%%.*}"
 [[ -z "${service_type}" ]] && {
