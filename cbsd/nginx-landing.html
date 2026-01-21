@@ -1,0 +1,214 @@
+<!--
+Generate by Gemini Pro on Jan 21 2026
+  by Joao Eduardo Luis <joao@clyso.com>
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CLI Access Only</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;       /* Deep dark blue-black */
+            --card-bg: #161b22;        /* Panel background */
+            --border-color: #30363d;   /* Borders */
+            --text-primary: #f0f6fc;   /* White text */
+            --text-secondary: #8b949e; /* Grey text */
+            --accent-color: #2f81f7;   /* Blue command text */
+            --accent-hover: #58a6ff;
+            --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            text-align: center;
+            max-width: 620px;
+            width: 100%;
+        }
+
+        .logo {
+            font-size: 32px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            margin-bottom: 30px;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        h1 { font-size: 24px; font-weight: 600; margin-bottom: 12px; }
+
+        p {
+            color: var(--text-secondary);
+            font-size: 16px;
+            line-height: 1.6;
+            margin-bottom: 40px;
+        }
+
+        /* --- DOWNLOAD BUTTONS --- */
+        .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 50px;
+        }
+
+        .download-btn {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            color: var(--accent-color);
+            padding: 14px 24px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            width: 100%;
+            max-width: 300px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .download-btn:hover {
+            border-color: var(--accent-color);
+            background-color: #1f2428;
+            color: var(--accent-hover);
+        }
+
+        .sub-text { font-size: 13px; color: var(--text-secondary); margin-top: 8px; }
+
+        /* --- USAGE & STEPS SECTIONS --- */
+        .info-section {
+            text-align: left;
+            border-top: 1px solid var(--border-color);
+            padding-top: 30px;
+            margin-top: 30px;
+        }
+
+        h2 {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .cli-box {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 16px 20px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            overflow-x: auto;
+            margin-bottom: 30px;
+        }
+
+        .cli-prompt { color: var(--text-secondary); margin-right: 12px; user-select: none; }
+        .cli-cmd { color: var(--accent-color); font-weight: 500; white-space: nowrap; }
+
+        .steps-list { list-style: none; padding: 0; margin: 0; }
+
+        .step-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 20px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .step-icon {
+            color: var(--accent-color);
+            margin-right: 12px;
+            font-size: 16px;
+            margin-top: -2px;
+        }
+
+        .step-content strong { color: var(--text-primary); font-weight: 600; }
+
+        code {
+            font-family: var(--font-mono);
+            background-color: rgba(110, 118, 129, 0.2);
+            padding: 2px 5px;
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        <div class="logo">CLYSO</div>
+        <h1>Browser Access Restricted</h1>
+        <p>
+            This endpoint is designed for programmatic access only.<br>
+            Please download the CLI tool to interact with this server.
+        </p>
+
+        <div class="btn-group">
+            <a href="https://github.com/clyso/cbs/releases/latest/download/cbc" class="download-btn">
+                <span>⬇</span> Download CLI (Linux)
+            </a>
+            <div class="sub-text">
+                Simply download, <code>chmod +x cbc</code>, and run.
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h2>Quick Start</h2>
+            <div class="cli-box">
+                <span class="cli-prompt">$</span>
+                <span class="cli-cmd">cbc auth login https://cbs.ces.clyso.cloud</span>
+            </div>
+
+            <h2>What happens next?</h2>
+            <ul class="steps-list">
+                <li class="step-item">
+                    <span class="step-icon">▸</span>
+                    <div class="step-content">
+                        <strong>SSO Redirect:</strong> The tool provides a URL. Open it in your browser to
+                        sign in via Google SSO using your Clyso credentials.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <span class="step-icon">▸</span>
+                    <div class="step-content">
+                        <strong>Auto-Configuration:</strong> Upon successful login, a <code>cbc-config.yaml</code>
+                        file will automatically download to your computer.
+                    </div>
+                </li>
+                <li class="step-item">
+                    <span class="step-icon">▸</span>
+                    <div class="step-content">
+                        <strong>Placement:</strong> Ensure <code>cbc-config.yaml</code> is in the same folder
+                        as the tool, or specify its path using the <code>-c</code> flag
+                        (e.g., <code>cbc -c /path/to/config ...</code>).
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+    </div>
+</body>
+</html>

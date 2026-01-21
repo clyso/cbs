@@ -1,6 +1,6 @@
 [project]
 name = "cbc"
-version = "1.0.1"
+version = "1.0.4"
 description = "CBS service client"
 readme = "README.md"
 authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
@@ -23,3 +23,8 @@ cbsdcore = { workspace = true }
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.18.0",
+]

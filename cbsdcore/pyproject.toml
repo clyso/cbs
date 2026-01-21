@@ -1,6 +1,6 @@
 [project]
 name = "cbsdcore"
-version = "1.0.0"
+version = "1.0.4"
 description = "CBS service daemon core library"
 readme = "README.md"
 authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
