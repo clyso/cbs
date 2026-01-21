@@ -1,0 +1,52 @@
+# Generated with Gemini Pro
+#   by Joao Eduardo Luis <joao@clyso.com> on Jan 21 2026
+#
+name: Release CBC Binary
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install Dependencies
+        run: |
+          cd cbs/cbc
+          uv sync --dev
+
+      - name: Run Build Script
+        run: |
+          chmod +x cbs/cbc/tools/build.sh
+          ./cbs/cbc/tools/build.sh
+
+      - name: Prepare Artifacts
+        run: |
+          # Extract tag (e.g., v1.0.0)
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          cd cbs/cbc/dist
+          # Create the versioned copy (e.g., cbc-v1.0.0-linux-amd64)
+          cp cbc cbc-${TAG_NAME}-linux-amd64
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cbs/cbc/dist/cbc
+            cbs/cbc/dist/cbc-*-linux-amd64
+          generate_release_notes: true
