@@ -19,7 +19,7 @@ set -e
 scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Go to the 'cbc' package root (one level up from tools)
-project_root="${scriptdir}/.."
+project_root="$(realpath "${scriptdir}/..")"
 cd "${project_root}"
 
 echo ">>> Building cbc binary from ${project_root}..."

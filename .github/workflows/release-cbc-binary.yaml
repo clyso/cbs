@@ -26,8 +26,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          cd cbs/cbc
-          uv sync --dev
+          uv sync --dev --package cbc --package cbsdcore
 
       - name: Run Build Script
         run: |
