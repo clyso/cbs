@@ -30,15 +30,15 @@ jobs:
 
       - name: Run Build Script
         run: |
-          chmod +x cbs/cbc/tools/build.sh
-          ./cbs/cbc/tools/build.sh
+          chmod +x ./cbc/tools/build.sh
+          ./cbc/tools/build.sh
 
       - name: Prepare Artifacts
         run: |
           # Extract tag (e.g., v1.0.0)
           TAG_NAME=${GITHUB_REF#refs/tags/}
 
-          cd cbs/cbc/dist
+          cd cbc/dist
           # Create the versioned copy (e.g., cbc-v1.0.0-linux-amd64)
           cp cbc cbc-${TAG_NAME}-linux-amd64
 
@@ -46,6 +46,6 @@ jobs:
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           files: |
-            cbs/cbc/dist/cbc
-            cbs/cbc/dist/cbc-*-linux-amd64
+            cbc/dist/cbc
+            cbc/dist/cbc-*-linux-amd64
           generate_release_notes: true
