@@ -38,7 +38,15 @@ from crt.crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crt.crtlib.errors.patchset import NoSuchPatchSetError, PatchSetError
-from crt.crtlib.errors.release import NoSuchReleaseError
+from crt.crtlib.errors.release import NoSuchReleaseError, ReleaseError
+from crt.crtlib.git_utils import (
+    GitError,
+    git_get_remote_ref,
+    git_prepare_remote,
+    git_push,
+    git_remote,
+    git_tag_exists_in_remote,
+)
 from crt.crtlib.github import gh_get_pr
 from crt.crtlib.manifest import (
     ManifestExecuteResult,
@@ -646,7 +654,12 @@ def cmd_manifest_add_patchset(
     progress.new_task("applying patch set to manifest")
     try:
         _, added, skipped = patches_apply_to_manifest(
-            manifest, patchset, ceph_repo_path, patches_repo_path, ctx.github_token
+            manifest,
+            patchset,
+            ceph_repo_path,
+            patches_repo_path,
+            ctx.github_token,
+            run_locally=ctx.run_locally,
         )
     except (ApplyError, Exception) as e:
         perror(f"unable to apply to manifest: {e}")
@@ -683,6 +696,7 @@ def _manifest_execute(
     ceph_repo_path: Path,
     patches_repo_path: Path,
     no_cleanup: bool = True,
+    run_locally: bool = False,
     progress: CRTProgress,
 ) -> tuple[ManifestExecuteResult, RenderableType]:
     """
@@ -694,7 +708,12 @@ def _manifest_execute(
 
     try:
         res = manifest_execute(
-            manifest, ceph_repo_path, patches_repo_path, token, no_cleanup=no_cleanup
+            manifest,
+            ceph_repo_path,
+            patches_repo_path,
+            token,
+            no_cleanup=no_cleanup,
+            run_locally=run_locally,
         )
     except ApplyConflictError as e:
         progress.stop_error()
@@ -870,6 +889,7 @@ def cmd_manifest_validate(
         ceph_repo_path=ceph_repo_path,
         patches_repo_path=patches_repo_path,
         no_cleanup=no_cleanup,
+        run_locally=ctx.run_locally,
         progress=progress,
     )
     progress.stop()
@@ -904,6 +924,15 @@ def cmd_manifest_validate(
     default="release-dev",
     help="Prefix to use for published branch.",
 )
+@click.option(
+    "-r",
+    "--release",
+    "release_name",
+    type=str,
+    required=True,
+    metavar="RELEASE",
+    help="Release associated with the manifest.",
+)
 @with_patches_repo_path
 @pass_ctx
 def cmd_manifest_publish(
@@ -912,6 +941,7 @@ def cmd_manifest_publish(
     ceph_repo_path: Path,
     release_branch_prefix: str,
     manifest_name_or_uuid: str,
+    release_name: str,
 ) -> None:
     """
     Publish a manifest.
@@ -944,6 +974,27 @@ def cmd_manifest_publish(
 
     progress = CRTProgress(console)
     progress.start()
+
+    try:
+        _prepare_release_repo(
+            ceph_repo_path,
+            patches_repo_path,
+            manifest,
+            release_name,
+            ctx.github_token,
+        )
+    except NoSuchReleaseError:
+        msg = f"release {release_name} does not exist"
+        logger.error(msg)
+        sys.exit(errno.ENOENT)
+    except ReleaseError as e:
+        msg = f"can't load release {release_name}: '{e}'"
+        logger.error(msg)
+        sys.exit(errno.EBADMSG)
+    except GitError as e:
+        msg = f"can't publish manifest {manifest.name}: '{e}'"
+        logger.error(msg)
+        sys.exit(e.ec)
 
     execute_res, execute_summary = _manifest_execute(
         manifest,
@@ -1084,3 +1135,36 @@ def cmd_manifest_update(patches_repo_path: Path, manifest_name_or_uuid: str) -> 
         sys.exit(errno.ENOTRECOVERABLE)
 
     psuccess(f"updated manifest '{manifest_name_or_uuid}' on-disk representation")
+
+
+def _prepare_release_repo(
+    ceph_repo_path: Path,
+    ces_patch_path: Path,
+    manifest: ReleaseManifest,
+    release_name: str,
+    token: str,
+) -> None:
+    release_branch_name = manifest.base_ref
+    release_tag_name = release_branch_name.replace("/", "-")
+    remote_name = manifest.dst_repo
+
+    if (
+        git_remote(ceph_repo_path, remote_name)
+        and git_get_remote_ref(ceph_repo_path, release_branch_name, remote_name)
+        and git_tag_exists_in_remote(ceph_repo_path, remote_name, release_tag_name)
+    ):
+        pinfo("release repo allready prepared")
+        return
+
+    release = load_release(ces_patch_path, release_name)
+    release_repo_name = release.base_repo
+
+    git_prepare_remote(
+        ceph_repo_path, f"github.com/{release_repo_name}", release_repo_name, token
+    )
+    if remote_name != release_repo_name:
+        git_prepare_remote(
+            ceph_repo_path, f"github.com/{remote_name}", remote_name, token
+        )
+    git_push(ceph_repo_path, release_branch_name, remote_name)
+    git_push(ceph_repo_path, release_tag_name, remote_name)
