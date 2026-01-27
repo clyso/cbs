@@ -549,21 +549,6 @@ def cmd_patchset_add(
     progress.start()
     progress.new_task(f"add patches from '{gh_repo}' branch '{patches_branch}'")
 
-    # ensure we have the specified branch in the ceph repo, so we can actually obtain
-    # the right shas
-    progress.new_task("prepare remote")
-    try:
-        remote = git_prepare_remote(
-            ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
-        )
-    except Exception as e:
-        progress.stop_error()
-        perror(f"unable to update remote '{gh_repo}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    progress.done_task()
-    progress.new_task("fetch patches")
-
     seq = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
     dst_branch = f"patchset/branch/{gh_repo.replace('/', '--')}--{patches_branch}-{seq}"
 
@@ -811,7 +796,11 @@ def cmd_patchset_publish(
 
     try:
         patches = fetch_custom_patchset_patches(
-            ceph_repo_path, patches_repo_path, patchset, ctx.github_token
+            ceph_repo_path,
+            patches_repo_path,
+            patchset,
+            ctx.github_token,
+            run_locally=ctx.run_locally,
         )
     except Exception as e:
         progress.stop_error()
