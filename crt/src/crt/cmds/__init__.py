@@ -33,10 +33,12 @@ logger = parent_logger.getChild("cmds")
 class Ctx:
     github_token: str | None
     patches_repo_path: Path | None
+    run_locally: bool
 
     def __init__(self) -> None:
         self.github_token = None
         self.patches_repo_path = None
+        self.run_locally = False
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
@@ -45,6 +47,22 @@ pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
 _R = TypeVar("_R")
 _T = TypeVar("_T")
 _P = ParamSpec("_P")
+
+
+def with_run_locally(
+    f: Callable[Concatenate[bool, _P], _R],
+) -> Callable[_P, _R]:
+    """Pass the flag to don't access remotes from the context to the function."""
+
+    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        curr_ctx = click.get_current_context()
+        ctx = curr_ctx.find_object(Ctx)
+        if not ctx:
+            perror(f"missing context for '{f.__name__}'")
+            sys.exit(errno.ENOTRECOVERABLE)
+        return f(ctx.run_locally, *args, **kwargs)
+
+    return update_wrapper(inner, f)
 
 
 def with_patches_repo_path(f: Callable[Concatenate[Path, _P], _R]) -> Callable[_P, _R]:

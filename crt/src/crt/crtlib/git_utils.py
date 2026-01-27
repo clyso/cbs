@@ -382,6 +382,18 @@ def git_prepare_remote(
     return remote
 
 
+def git_remote(repo_path: Path, remote_name: str) -> git.Remote | None:
+    logger.info(f"get remote '{remote_name}'")
+
+    repo = git.Repo(repo_path)
+    try:
+        return repo.remote(remote_name)
+    except ValueError:
+        logger.debug(f"remote '{remote_name}' doesn't exists")
+
+    return None
+
+
 def _get_remote_ref_name(
     remote_name: str, remote_ref: str, *, ref_name: str | None = None
 ) -> tuple[str, str] | None:

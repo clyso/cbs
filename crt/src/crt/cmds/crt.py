@@ -78,6 +78,15 @@ logger = parent_logger.getChild("crt")
     required=True,
     help="Path to CES patches git repository.",
 )
+@click.option(
+    "-l",
+    "--local-run",
+    "run_locally",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="run without accessing remotes",
+)
 @pass_ctx
 def cmd_crt(
     ctx: Ctx,
@@ -85,6 +94,7 @@ def cmd_crt(
     verbose: bool,
     github_token: str | None,
     patches_repo_path: Path,
+    run_locally: bool,
 ) -> None:
     if verbose:
         set_verbose_logging()
@@ -97,6 +107,7 @@ def cmd_crt(
 
     ctx.github_token = github_token
     ctx.patches_repo_path = patches_repo_path
+    ctx.run_locally = run_locally
 
     if debug or verbose:
         table = Table(show_header=False, show_lines=False, box=None)
