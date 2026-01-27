@@ -44,7 +44,9 @@ from crt.crtlib.errors.patchset import (
 )
 from crt.crtlib.git_utils import (
     SHA,
+    GitError,
     git_branch_delete,
+    git_branch_from,
     git_get_patch_sha_title,
     git_patches_in_interval,
     git_prepare_remote,
@@ -547,29 +549,40 @@ def cmd_patchset_add(
     progress.start()
     progress.new_task(f"add patches from '{gh_repo}' branch '{patches_branch}'")
 
-    # ensure we have the specified branch in the ceph repo, so we can actually obtain
-    # the right shas
-    progress.new_task("prepare remote")
-    try:
-        remote = git_prepare_remote(
-            ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
-        )
-    except Exception as e:
-        progress.stop_error()
-        perror(f"unable to update remote '{gh_repo}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-
-    progress.done_task()
-    progress.new_task("fetch patches")
-
     seq = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
     dst_branch = f"patchset/branch/{gh_repo.replace('/', '--')}--{patches_branch}-{seq}"
-    try:
-        _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
-    except Exception as e:
-        progress.stop_error()
-        perror(f"unable to fetch branch '{patches_branch}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+
+    if not ctx.run_locally:
+        # ensure we have the specified branch in the ceph repo, so we can actually
+        # obtain the right shas
+        progress.new_task("prepare remote")
+        try:
+            remote = git_prepare_remote(
+                ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
+            )
+        except Exception as e:
+            progress.stop_error()
+            perror(f"unable to update remote '{gh_repo}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+
+        progress.done_task()
+
+        progress.new_task("fetch patches")
+
+        try:
+            _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
+        except Exception as e:
+            progress.stop_error()
+            perror(f"unable to fetch branch '{patches_branch}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+    else:
+        progress.new_task("create branch patches")
+        try:
+            git_branch_from(ceph_repo_path, patches_branch, dst_branch)
+        except GitError as e:
+            progress.stop_error()
+            perror(f"unable to create branch '{dst_branch} from {patches_branch}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
 
     def _cleanup() -> None:
         try:
@@ -781,7 +794,11 @@ def cmd_patchset_publish(
 
     try:
         patches = fetch_custom_patchset_patches(
-            ceph_repo_path, patches_repo_path, patchset, ctx.github_token
+            ceph_repo_path,
+            patches_repo_path,
+            patchset,
+            ctx.github_token,
+            run_locally=ctx.run_locally,
         )
     except Exception as e:
         progress.stop_error()
