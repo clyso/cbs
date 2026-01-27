@@ -670,17 +670,21 @@ def git_branch_delete(repo_path: Path, branch: str) -> None:
 
 def git_push(
     repo_path: Path,
-    branch: str,
+    ref: str,
     remote_name: str,
     *,
-    branch_to: str | None = None,
+    ref_to: str | None = None,
 ) -> tuple[bool, list[str], list[str]]:
-    dst_branch = branch_to if branch_to else branch
-
-    head = git_get_local_head(repo_path, branch)
-    if not head:
-        logger.error(f"unable to find branch '{branch}' to push")
-        raise GitHeadNotFoundError(branch)
+    dst_ref = ref_to if ref_to else ref
+    """
+    pushes either a local head of branch or a local tag to the remote
+    """
+    if _get_tag(repo_path, ref):
+        dst_ref = f"refs/tags/{dst_ref}"
+    elif not git_get_local_head(repo_path, ref):
+        # ref is neither a local branch nor tag
+        logger.error(f"unable to find ref '{ref}' to push")
+        raise GitHeadNotFoundError(ref)
 
     repo = git.Repo(repo_path)
     try:
@@ -690,12 +694,12 @@ def git_push(
         raise GitMissingRemoteError(remote_name) from None
 
     try:
-        info = remote.push(f"{branch}:{dst_branch}")
+        info = remote.push(f"{ref}:{dst_ref}")
     except git.CommandError as e:
-        msg = f"unable to push '{branch}' to '{dst_branch}': {e}"
+        msg = f"unable to push '{ref}' to '{dst_ref}': {e}"
         logger.error(msg)
         logger.error(e.stderr)
-        raise GitPushError(branch, dst_branch, remote_name) from None
+        raise GitPushError(ref, dst_ref, remote_name) from None
 
     updated: list[str] = []
     rejected: list[str] = []
@@ -805,6 +809,16 @@ def git_format_patch(repo_path: Path, rev: SHA, *, base_rev: SHA | None = None) 
         raise GitError(msg=msg) from None
 
     return res
+
+
+def git_tag_exists_in_remote(repo_path: Path, remote_name: str, tag_name: str) -> bool:
+    repo = git.Repo(repo_path)
+    raw_tags: str = repo.git.ls_remote("--tags", remote_name)
+    for tag_line in raw_tags.splitlines():
+        _, ref = tag_line.split()
+        if f"refs/tags/{tag_name}^{{}}" == ref:
+            return True
+    return False
 
 
 if __name__ == "__main__":

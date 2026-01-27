@@ -146,6 +146,7 @@ def apply_manifest(
     token: str,
     *,
     no_cleanup: bool = False,
+    run_locally: bool = False,
 ) -> tuple[bool, list[ManifestPatchEntry], list[ManifestPatchEntry]]:
     ceph_repo = git.Repo(ceph_repo_path)
 
@@ -191,9 +192,10 @@ def apply_manifest(
     try:
         _prepare_repo(ceph_repo_path)
         repo_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
-        _ = git_prepare_remote(
-            ceph_repo_path, f"github.com/{repo_name}", repo_name, token
-        )
+        if not run_locally:
+            _ = git_prepare_remote(
+                ceph_repo_path, f"github.com/{repo_name}", repo_name, token
+            )
     except ApplyError as e:
         logger.error(e)
         raise e from None
@@ -232,6 +234,8 @@ def patches_apply_to_manifest(
     ceph_repo_path: Path,
     patches_repo_path: Path,
     token: str,
+    *,
+    run_locally: bool = False,
 ) -> tuple[bool, list[ManifestPatchEntry], list[ManifestPatchEntry]]:
     manifest = orig_manifest.model_copy(deep=True)
     if not manifest.add_patches(patch):
@@ -247,4 +251,5 @@ def patches_apply_to_manifest(
         target_branch,
         token,
         no_cleanup=False,
+        run_locally=run_locally,
     )

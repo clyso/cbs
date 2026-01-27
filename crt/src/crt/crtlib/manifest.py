@@ -32,11 +32,13 @@ from crt.crtlib.errors.manifest import (
 )
 from crt.crtlib.errors.stages import MissingStagePatchError
 from crt.crtlib.git_utils import (
+    GitCreateHeadExistsError,
     GitError,
     GitFetchError,
     GitFetchHeadNotFoundError,
     GitIsTagError,
     GitPushError,
+    git_branch_from,
     git_checkout_ref,
     git_cleanup_repo,
     git_fetch_ref,
@@ -75,6 +77,8 @@ def _prepare_repo(
     base_remote_name: str,
     push_remote_name: str,
     token: str,
+    *,
+    run_locally: bool = False,
 ) -> None:
     try:
         git_cleanup_repo(repo_path)
@@ -83,43 +87,50 @@ def _prepare_repo(
         logger.error(msg)
         raise ManifestError(uuid=manifest_uuid, msg=msg) from None
 
-    try:
-        base_remote_uri = f"github.com/{base_remote_name}"
-        _ = git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
-        push_remote_uri = f"github.com/{push_remote_name}"
-        _ = git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
-    except GitError as e:
-        raise ManifestError(uuid=manifest_uuid, msg=str(e)) from None
+    if not run_locally:
+        try:
+            base_remote_uri = f"github.com/{base_remote_name}"
+            _ = git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
+            push_remote_uri = f"github.com/{push_remote_name}"
+            _ = git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
+        except GitError as e:
+            raise ManifestError(uuid=manifest_uuid, msg=str(e)) from None
 
-    # fetch from base repository, if it exists.
-    try:
-        _ = git_fetch_ref(repo_path, target_branch, target_branch, push_remote_name)
-    except GitIsTagError as e:
-        msg = f"unexpected tag for branch '{target_branch}': {e}"
-        logger.error(msg)
-        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
-    except GitFetchHeadNotFoundError:
-        # does not exist in the provided remote.
-        logger.debug(
-            f"branch '{target_branch}' does not exist in remote '{push_remote_name}'"
-        )
-    except GitFetchError as e:
-        msg = f"unable to fetch '{target_branch}' from '{push_remote_name}': {e}"
-        logger.error(msg)
-        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
-    except GitError as e:
-        msg = (
-            f"unexpected error fetching branch '{target_branch}' "
-            + f"from '{push_remote_name}': {e}"
-        )
-        logger.error(msg)
-        raise ManifestError(uuid=manifest_uuid, msg=msg) from None
+        # fetch from base repository, if it exists.
+        try:
+            _ = git_fetch_ref(repo_path, target_branch, target_branch, push_remote_name)
+        except GitIsTagError as e:
+            msg = f"unexpected tag for branch '{target_branch}': {e}"
+            logger.error(msg)
+            raise ManifestError(uuid=manifest_uuid, msg=msg) from None
+        except GitFetchHeadNotFoundError:
+            # does not exist in the provided remote.
+            logger.debug(
+                f"branch '{target_branch}' does not exist in remote '{push_remote_name}'"
+            )
+        except GitFetchError as e:
+            msg = f"unable to fetch '{target_branch}' from '{push_remote_name}': {e}"
+            logger.error(msg)
+            raise ManifestError(uuid=manifest_uuid, msg=msg) from None
+        except GitError as e:
+            msg = (
+                f"unexpected error fetching branch '{target_branch}' "
+                + f"from '{push_remote_name}': {e}"
+            )
+            logger.error(msg)
+            raise ManifestError(uuid=manifest_uuid, msg=msg) from None
 
     # we either fetched and thus we have an up-to-date local branch, or we didn't find
     # a corresponding reference in the remote and we need to either:
     #  1. checkout a new copy of the base ref to the target branch
     #  2. use an existing local target branch
     try:
+        if run_locally:
+            try:
+                git_branch_from(repo_path, base_ref, target_branch)
+            except GitCreateHeadExistsError:
+                msg = f"branch {target_branch} exists"
+                logger.info(msg)
         _ = git_checkout_ref(
             repo_path,
             base_ref,
@@ -148,6 +159,7 @@ def manifest_execute(
     token: str,
     *,
     no_cleanup: bool = True,
+    run_locally: bool = False,
 ) -> ManifestExecuteResult:
     """
     Execute a manifest against its base ref.
@@ -183,6 +195,7 @@ def manifest_execute(
             base_remote_name,
             manifest.dst_repo,
             token,
+            run_locally=run_locally,
         )
     except ManifestError as e:
         logger.error(f"unable to prepare repository to execute manifest: {e}")
@@ -197,6 +210,7 @@ def manifest_execute(
             target_branch,
             token,
             no_cleanup=no_cleanup,
+            run_locally=run_locally,
         )
         pass
     except ApplyError as e:
@@ -329,7 +343,7 @@ def manifest_publish_branch(
             repo_path,
             our_branch,
             dst_repo,
-            branch_to=dst_branch,
+            ref_to=dst_branch,
         )
     except GitPushError as e:
         msg = f"unable to push '{our_branch}': {e}"
@@ -487,6 +501,13 @@ def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
             f"error writing manifest uuid '{manifest.release_uuid}' "
             + f"to '{manifest_uuid_path}': {e}"
         )
+        logger.error(msg)
+        raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
+
+    try:
+        manifest_name_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        msg = f"error creating folder '{manifest_name_path.parent}': {e}"
         logger.error(msg)
         raise ManifestError(uuid=manifest.release_uuid, msg=msg) from None
 
