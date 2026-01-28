@@ -332,6 +332,14 @@ def cmd_patchset() -> None:
     metavar="NAME",
     help="Release associated with this patch set.",
 )
+@click.option(
+    "--no",
+    "assume_no",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Automatic no to promtps",
+)
 @with_patches_repo_path
 def cmd_patchset_create(
     patches_repo_path: Path,
@@ -340,6 +348,7 @@ def cmd_patchset_create(
     patchset_title: str | None,
     patchset_desc: str | None,
     release_name: str | None,
+    assume_no: bool,
 ) -> None:
     print("prompt?")
     if not patchset_title:
@@ -355,7 +364,9 @@ def cmd_patchset_create(
         sys.exit(errno.EINVAL)
 
     author_info = f"{author_name} <{author_email}>"
-    if not patchset_desc and click.confirm("Add a description?", default=False):
+    if not patchset_desc and (
+        not assume_no and click.confirm("Add a description?", default=False)
+    ):
         try:
             desc_msg = (
                 click.edit(
@@ -505,6 +516,14 @@ def cmd_patchset_info(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None
     metavar="NAME",
     help="Branch on which to find patches.",
 )
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Automatic yes to promtps",
+)
 @click.argument(
     "patch_sha",
     metavar="SHA|SHA1..SHA2 [...]",
@@ -521,6 +540,7 @@ def cmd_patchset_add(
     patchset_uuid: uuid.UUID,
     gh_repo: str,
     patches_branch: str,
+    assume_yes: bool,
     patch_sha: list[str],
 ) -> None:
     if not ctx.github_token:
@@ -700,7 +720,9 @@ def cmd_patchset_add(
                 patch_lst_table.add_row(sha, title)
 
         console.print(Padding(patch_lst_table, (1, 0, 1, 0)))
-        if not click.confirm("Add above patches to patch set?", prompt_suffix=" "):
+        if not assume_yes and not click.confirm(
+            "Add above patches to patch set?", prompt_suffix=" "
+        ):
             pwarn("Aborted")
             sys.exit(0)
 
@@ -738,6 +760,14 @@ def cmd_patchset_add(
     required=True,
     help="Patch set UUID.",
 )
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Automatic yes to promtps",
+)
 @with_patches_repo_path
 @pass_ctx
 def cmd_patchset_publish(
@@ -745,6 +775,7 @@ def cmd_patchset_publish(
     patches_repo_path: Path,
     ceph_repo_path: Path,
     patchset_uuid: uuid.UUID,
+    assume_yes: bool,
 ) -> None:
     if not ctx.github_token:
         perror("missing GitHub token")
@@ -771,7 +802,9 @@ def cmd_patchset_publish(
         sys.exit(errno.EINVAL)
 
     console.print(_gen_rich_patchset_info(patchset))
-    if not click.confirm("Publish above patch set?", prompt_suffix=" "):
+    if not assume_yes and not click.confirm(
+        "Publish above patch set?", prompt_suffix=" "
+    ):
         pwarn("Aborted")
         sys.exit(0)
 
@@ -811,8 +844,18 @@ def cmd_patchset_publish(
     required=True,
     help="Patch set UUID.",
 )
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Automatic yes to promtps",
+)
 @with_patches_repo_path
-def cmd_patchset_remove(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> None:
+def cmd_patchset_remove(
+    patches_repo_path: Path, patchset_uuid: uuid.UUID, assume_yes: bool
+) -> None:
     patchset_meta_path = get_patchset_meta_path(patches_repo_path, patchset_uuid)
     if not patchset_meta_path.exists():
         perror(f"patch set '{patchset_uuid}' does not exist")
@@ -833,7 +876,9 @@ def cmd_patchset_remove(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> No
         sys.exit(errno.EINVAL)
 
     console.print(_gen_rich_patchset_info(patchset))
-    if not click.confirm("Remove above patch set?", prompt_suffix=" "):
+    if not assume_yes and not click.confirm(
+        "Remove above patch set?", prompt_suffix=" "
+    ):
         pwarn("Aborted")
         sys.exit(0)
 
