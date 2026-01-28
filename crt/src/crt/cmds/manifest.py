@@ -1007,6 +1007,14 @@ def cmd_manifest_publish(
     default=False,
     help="Only print release notes to stdout.",
 )
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Automatic yes to promtps",
+)
 @with_patches_repo_path
 def cmd_manifest_release_notes(
     patches_repo_path: Path,
@@ -1014,6 +1022,7 @@ def cmd_manifest_release_notes(
     cephadm_loc: str | None,
     image_loc: str | None,
     to_stdout: bool,
+    assume_yes: bool,
 ) -> None:
     try:
         manifest = load_manifest_by_name_or_uuid(patches_repo_path, name_or_uuid)
@@ -1032,8 +1041,11 @@ def cmd_manifest_release_notes(
         print(txt)
 
     dst_path = patches_repo_path / "release-notes" / f"{manifest.name}.md"
-    if dst_path.exists() and not click.confirm(
-        "Release notes file exists. Overwrite?", default=False, prompt_suffix=""
+    if dst_path.exists() and (
+        assume_yes
+        or not click.confirm(
+            "Release notes file exists. Overwrite?", default=False, prompt_suffix=""
+        )
     ):
         pinfo(f"not writing release notes to {dst_path}")
         sys.exit(0)
