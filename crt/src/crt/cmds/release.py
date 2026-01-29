@@ -33,9 +33,11 @@ from crt.crtlib.git_utils import (
     git_branch_from,
     git_cleanup_repo,
     git_fetch_ref,
+    git_get_local_head,
     git_get_remote_ref,
     git_prepare_remote,
     git_push,
+    git_remote,
     git_reset_head,
     git_tag,
 )
@@ -46,10 +48,12 @@ from crt.crtlib.release import load_release, release_exists, store_release
 from . import (
     console,
     perror,
+    pinfo,
     psuccess,
     pwarn,
     with_gh_token,
     with_patches_repo_path,
+    with_run_locally,
 )
 from . import (
     logger as parent_logger,
@@ -65,6 +69,8 @@ def _prepare_release_repo(
     src_repo: str,
     dst_repo: str,
     token: str,
+    *,
+    run_locally: bool = False,
 ) -> None:
     try:
         git_cleanup_repo(ceph_repo_path)
@@ -72,6 +78,10 @@ def _prepare_release_repo(
     except GitError as e:
         perror(f"failed to cleanup ceph repo at '{ceph_repo_path}': {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from e
+
+    if run_locally:
+        # return because only thing we do next is to set the remotes and fetch from it.
+        return
 
     try:
         _ = git_prepare_remote(
@@ -92,18 +102,30 @@ def _prepare_release_branches(
     src_ref: str,
     dst_repo: str,
     dst_branch: str,
+    *,
+    run_locally: bool = False,
 ) -> None:
     try:
-        if git_get_remote_ref(ceph_repo_path, dst_branch, dst_repo):
-            perror(f"destination branch '{dst_branch}' already exists in '{dst_repo}'")
-            sys.exit(errno.EEXIST)
+        if run_locally:
+            if git_get_local_head(ceph_repo_path, dst_branch):
+                perror(f"destination branch '{dst_branch}' already exists local'")
+                sys.exit(errno.EEXIST)
+        else:
+            if git_get_remote_ref(ceph_repo_path, dst_branch, dst_repo):
+                perror(
+                    f"destination branch '{dst_branch}' already exists in '{dst_repo}'"
+                )
+                sys.exit(errno.EEXIST)
     except GitError as e:
         perror(f"failed to check for existing branch '{dst_branch}': {e}")
         raise _ExitError(errno.ENOTRECOVERABLE) from e
 
     is_tag = False
     try:
-        _ = git_fetch_ref(ceph_repo_path, src_ref, dst_branch, src_repo)
+        if run_locally:
+            git_branch_from(ceph_repo_path, src_ref, dst_branch)
+        else:
+            _ = git_fetch_ref(ceph_repo_path, src_ref, dst_branch, src_repo)
     except GitIsTagError:
         logger.debug(f"source ref '{src_ref}' is a tag, fetching as branch")
         is_tag = True
@@ -188,11 +210,13 @@ def cmd_release():
     help="Allow a development release, with suffixes.",
 )
 @click.argument("release_name", type=str, required=True, metavar="NAME")
+@with_run_locally
 @with_patches_repo_path
 @with_gh_token
 def cmd_release_start(
     gh_token: str,
     patches_repo_path: Path,
+    run_locally: bool,
     ceph_repo_path: Path,
     from_manifest: str | None,
     from_ref: str | None,
@@ -276,6 +300,7 @@ def cmd_release_start(
             base_ref_repo,
             dst_repo,
             gh_token,
+            run_locally=run_locally,
         )
     except _ExitError as e:
         progress.stop_error()
@@ -288,7 +313,9 @@ def cmd_release_start(
     progress.done_task()
 
     progress.new_task("prepare release branches")
-    if git_get_remote_ref(ceph_repo_path, f"release/{release_name}", dst_repo):
+    if not run_locally and git_get_remote_ref(
+        ceph_repo_path, f"release/{release_name}", dst_repo
+    ):
         progress.stop_error()
         perror(f"release '{release_name}' already marked released in '{dst_repo}'")
         sys.exit(errno.EEXIST)
@@ -300,6 +327,7 @@ def cmd_release_start(
             base_ref,
             dst_repo,
             release_base_branch,
+            run_locally=run_locally,
         )
     except _ExitError as e:
         progress.stop_error()
@@ -309,16 +337,19 @@ def cmd_release_start(
         perror(f"failed to prepare release branches: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    try:
-        _ = git_push(ceph_repo_path, release_base_branch, dst_repo)
-    except GitError as e:
-        progress.stop_error()
-        perror(f"failed to push release branch '{release_base_branch}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
-    except Exception as e:
-        progress.stop_error()
-        perror(f"unexpected error pushing release branch '{release_base_branch}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+    if not run_locally:
+        try:
+            _ = git_push(ceph_repo_path, release_base_branch, dst_repo)
+        except GitError as e:
+            progress.stop_error()
+            perror(f"failed to push release branch '{release_base_branch}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
+        except Exception as e:
+            progress.stop_error()
+            perror(
+                f"unexpected error pushing release branch '{release_base_branch}': {e}"
+            )
+            sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         git_tag(
@@ -326,7 +357,7 @@ def cmd_release_start(
             release_base_tag,
             release_base_branch,
             msg=f"Base release for {release_name}",
-            push_to=dst_repo,
+            push_to=dst_repo if not run_locally else None,
         )
     except GitError as e:
         progress.stop_error()
@@ -364,6 +395,7 @@ def cmd_release_start(
     summary_table.add_row("From Base Reference", f"{base_ref} from {base_ref_repo}")
     summary_table.add_row("Release base branch", release_base_branch)
     summary_table.add_row("Release base tag", release_base_tag)
+    summary_table.add_row("Is local", str(run_locally))
 
     console.print(Padding(summary_table, (1, 0, 1, 0)))
 
@@ -397,27 +429,47 @@ def cmd_release_start(
     help="Destination repository.",
     show_default=True,
 )
+@with_run_locally
 @with_patches_repo_path
 @with_gh_token
 def cmd_release_list(
-    gh_token: str, patches_repo_path: Path, ceph_repo_path: Path, dst_repo: str
+    gh_token: str,
+    patches_repo_path: Path,
+    run_locally: bool,
+    ceph_repo_path: Path,
+    dst_repo: str,
 ) -> None:
     progress = CRTProgress(console)
     progress.start()
 
-    progress.new_task("prepare remote")
+    table = Table(show_header=True, show_lines=True, box=rich.box.HORIZONTALS)
+    table.add_column("Name", justify="left", style="bold cyan", no_wrap=True)
+    table.add_column("Base", justify="left", style="magenta", no_wrap=True)
+    table.add_column("Status", justify="left", no_wrap=True)
 
-    try:
-        remote = git_prepare_remote(
-            ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
-        )
-    except GitError as e:
-        perror(f"unable to prepare remote repository '{dst_repo}': {e}")
-        progress.stop_error()
-        sys.exit(errno.ENOTRECOVERABLE)
+    if run_locally:
+        progress.new_task("get remote")
+        if not (remote := git_remote(ceph_repo_path, dst_repo)):
+            pinfo(f"remote {dst_repo} doesn't exists local")
+            console.print(Padding(table, (1, 0, 1, 0)))
+            progress.done_task()
+            progress.stop()
+            return
+        progress.done_task()
+        progress.stop()
+    else:
+        progress.new_task("prepare remote")
+        try:
+            remote = git_prepare_remote(
+                ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
+            )
+        except GitError as e:
+            perror(f"unable to prepare remote repository '{dst_repo}': {e}")
+            progress.stop_error()
+            sys.exit(errno.ENOTRECOVERABLE)
 
-    progress.done_task()
-    progress.stop()
+        progress.done_task()
+        progress.stop()
 
     remote_releases: list[str] = []
     remote_base_releases: list[str] = []
@@ -460,11 +512,6 @@ def cmd_release_list(
     for r in remote_base_releases:
         if r not in remote_releases:
             not_released.append(r)
-
-    table = Table(show_header=True, show_lines=True, box=rich.box.HORIZONTALS)
-    table.add_column("Name", justify="left", style="bold cyan", no_wrap=True)
-    table.add_column("Base", justify="left", style="magenta", no_wrap=True)
-    table.add_column("Status", justify="left", no_wrap=True)
 
     for r in remote_releases:
         rel = releases_meta.get(r)

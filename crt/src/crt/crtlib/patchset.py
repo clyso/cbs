@@ -30,6 +30,7 @@ from crt.crtlib.git_utils import (
     GitError,
     GitPatchDiffError,
     git_branch_delete,
+    git_branch_from,
     git_check_patches_diff,
     git_format_patch,
     git_prepare_remote,
@@ -349,6 +350,8 @@ def fetch_custom_patchset_patches(
     patches_repo_path: Path,
     patchset: CustomPatchSet,
     token: str,
+    *,
+    run_locally: bool = False,
 ) -> list[Patch]:
     """Fetch and store a custom patch set's patches into the patches repository."""
     if patchset.is_published:
@@ -378,18 +381,29 @@ def fetch_custom_patchset_patches(
         if dst_branch in fetched_branches:
             continue
 
-        try:
-            remote = git_prepare_remote(
-                ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
-            )
-            _ = remote.fetch(refspec=f"{meta.branch}:{dst_branch}")
-        except Exception as e:
-            msg = (
-                f"error fetching patchset branch '{meta.branch}' "
-                + f"from '{meta.repo}': {e}"
-            )
-            logger.error(msg)
-            raise PatchSetError(msg=msg) from None
+        if run_locally:
+            try:
+                git_branch_from(ceph_repo_path, meta.branch, dst_branch)
+            except GitError as e:
+                msg = (
+                    f"error creating patchset branch from local branch ' "
+                    f"'{meta.branch}' from '{meta.repo}': {e}"
+                )
+                logger.error(msg)
+                raise PatchSetError(msg=msg) from None
+        else:
+            try:
+                remote = git_prepare_remote(
+                    ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
+                )
+                _ = remote.fetch(refspec=f"{meta.branch}:{dst_branch}")
+            except Exception as e:
+                msg = (
+                    f"error fetching patchset branch '{meta.branch}' "
+                    + f"from '{meta.repo}': {e}"
+                )
+                logger.error(msg)
+                raise PatchSetError(msg=msg) from None
 
         fetched_branches.add(dst_branch)
 

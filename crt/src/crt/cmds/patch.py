@@ -161,17 +161,18 @@ def cmd_patch_add(
     else:
         src_ceph_repo_path = ceph_repo_path
 
-    # update remote repo, maybe patches are not yet in the current repo state
-    try:
-        _ = git_prepare_remote(
-            src_ceph_repo_path,
-            f"github.com/{src_gh_repo}",
-            src_gh_repo,
-            ctx.github_token,
-        )
-    except Exception as e:
-        perror(f"unable to update remote '{src_gh_repo}': {e}")
-        sys.exit(errno.ENOTRECOVERABLE)
+    if not ctx.run_locally:
+        # update remote repo, maybe patches are not yet in the current repo state
+        try:
+            _ = git_prepare_remote(
+                src_ceph_repo_path,
+                f"github.com/{src_gh_repo}",
+                src_gh_repo,
+                ctx.github_token,
+            )
+        except Exception as e:
+            perror(f"unable to update remote '{src_gh_repo}': {e}")
+            sys.exit(errno.ENOTRECOVERABLE)
 
     try:
         shas = [git_revparse(src_ceph_repo_path, sha) for sha in patch_sha]
@@ -230,6 +231,7 @@ def cmd_patch_add(
                 ceph_repo_path,
                 patches_repo_path,
                 ctx.github_token,
+                run_locally=ctx.run_locally,
             )
         except (ApplyError, Exception) as e:
             perror(f"unable to apply patch sha '{sha}' to manifest: {e}")
