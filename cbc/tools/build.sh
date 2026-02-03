@@ -19,13 +19,13 @@ set -e
 scriptdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Go to the 'cbc' package root (one level up from tools)
-project_root="$(realpath "${scriptdir}/..")"
+project_root="$(cd "${scriptdir}/.." && pwd)"
+
 cd "${project_root}"
 
 echo ">>> Building cbc binary from ${project_root}..."
 
 # Run PyInstaller via uv
-# Adjust 'main.py' if your entry point is named differently (e.g. cli.py)
 uv run --with pyinstaller pyinstaller \
   --clean \
   --onefile \
@@ -39,4 +39,5 @@ uv run --with pyinstaller pyinstaller \
 echo ">>> Build Complete!"
 echo ">>> Cleanup..."
 rm -fr "${project_root}/build" "${project_root}/cbc.spec"
-echo ">>> Binary location: $(realpath "${project_root}/dist/cbc")"
+
+echo ">>> Binary location: ${project_root}/dist/cbc"
