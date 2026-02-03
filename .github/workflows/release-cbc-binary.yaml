@@ -66,7 +66,12 @@ jobs:
           echo "Building for Tag: $TAG_NAME"
 
           cd cbc/dist
+
+          # 1. Create the VERSIONED copy (e.g. cbc-v1.0.0-linux-amd64)
           cp cbc cbc-${TAG_NAME}-${{ matrix.target_name }}
+
+          # 2. Create the VERSIONLESS copy (e.g. cbc-linux-amd64)
+          cp cbc cbc-${{ matrix.target_name }}
 
       - name: Create Release
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
@@ -75,5 +80,9 @@ jobs:
           # and re-uploads the assets.
           tag_name: ${{ inputs.tag_name }} # Optional: explicit tag target for manual runs
           files: |
+            # upload the versioned binary
             cbc/dist/cbc-${{ inputs.tag_name || github.ref_name }}-${{ matrix.target_name }}
+
+            # upload the versionless binary
+            cbc/dist/cbc-${{ matrix.target_name }}
           generate_release_notes: true
