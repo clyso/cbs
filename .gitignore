@@ -7,6 +7,4 @@ cbs-build.config.json
 cbs-build.vault.json
 .go
 node_modules
-package.json
-yarn.lock
 .venv/
