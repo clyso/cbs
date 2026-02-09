@@ -115,7 +115,7 @@ async def prepare_builder() -> None:
         )
         logger.debug(stdout)
         if rc == 2 and re.match(".*already installed.*", stderr):
-            msg = f'skip install cosign. allready installed'
+            msg = "skip install cosign. already installed"
             logger.debug(msg)
         elif rc != 0:
             msg = f"error installing cosign package: {stderr}"
