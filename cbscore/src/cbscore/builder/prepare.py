@@ -104,23 +104,24 @@ async def prepare_builder() -> None:
             logger.error(f"error installing builder packages: {stderr}")
             raise BuilderError(msg="unable to install dependencies")
 
-        # install cosign rpm
-        rc, stdout, stderr = await async_run_cmd(
-            [
-                "rpm",
-                "-Uvh",
-                "https://github.com/sigstore/cosign/releases/download/v2.4.3/"
-                + "cosign-2.4.3-1.x86_64.rpm",
-            ],
-        )
-        logger.debug(stdout)
-        if rc == 2 and re.match(".*already installed.*", stderr):
-            msg = f'skip install cosign. allready installed'
-            logger.debug(msg)
-        elif rc != 0:
-            msg = f"error installing cosign package: {stderr}"
-            logger.error(msg)
-            raise BuilderError(msg)
+        # install cosign rpm if not already installed
+        rc, _, _ = await async_run_cmd(["rpm", "-q", "cosign"])
+        if rc != 0:
+            rc, stdout, stderr = await async_run_cmd(
+                [
+                    "rpm",
+                    "-Uvh",
+                    "https://github.com/sigstore/cosign/releases/download/v2.4.3/"
+                    + "cosign-2.4.3-1.x86_64.rpm",
+                ],
+            )
+            logger.debug(stdout)
+            if rc != 0:
+                msg = f"error installing cosign package: {stderr}"
+                logger.error(msg)
+                raise BuilderError(msg)
+        else:
+            logger.debug("skip install cosign. already installed")
     except CommandError as e:
         logger.exception("unable to run 'dnf'")
         raise BuilderError(msg=f"error running 'dnf': {e}") from e
