@@ -105,16 +105,19 @@ async def prepare_builder() -> None:
             raise BuilderError(msg="unable to install dependencies")
 
         # install cosign rpm
-        rc, _, stderr = await async_run_cmd(
+        rc, stdout, stderr = await async_run_cmd(
             [
                 "rpm",
                 "-Uvh",
                 "https://github.com/sigstore/cosign/releases/download/v2.4.3/"
                 + "cosign-2.4.3-1.x86_64.rpm",
             ],
-            outcb=_cb,
         )
-        if rc != 0:
+        logger.debug(stdout)
+        if rc == 2 and re.match(".*already installed.*", stderr):
+            msg = f'skip install cosign. allready installed'
+            logger.debug(msg)
+        elif rc != 0:
             msg = f"error installing cosign package: {stderr}"
             logger.error(msg)
             raise BuilderError(msg)
