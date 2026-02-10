@@ -24,7 +24,7 @@ from cbscore.errors import CESError, UnknownRepositoryError
 from cbscore.images import get_image_name
 from cbscore.images import logger as parent_logger
 from cbscore.images.errors import ImageNotFoundError, SkopeoError
-from cbscore.images.signing import sign
+from cbscore.images.signing import can_sign, sign
 from cbscore.utils import CmdArgs, Password, run_cmd
 from cbscore.utils.containers import get_container_image_base_uri
 from cbscore.utils.secrets import SecretsMgrError
@@ -99,17 +99,18 @@ def skopeo_copy(
 
     logger.info(f"copied '{src}' to '{dst}'")
 
-    try:
-        retcode, out, err = sign(dst_registry, dst, secrets, transit)
-    except SkopeoError as e:
-        logger.exception(f"error signing image '{dst}'")
-        raise e  # noqa: TRY201
-
-    if retcode != 0:
-        logger.error(f"error signing image '{dst}': {err}")
-        raise SkopeoError()
-
-    logger.info(f"signed image '{dst}': {out}")
+    if can_sign(dst_registry, dst, secrets, transit):
+        try:
+            retcode, out, err = sign(dst_registry, dst, secrets, transit)
+        except SkopeoError as e:
+            logger.exception(f"error signing image '{dst}'")
+            raise e  # noqa: TRY201
+    
+        if retcode != 0:
+            logger.error(f"error signing image '{dst}': {err}")
+            raise SkopeoError()
+    
+        logger.info(f"signed image '{dst}': {out}")
 
 
 def skopeo_inspect(img: str, secrets: SecretsMgr) -> str:

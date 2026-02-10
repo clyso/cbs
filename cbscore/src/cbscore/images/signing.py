@@ -36,6 +36,36 @@ class SigningError(CESError):
         return f"Signing Error: {self.msg}"
 
 
+def can_sign(registry: str, img: str, secrets: SecretsMgr, transit: str) -> bool:
+    if not secrets.has_vault():
+        msg = "no vault configured, can't sign image"
+        logger.debug(msg)
+        return False
+
+    assert secrets.vault is not None
+
+    if not secrets.has_transit_key(transit):
+        msg = f"vault transit key '{transit}' not found, can't sign image"
+        logger.debug(msg)
+        return False
+
+    try:
+        _ = secrets.registry_creds(registry)
+    except SecretsMgrError as e:
+        msg = f"unable to obtain registry credentials for '{registry}': {e}"
+        logger.debug(msg)
+        return False
+
+    try:
+        _ = secrets.transit(transit)
+    except SecretsMgrError as e:
+        msg = f"unable to obtain transit key '{transit}': {e}"
+        logger.debug(msg)
+        return False
+    
+    return True
+
+
 def sign(
     registry: str, img: str, secrets: SecretsMgr, transit: str
 ) -> tuple[int, str, str]:
