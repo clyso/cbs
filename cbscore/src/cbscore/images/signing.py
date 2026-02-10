@@ -36,34 +36,53 @@ class SigningError(CESError):
         return f"Signing Error: {self.msg}"
 
 
-def sign(
-    registry: str, img: str, secrets: SecretsMgr, transit: str
-) -> tuple[int, str, str]:
+def _get_signing_params(
+    registry: str, secrets: SecretsMgr, transit: str
+) -> tuple[str, str, str, str]:
+    """
+    Check preconditions and return (username, password, transit_mount, transit_key).
+
+    Raises SigningError if any prerequisite is missing.
+    """
     if not secrets.has_vault():
-        msg = "no vault configured, can't sign image"
-        logger.error(msg)
-        raise SigningError(msg)
+        raise SigningError("no vault configured, can't sign image")
 
     assert secrets.vault is not None
 
     if not secrets.has_transit_key(transit):
-        msg = f"vault transit key '{transit}' not found, can't sign image"
-        logger.error(msg)
-        raise SigningError(msg)
+        raise SigningError(f"vault transit key '{transit}' not found, can't sign image")
 
     try:
         _, username, password = secrets.registry_creds(registry)
     except SecretsMgrError as e:
-        msg = f"unable to obtain registry credentials for '{registry}': {e}"
-        logger.error(msg)
-        raise SigningError(msg) from e
+        raise SigningError(
+            f"unable to obtain registry credentials for '{registry}': {e}"
+        ) from e
 
     try:
         transit_mount, transit_key = secrets.transit(transit)
     except SecretsMgrError as e:
-        msg = f"unable to obtain transit key '{transit}': {e}"
-        logger.error(msg)
-        raise SigningError(msg) from e
+        raise SigningError(f"unable to obtain transit key '{transit}': {e}") from e
+
+    return username, password, transit_mount, transit_key
+
+
+def can_sign(registry: str, secrets: SecretsMgr, transit: str) -> bool:
+    try:
+        _get_signing_params(registry, secrets, transit)
+    except SigningError as e:
+        logger.debug(e.msg)
+        return False
+    else:
+        return True
+
+
+def sign(
+    registry: str, img: str, secrets: SecretsMgr, transit: str
+) -> tuple[int, str, str]:
+    username, password, transit_mount, transit_key = _get_signing_params(
+        registry, secrets, transit
+    )
 
     cmd: CmdArgs = [
         "cosign",
