@@ -37,6 +37,7 @@ def matches_uri(pattern: str, uri: str) -> tuple[bool, bool, str | None]:
         ^
         (?:(?P<protocol>git|https?|ssh)://)?
         (?P<host>[\w\.\-]+)
+        (?::\d+)?
         (?P<path>(?:/[\w\.\-]+)*)?/?
         $
         """,

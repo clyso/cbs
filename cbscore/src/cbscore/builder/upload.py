@@ -12,13 +12,11 @@
 # GNU General Public License for more details.
 
 import asyncio
-import shutil
 from pathlib import Path
 
 from cbscore.builder import BuilderError
 from cbscore.builder import logger as parent_logger
 from cbscore.builder.rpmbuild import ComponentBuild
-from cbscore.utils import CommandError, async_run_cmd
 from cbscore.utils.s3 import S3Error, S3FileLocator, s3_upload_files
 from cbscore.utils.secrets.mgr import SecretsMgr
 
@@ -57,34 +55,7 @@ def _get_rpms(
 async def _get_repo(
     target_path: Path, s3_base_dst: str, relative_to: Path
 ) -> list[S3FileLocator]:
-    # create a repository at 'p', and return the corresponding
-    # 'repodata' directory path.
-    async def _create_repo(p: Path) -> Path:
-        repodata_path = p.joinpath("repodata")
-        if repodata_path.exists():
-            shutil.rmtree(repodata_path)
-
-        try:
-            _ = await async_run_cmd(["createrepo", p.resolve().as_posix()])
-        except CommandError as e:
-            msg = f"error creating repodata at '{repodata_path}': {e}"
-            logger.exception(msg)
-            raise BuilderError(msg) from e
-        except Exception as e:
-            msg = f"unknown error creating repodata at '{repodata_path}': {e}"
-            logger.exception(msg)
-            raise BuilderError(msg) from e
-
-        if not repodata_path.exists() or not repodata_path.is_dir():
-            msg = f"unexpected missing repodata dir at '{repodata_path}'"
-            logger.error(msg)
-            raise BuilderError(msg)
-
-        return repodata_path
-
-    # get all the 'repodata' directories for this path. A repository will
-    # be created under 'p' if at least one RPM exists. Will still descend
-    # into all child directories, doing the same.
+    # get all the 'repodata' directories for this path.
     async def _get_repo_r(p: Path) -> list[Path]:
         repo_paths: list[Path] = []
 
@@ -95,7 +66,8 @@ async def _get_repo(
                 continue
 
             if entry.suffix == ".rpm" and not has_repo:
-                repo_paths.append(await _create_repo(entry.parent))
+                # repositories are created after the build of each component.
+                repo_paths.append(entry.parent.joinpath("repodata"))
                 continue
 
         return repo_paths

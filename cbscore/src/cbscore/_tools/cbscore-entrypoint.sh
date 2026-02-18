@@ -53,7 +53,11 @@ uv --directory "${CBSCORE_PATH}" \
 
 dbg=
 [[ -n ${CBS_DEBUG} ]] && [[ ${CBS_DEBUG} == "1" ]] && dbg="--debug"
+
+local_run=
+[[ -n ${CBS_LOCAL} ]] && [[ ${CBS_LOCAL} == "1" ]] && local_run="--local"
+
 # shellcheck disable=2048,SC2086
-cbsbuild --config "${RUNNER_PATH}/cbs-build.config.yaml" ${dbg} \
+cbsbuild --config "${RUNNER_PATH}/cbs-build.config.yaml" ${dbg} ${local_run} \
   runner build \
   $* || exit 1

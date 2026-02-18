@@ -54,12 +54,22 @@ logger = parent_logger.getChild("main")
     required=True,
     default="cbs-build.config.yaml",
 )
+@click.option(
+    "-l",
+    "--local",
+    "local",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Run without access to s3",
+)
 @pass_ctx
-def cmd_main(ctx: Ctx, debug: bool, config_path: Path) -> None:
+def cmd_main(ctx: Ctx, debug: bool, config_path: Path, local: bool) -> None:
     if debug:
         set_log_level(logging.DEBUG)
 
     ctx.config_path = config_path
+    ctx.local = local
 
 
 cmd_main.add_command(builds.cmd_build)

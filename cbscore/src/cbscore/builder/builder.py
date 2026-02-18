@@ -11,6 +11,8 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
+import shutil
 from pathlib import Path
 
 from cbscore.builder import BuilderError
@@ -36,8 +38,10 @@ from cbscore.core.component import CoreComponentLoc, load_components
 from cbscore.images.skopeo import skopeo_image_exists
 from cbscore.releases import ReleaseError
 from cbscore.releases.desc import (
+    S3_BASE_URL,
     ArchType,
     BuildType,
+    LocalReleaseRPMArtifacts,
     ReleaseBuildEntry,
     ReleaseComponent,
     ReleaseComponentVersion,
@@ -51,6 +55,7 @@ from cbscore.releases.s3 import (
     release_upload_components,
 )
 from cbscore.releases.utils import get_component_release_rpm
+from cbscore.utils import CommandError, async_run_cmd
 from cbscore.utils.containers import get_container_canonical_uri
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets.mgr import SecretsMgr
@@ -71,6 +76,9 @@ class Builder:
     skip_build: bool
     force: bool
     tls_verify: bool
+    local: bool
+    base_url: str
+    dev: bool
 
     def __init__(
         self,
@@ -79,7 +87,9 @@ class Builder:
         *,
         skip_build: bool = False,
         force: bool = False,
-        tls_verify: bool = True
+        tls_verify: bool = True,
+        local: bool = False,
+        dev: bool = False,
     ) -> None:
         self.desc = desc
         self.config = config
@@ -91,6 +101,9 @@ class Builder:
         self.skip_build = skip_build
         self.force = force
         self.tls_verify = tls_verify
+        self.local = local
+        self.base_url = "file://" if self.local else S3_BASE_URL
+        self.dev = dev
 
         try:
             vault_config = self.config.get_vault_config()
@@ -118,7 +131,9 @@ class Builder:
             raise BuilderError(msg=msg) from e
 
         container_img_uri = get_container_canonical_uri(self.desc)
-        if skopeo_image_exists(container_img_uri, self.secrets, tls_verify=self.tls_verify):
+        if skopeo_image_exists(
+            container_img_uri, self.secrets, tls_verify=self.tls_verify
+        ):
             logger.info(f"image '{container_img_uri}' already exists -- do not build!")
             report = BuildArtifactReport(
                 version=self.desc.version,
@@ -282,6 +297,7 @@ class Builder:
                 self.components,
                 self.desc.components,
                 self.desc.version,
+                dev=self.dev,
             ) as components:
                 return await self._do_build_release(components)
         except BuilderError as e:
@@ -305,6 +321,10 @@ class Builder:
 
         Will return `None` if `self.upload` is `False`.
         """
+        if not self.local and (not self.storage_config or not self.storage_config.s3):
+            logger.warning("not uploading per config, stop release build")
+            return None
+
         # Check if any of the components have been previously built, and, if so,
         # reuse them instead of building them.
         #
@@ -357,10 +377,6 @@ class Builder:
                 logger.error(msg)
                 raise BuilderError(msg) from e
 
-        if not self.storage_config or not self.storage_config.s3:
-            logger.warning("not uploading per config, stop release build")
-            return None
-
         comp_versions = existing.copy()
         comp_versions.update(built)
 
@@ -380,7 +396,13 @@ class Builder:
         )
 
         release: ReleaseDesc | None = None
-        if self.storage_config and self.storage_config.s3:
+        if self.local:
+            release = ReleaseDesc(
+                version=self.desc.version,
+                builds={release_build.arch: release_build},
+                base_url=self.base_url,
+            )
+        elif self.storage_config and self.storage_config.s3:
             try:
                 release = await release_desc_upload(
                     self.secrets,
@@ -420,6 +442,23 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg) from e
 
+        await self._create_repos(comp_builds)
+
+        if self.local:
+            return {
+                comp_name: ReleaseComponentVersion(
+                    name=components[comp_name].name,
+                    version=components[comp_name].long_version,
+                    sha1=components[comp_name].sha1,
+                    arch=ArchType.x86_64,
+                    build_type=BuildType.rpm,
+                    os_version=f"el{self.desc.el_version}",
+                    repo_url=components[comp_name].repo_url,
+                    artifacts=LocalReleaseRPMArtifacts(loc=comp_build.rpms_path),
+                )
+                for comp_name, comp_build in comp_builds.items()
+            }
+
         if not self.storage_config or not self.storage_config.s3:
             return {}
 
@@ -448,7 +487,7 @@ class Builder:
 
         rpms_path = self.scratch_path.joinpath("rpms")
         rpms_path.mkdir(exist_ok=True)
-
+        is_sign_rpms = (self.signing_config and self.signing_config.gpg) is not None
         try:
             comp_builds = await build_rpms(
                 rpms_path,
@@ -457,13 +496,15 @@ class Builder:
                 components,
                 ccache_path=self.ccache_path,
                 skip_build=self.skip_build,
+                base_url=self.base_url,
+                is_sign_rpms=is_sign_rpms,
             )
         except (BuilderError, Exception) as e:
             msg = f"error building components ({components.keys()}): {e}"
             logger.error(msg)
             raise BuilderError(msg) from e
 
-        if not self.signing_config or not self.signing_config.gpg:
+        if not is_sign_rpms:
             logger.warning("no signing method provided, skip signing RPMs")
         else:
             logger.info(f"signing RPMs with gpg key '{self.signing_config.gpg}'")
@@ -479,6 +520,40 @@ class Builder:
                 raise BuilderError(msg) from e
 
         return comp_builds
+
+    async def _create_repos(self, comp_builds: dict[str, ComponentBuild]) -> None:
+        logger.info(f"creating rpm repos for {comp_builds.keys()}")
+        async with asyncio.TaskGroup() as tg:
+            for comp_name, comp_build in comp_builds.items():
+                logger.info(f"creating rpm repo for {comp_name}")
+                _ = tg.create_task(self._create_repo(comp_build))
+
+    async def _create_repo(self, comp_build: ComponentBuild) -> None:
+        async def _do_create_repo(p: Path) -> None:
+            repodata_path = p.joinpath("repodata")
+            if repodata_path.exists():
+                shutil.rmtree(repodata_path)
+
+            try:
+                _ = await async_run_cmd(["createrepo", p.resolve().as_posix()])
+            except CommandError as e:
+                msg = f"error creating repodata at '{repodata_path}': {e}"
+                logger.exception(msg)
+                raise BuilderError(msg) from e
+            except Exception as e:
+                msg = f"unknown error creating repodata at '{repodata_path}': {e}"
+                logger.exception(msg)
+                raise BuilderError(msg) from e
+
+            if not repodata_path.exists() or not repodata_path.is_dir():
+                msg = f"unexpected missing repodata dir at '{repodata_path}'"
+                logger.error(msg)
+                raise BuilderError(msg)
+
+        rpm_folders = {f.parent for f in comp_build.rpms_path.rglob("*.rpm")}
+
+        for p in rpm_folders:
+            await _do_create_repo(p)
 
     async def _upload(
         self,
