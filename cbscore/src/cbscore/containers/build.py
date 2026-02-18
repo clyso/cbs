@@ -17,7 +17,12 @@ from cbscore.builder import logger as parent_logger
 from cbscore.containers import ContainerError
 from cbscore.containers.component import ComponentContainer
 from cbscore.core.component import CoreComponentLoc
-from cbscore.releases.desc import ArchType, ReleaseDesc
+from cbscore.releases.desc import (
+    S3_BASE_URL,
+    ArchType,
+    LocalReleaseRPMArtifacts,
+    ReleaseDesc,
+)
 from cbscore.utils.buildah import BuildahContainer, BuildahError, buildah_new_container
 from cbscore.utils.secrets.mgr import SecretsMgr
 from cbscore.versions.desc import VersionDescriptor
@@ -54,7 +59,27 @@ class ContainerBuilder:
             logger.exception(msg)
             raise ContainerError(msg) from e
 
-        self.container = await buildah_new_container(self.version_desc)
+        volumes_to_mount: dict[str, str] = {}
+        for _, build_entry in self.release_desc.builds.items():
+            build_type = build_entry.build_type
+            os_version = build_entry.os_version
+            for comp, comp_ver in build_entry.components.items():
+                release_artifacts = comp_ver.artifacts
+                if isinstance(release_artifacts, LocalReleaseRPMArtifacts):
+                    inside_base_folder = (
+                        f"/components/{comp}/{build_type}-{comp_ver.version}/"
+                        + f"{os_version}.clyso"
+                    )
+                    volumes_to_mount[f"{release_artifacts.loc}/RPMS"] = (
+                        inside_base_folder
+                    )
+                    volumes_to_mount[f"{release_artifacts.loc}/SRPMS"] = (
+                        f"{inside_base_folder}/SRPMS"
+                    )
+
+        self.container = await buildah_new_container(
+            self.version_desc, volumes_to_mount
+        )
 
         try:
             await self.apply_pre(components)
@@ -123,6 +148,7 @@ class ContainerBuilder:
                 "git_repo_url": release_comp.repo_url,
                 "component_name": release_comp.name,
                 "distro": self.version_desc.distro,
+                "base_url": self.release_desc.base_url or S3_BASE_URL,
             }
 
             try:

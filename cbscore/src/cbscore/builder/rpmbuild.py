@@ -60,6 +60,8 @@ async def _build_component(
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
+    base_url: str = '""',
+    is_sign_rpms: bool = True,
 ) -> tuple[int, Path]:
     """
     Build a given component.
@@ -88,8 +90,9 @@ async def _build_component(
         comp_rpms_path.resolve().as_posix(),
     ]
 
-    if version:
-        cmd.append(version)
+    cmd.append(version if version else '""')
+    cmd.append(base_url)
+    cmd.append("1" if is_sign_rpms else "0")
 
     extra_env: dict[str, str] | None = None
     if ccache_path is not None:
@@ -177,6 +180,8 @@ async def build_rpms(
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
+    base_url: str | None = None,
+    is_sign_rpms: bool = True,
 ) -> dict[str, ComponentBuild]:
     """
     Build RPMs for the various components provided in `components`.
@@ -245,6 +250,8 @@ async def build_rpms(
                         to_build[name].version,
                         ccache_path=ccache_path,
                         skip_build=skip_build,
+                        base_url=base_url,
+                        is_sign_rpms=is_sign_rpms,
                     )
                 )
                 for name in to_build
