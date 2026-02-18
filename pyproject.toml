@@ -11,6 +11,11 @@ members = ["cbscore", "cbsdcore", "cbsd", "cbc", "crt"]
 
 [dependency-groups]
 dev = ["basedpyright==1.37.1", "lefthook==2.0.15", "ruff==0.14.13"]
+test = ["pytest>=8.0", "pytest-asyncio>=0.25"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["cbsd/tests"]
 
 [tool.ruff.lint]
 select = [
