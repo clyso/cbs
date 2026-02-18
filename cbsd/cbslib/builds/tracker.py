@@ -83,26 +83,69 @@ class BuildsTracker:
     async def new(self, desc: BuildDescriptor) -> tuple[BuildID, str]:
         """Create a new build entry, scheduling it for build."""
         _ = await self._lock.acquire()
+
+        async def _cleanup(
+            *,
+            build_id: BuildID | None = None,
+            entry: BuildEntry | None = None,
+            failed: bool = False,
+            do_logs: bool = False,
+        ) -> None:
+            if failed and entry and build_id:
+                entry.state = EntryState.failure
+                entry.finished = dt.now(tz=datetime.UTC)
+
+                try:
+                    await self._db.update(build_id, entry)
+                except Exception as e:
+                    msg = f"error cleaning up task, db update: {e}"
+                    logger.error(msg)
+                    raise TrackerError(msg) from e
+
+                if do_logs:
+                    try:
+                        await self._logs.finish(build_id)
+                    except Exception as e:
+                        msg = f"error cleaning up task, finish logs: {e}"
+                        logger.error(msg)
+                        raise TrackerError(msg) from e
+
+            logger.info(f"cleanup state from new: failed = {failed}")
+            self._lock.release()
+
+        # NOTE: We should ensure builds that are the same are properly
+        # deduplicated if they are in-progress. I.e., if the same build
+        # request comes twice, and it's either in-progress or queued, then
+        # we return its build ID.
+
+        build_entry = BuildEntry(
+            task_id=None,
+            desc=desc,
+            user=desc.signed_off_by.email,
+            submitted=dt.now(tz=datetime.UTC),
+            state=EntryState.new,
+            started=None,
+            finished=None,
+        )
+
         try:
-            # NOTE: We should ensure builds that are the same are properly
-            # deduplicated if they are in-progress. I.e., if the same build
-            # request comes twice, and it's either in-progress or queued, then
-            # we return its build ID.
-
-            build_entry = BuildEntry(
-                task_id=None,
-                desc=desc,
-                user=desc.signed_off_by.email,
-                submitted=dt.now(tz=datetime.UTC),
-                state=EntryState.new,
-                started=None,
-                finished=None,
-            )
             build_id = await self._db.new(build_entry)
+        except Exception as e:
+            msg = f"error storing build entry state to db: {e}"
+            logger.error(msg)
+            await _cleanup(failed=True)
+            raise TrackerError(msg) from e
 
+        try:
             # start tracking and handling logs for this build
             await self._logs.new(build_id)
+        except Exception as e:
+            msg = f"error starting log tracking: {e}"
+            logger.error(msg)
+            await _cleanup(failed=True, entry=build_entry, build_id=build_id)
+            raise TrackerError(msg) from e
 
+        try:
             # schedule version for building
             task = tasks.build.apply_async(
                 (
@@ -111,22 +154,31 @@ class BuildsTracker:
                 ),
                 serializer="pydantic",
             )
-
-            build_entry.task_id = task.task_id
-            build_entry.state = EntryState(task.state.upper())
-            await self._db.update(build_id, build_entry)
-
-            self._builds_by_task_id[build_entry.task_id] = build_id
-            self._builds_by_build_id[build_id] = build_entry.task_id
-
         except Exception as e:
             msg = f"error scheduling new build: {e}"
             logger.error(msg)
+            await _cleanup(
+                failed=True, do_logs=True, entry=build_entry, build_id=build_id
+            )
             raise TrackerError(msg) from e
-        else:
-            return (build_id, build_entry.state)
-        finally:
-            self._lock.release()
+
+        build_entry.task_id = task.task_id
+        build_entry.state = EntryState(task.state.upper())
+        try:
+            await self._db.update(build_id, build_entry)
+        except Exception as e:
+            msg = f"error updating entry state in db: {e}"
+            logger.error(msg)
+            await _cleanup(
+                failed=True, do_logs=True, entry=build_entry, build_id=build_id
+            )
+            raise TrackerError(msg) from e
+
+        self._builds_by_task_id[build_entry.task_id] = build_id
+        self._builds_by_build_id[build_id] = build_entry.task_id
+
+        await _cleanup()
+        return (build_id, build_entry.state)
 
     async def list(
         self, *, owner: str | None = None

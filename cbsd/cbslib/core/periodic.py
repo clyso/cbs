@@ -108,7 +108,7 @@ class PeriodicBuildTask(PeriodicTask):
         new_descriptor.dst_image.tag = self.formatted_tag
 
         try:
-            build_id, build_state = await mgr.new(self.created_by_user, self.descriptor)
+            build_id, build_state = await mgr.new(self.created_by_user, new_descriptor)
         except NotAvailableError:
             logger.warning("unable to build at this time, backoff and try again")
             raise TryAgainError() from None
@@ -363,11 +363,13 @@ class PeriodicTracker:
             except DisableTaskError:
                 logger.warning(f"task disable requested for '{cron_uuid}'")
                 await on_finished(cron_uuid, True)
+                return
 
             except Exception as e:
                 logger.error(f"unexpected error triggering '{cron_uuid}': {e}")
                 logger.warning(f"disabling '{cron_uuid}'")
                 await on_finished(cron_uuid, True)
+                return
 
             await on_finished(cron_uuid, False)
             # return here so we can handle the expired backoff when the while

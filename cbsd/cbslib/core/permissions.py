@@ -401,7 +401,7 @@ class UserAuthorizationRule(pydantic.BaseModel):
     ) -> bool:
         """Check whether this rule grants access for the given registry."""
         return self._is_authorized_pattern_type(
-            groups, ProjectAuthorizationEntry, registry
+            groups, RegistryAuthorizationEntry, registry
         )
 
     def is_repository_authorized(
@@ -479,17 +479,18 @@ class Permissions(pydantic.BaseModel):
                 continue
 
             if rule.is_project_authorized(self.groups, project, caps):
-                logger.debug(
+                logger.info(
                     f"user '{user}' authorized for project '{project}' "
                     + f"by rule '{rule.user_pattern}' with caps '{caps!r}'"
                 )
                 return True
             else:
-                logger.warning(
+                logger.debug(
                     f"user '{user}' not authorized for project '{project}', "
                     + f"rule '{rule}"
                 )
 
+        logger.warning(f"user '{user}' not authorized for project '{project}'")
         return False
 
     def is_authorized_for_registry(self, user: str, registry: str) -> bool:
@@ -499,12 +500,13 @@ class Permissions(pydantic.BaseModel):
                 continue
 
             if rule.is_registry_authorized(self.groups, registry):
-                logger.debug(
+                logger.info(
                     f"user '{user}' authorized for registry '{registry}' "
                     + f"by rule '{rule.user_pattern}'"
                 )
                 return True
 
+        logger.warning(f"user '{user}' not authorized for registry '{registry}'")
         return False
 
     def is_authorized_for_repository(self, user: str, repository: str) -> bool:
@@ -514,12 +516,13 @@ class Permissions(pydantic.BaseModel):
                 continue
 
             if rule.is_repository_authorized(self.groups, repository):
-                logger.debug(
+                logger.info(
                     f"user '{user}' authorized for repository '{repository}' "
                     + f"by rule '{rule.user_pattern}'"
                 )
                 return True
 
+        logger.warning(f"user '{user}' not authorized for repository '{repository}'")
         return False
 
     def is_authorized_for_route(self, user: str, caps: RoutesCaps) -> bool:
@@ -535,6 +538,7 @@ class Permissions(pydantic.BaseModel):
                 )
                 return True
 
+        logger.warning(f"user '{user}' not authorized for route caps '{caps!r}'")
         return False
 
     def list_caps_for(

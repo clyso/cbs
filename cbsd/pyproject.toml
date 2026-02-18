@@ -17,7 +17,7 @@ dependencies = [
     "hvac==2.3.0",
     "itsdangerous==2.2.0",
     "pydantic>=2.11.6",
-    "pyseto==1.8.3",
+    "pyseto==1.9.1",
     "pyyaml==6.0.2",
     "redis[hiredis]>=6.0.0",
     "types-aioboto3[full]==13.3.0.post1",
