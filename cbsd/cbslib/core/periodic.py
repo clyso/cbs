@@ -363,11 +363,13 @@ class PeriodicTracker:
             except DisableTaskError:
                 logger.warning(f"task disable requested for '{cron_uuid}'")
                 await on_finished(cron_uuid, True)
+                return
 
             except Exception as e:
                 logger.error(f"unexpected error triggering '{cron_uuid}': {e}")
                 logger.warning(f"disabling '{cron_uuid}'")
                 await on_finished(cron_uuid, True)
+                return
 
             await on_finished(cron_uuid, False)
             # return here so we can handle the expired backoff when the while
