@@ -57,7 +57,11 @@ dbg=
 local_run=
 [[ -n ${CBS_LOCAL} ]] && [[ ${CBS_LOCAL} == "1" ]] && local_run="--local"
 
+dev=
+[[ -n ${CBS_DEV} ]] && [[ ${CBS_DEV} == "1" ]] && dev="--dev"
+
+
 # shellcheck disable=2048,SC2086
-cbsbuild --config "${RUNNER_PATH}/cbs-build.config.yaml" ${dbg} ${local_run} \
+cbsbuild --config "${RUNNER_PATH}/cbs-build.config.yaml" ${dbg} ${local_run} ${dev} \
   runner build \
   $* || exit 1

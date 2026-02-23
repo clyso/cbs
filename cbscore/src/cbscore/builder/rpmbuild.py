@@ -60,7 +60,7 @@ async def _build_component(
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
-    base_url: str = '""',
+    base_url: str = "",
     is_sign_rpms: bool = True,
 ) -> tuple[int, Path]:
     """
@@ -91,7 +91,7 @@ async def _build_component(
     ]
 
     cmd.append(version if version else '""')
-    cmd.append(base_url)
+    cmd.append(base_url if base_url else '""')
     cmd.append("1" if is_sign_rpms else "0")
 
     extra_env: dict[str, str] | None = None
@@ -180,7 +180,7 @@ async def build_rpms(
     *,
     ccache_path: Path | None = None,
     skip_build: bool = False,
-    base_url: str | None = None,
+    base_url: str = "",
     is_sign_rpms: bool = True,
 ) -> dict[str, ComponentBuild]:
     """

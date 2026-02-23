@@ -36,6 +36,12 @@ logger = parent_logger.getChild("main")
 
 @click.group()
 @click.option(
+    "--dev",
+    help="Run in development mode. Only used for testing.",
+    is_flag=True,
+    envvar="CBS_DEV",
+)
+@click.option(
     "-d", "--debug", help="Enable debug output", is_flag=True, envvar="CBS_DEBUG"
 )
 @click.option(
@@ -64,12 +70,13 @@ logger = parent_logger.getChild("main")
     help="Run without access to s3",
 )
 @pass_ctx
-def cmd_main(ctx: Ctx, debug: bool, config_path: Path, local: bool) -> None:
+def cmd_main(ctx: Ctx, dev: bool, debug: bool, config_path: Path, local: bool) -> None:
     if debug:
         set_log_level(logging.DEBUG)
 
     ctx.config_path = config_path
     ctx.local = local
+    ctx.dev = dev
 
 
 cmd_main.add_command(builds.cmd_build)

@@ -203,6 +203,7 @@ def cmd_build(
                 force=force,
                 tls_verify=tls_verify,
                 local=ctx.local,
+                dev=ctx.dev,
             )
         )
 
@@ -326,6 +327,7 @@ sign with transit: {transit_signing_str}
             force=force,
             tls_verify=tls_verify,
             local=ctx.local,
+            dev=ctx.dev,
         )
     except BuilderError as e:
         logger.error(f"unable to initialize builder: {e}")
