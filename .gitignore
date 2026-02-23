@@ -10,3 +10,7 @@ node_modules
 package.json
 yarn.lock
 .venv/
+!tests/resources/cbscore/cbs-build.config.yaml
+.coverage
+reports/
+coverage.xml
