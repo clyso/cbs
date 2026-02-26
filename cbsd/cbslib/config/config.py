@@ -25,6 +25,7 @@ from fastapi import Depends
 from cbslib.config import logger as parent_logger
 from cbslib.config.server import ServerConfig
 from cbslib.config.worker import WorkerConfig
+from cbslib.logger import LoggerConfig
 
 logger = parent_logger.getChild("config")
 
@@ -41,6 +42,7 @@ class Config(pydantic.BaseModel):
     broker_url: Annotated[str, pydantic.Field(alias="broker-url")]
     results_backend_url: Annotated[str, pydantic.Field(alias="results-backend-url")]
     redis_backend_url: Annotated[str, pydantic.Field(alias="redis-backend-url")]
+    logging: LoggerConfig = pydantic.Field(default=LoggerConfig())
 
     @classmethod
     def load(cls, *, path: Path | None = None) -> Config:

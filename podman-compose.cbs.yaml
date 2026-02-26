@@ -46,6 +46,7 @@ services:
     volumes:
       - ./_local/cbs/config/worker:/cbs/config
       - ./cbscore:/cbs/src
+      - ./_local/cbs/logs:/cbs/logs
 
       - ./_local/cbs/scratch:/cbs/scratch
       - ./_local/cbs/scratch/containers:/var/lib/containers

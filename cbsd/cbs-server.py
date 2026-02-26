@@ -33,7 +33,11 @@ from cbslib.config.config import config_init
 from cbslib.core.mgr import MgrError, mgr_init
 from cbslib.core.monitor import Monitor
 from cbslib.logger import logger as parent_logger
-from cbslib.logger import setup_logging, uvicorn_logging_config
+from cbslib.logger import (
+    setup_basic_logging,
+    setup_global_logging,
+    uvicorn_logging_config,
+)
 from cbslib.routes import auth, builds, components, periodic
 from cbslib.worker.celery import celery_app
 from fastapi import FastAPI
@@ -93,18 +97,24 @@ def factory() -> FastAPI:
         openapi_tags=api_tags_meta,
     )
 
-    setup_logging()
+    setup_basic_logging()
 
     try:
         logger.debug("init config")
         config = config_init()
-    except Exception:
-        logger.exception("error setting up config state")
-        sys.exit(1)
+    except Exception as e:
+        logger.error(f"error setting up config state: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     if not config.server:
         logger.error("missing server config")
         sys.exit(errno.EINVAL)
+
+    try:
+        setup_global_logging(config.logging)
+    except Exception as e:
+        logger.error(f"error setting up server logging: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     api.add_middleware(
         SessionMiddleware, secret_key=config.server.secrets.session_secret_key

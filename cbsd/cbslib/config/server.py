@@ -82,6 +82,11 @@ class ServerSecretsConfig(pydantic.BaseModel):
 
 
 class ServerConfig(pydantic.BaseModel):
+    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
     # ssl certs
     #
     cert: Path
@@ -99,9 +104,9 @@ class ServerConfig(pydantic.BaseModel):
     #
     secrets: ServerSecretsConfig
 
-    # logs file path
+    # logging config
     #
-    logs: Path
+    builds_logs_dir: Annotated[Path, pydantic.Field(alias="builds-logs-dir")]
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
         return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))

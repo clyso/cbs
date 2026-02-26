@@ -27,7 +27,7 @@ import yaml
 from cbscore.errors import CESError
 
 from cbslib.core import logger as parent_logger
-from cbslib.logger import setup_logging
+from cbslib.logger import LoggerConfig, setup_global_logging
 
 logger = parent_logger.getChild("permissions")
 logger.setLevel(logging.INFO)
@@ -768,7 +768,7 @@ rules:
 
 
 if __name__ == "__main__":
-    setup_logging()
+    setup_global_logging(LoggerConfig())
 
     print("=> testing basic permissions...")
     _test_basic_permissions()

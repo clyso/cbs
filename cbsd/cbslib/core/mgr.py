@@ -46,7 +46,7 @@ class Mgr:
 
     def __init__(self, config: ServerConfig, backend_url: str) -> None:
         db_path = config.db
-        logs_path = config.logs
+        logs_path = config.builds_logs_dir
         permissions_path = config.permissions
 
         if not db_path.exists():

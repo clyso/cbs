@@ -234,6 +234,7 @@ worker_start() {
 
   worker_config_dir="${config_dir}/${deployment_name}/${service}"
   worker_components_dir="${data_dir}/${deployment_name}/components"
+  worker_logs_dir="${data_dir}/${deployment_name}/${service}/logs"
 
   WORKER_SCRATCH_DIR=
   WORKER_CONTAINERS_DIR=
@@ -257,6 +258,14 @@ worker_start() {
     echo "error: worker components directory '${worker_components_dir}'" \
       "does not exist" >&2
     exit 1
+  }
+
+  [[ ! -d "${worker_logs_dir}" ]] && {
+    mkdir -p "${worker_logs_dir}" || {
+      echo "error: failed to create worker logs directory '${worker_logs_dir}'" \
+        >&2
+      exit 1
+    }
   }
 
   [[ ! -d "${WORKER_SCRATCH_DIR}" ]] && {
@@ -288,6 +297,7 @@ worker_start() {
     -d \
     --replace \
     -v "${worker_config_dir}":/cbs/config:ro \
+    -v "${worker_logs_dir}":/cbs/logs:Z \
     -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:Z \
     -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:Z \
     -v "${WORKER_CCACHE_DIR}":/cbs/ccache:Z \

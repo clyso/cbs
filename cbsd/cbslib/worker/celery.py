@@ -22,6 +22,7 @@ from celery import Celery, signals
 from kombu.serialization import register
 
 from cbslib.config.config import config_init
+from cbslib.logger import get_level_from_env
 from cbslib.worker.serializer import pydantic_dumps
 
 # include the tasks module, so the worker knows where to find them.
@@ -45,13 +46,33 @@ def _celery_create() -> Celery:
         content_encoding="utf-8",
     )
 
-    return Celery(
+    app = Celery(
         __name__,
         backend=config.results_backend_url,
         broker=config.broker_url,
         include=_CELERY_WORKER_TASKS,
         worker_cancel_long_running_tasks_on_connection_loss=True,
     )
+
+    if config.worker:
+        loglevel = get_level_from_env(default=config.logging.level)
+        log_file_path = config.logging.log_file_path
+        log_file: str | None = None
+
+        if log_file_path:
+            log_file_path.parent.mkdir(exist_ok=True, parents=True)
+            log_file = log_file_path.as_posix()
+
+        _ = app.log.setup(
+            loglevel,
+            log_file,
+            log_file is not None,
+            config.logging.level or "INFO",
+            True,
+            None,
+        )
+
+    return app
 
 
 celery_app = _celery_create()
