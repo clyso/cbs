@@ -133,7 +133,10 @@ class BuildsMgr:
         async def _task() -> None:
             try:
                 res = celery_app.send_task("cbslib.worker.tasks.list_components")
-                raw = cast(dict[str, Any], res.get())  # pyright: ignore[reportExplicitAny]
+                raw = cast(
+                    dict[str, Any],  # pyright: ignore[reportExplicitAny]
+                    await asyncio.to_thread(res.get),
+                )
             except Exception as e:
                 logger.error(f"failed to obtain components: {e}")
                 sys.exit(errno.ENOTRECOVERABLE)
