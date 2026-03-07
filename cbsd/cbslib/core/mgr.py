@@ -46,7 +46,6 @@ class Mgr:
 
     def __init__(self, config: ServerConfig, backend_url: str) -> None:
         db_path = config.db
-        logs_path = config.builds_logs_dir
         permissions_path = config.permissions
 
         if not db_path.exists():
@@ -72,7 +71,7 @@ class Mgr:
 
         self._backend = Backend(backend_url)
         self._builds_mgr = BuildsMgr(
-            db_path, logs_path, self._permissions, self._backend
+            db_path, config.build_logs, self._permissions, self._backend
         )
         self._periodic_tracker = PeriodicTracker(self._builds_mgr, db_path)
 

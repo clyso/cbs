@@ -28,6 +28,7 @@ from cbslib.builds import logger as parent_logger
 from cbslib.builds.db import BuildsDB
 from cbslib.builds.logs import BuildLogsHandler
 from cbslib.builds.tracker import BuildsTracker
+from cbslib.config.server import BuildLogsConfig
 from cbslib.core.backend import Backend
 from cbslib.core.permissions import AuthorizationCaps, NotAuthorizedError, Permissions
 from cbslib.worker.celery import celery_app
@@ -96,13 +97,13 @@ class BuildsMgr:
     def __init__(
         self,
         db_path: Path,
-        logs_path: Path,
+        logs_config: BuildLogsConfig,
         permissions: Permissions,
         backend: Backend,
     ) -> None:
         self._backend = backend
         self._db = BuildsDB(db_path)
-        self._logs = BuildLogsHandler(logs_path, self._backend)
+        self._logs = BuildLogsHandler(logs_config, self._backend)
         self._permissions = permissions
         self._tracker = BuildsTracker(self._db, self._logs)
         self._available_components = {}

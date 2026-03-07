@@ -29,6 +29,7 @@ from cbscore.errors import CESError
 from cbsdcore.builds.types import BuildID
 
 from cbslib.builds import logger as parent_logger
+from cbslib.config.server import BuildLogsConfig
 from cbslib.core import utils
 from cbslib.core.backend import Backend
 
@@ -38,8 +39,6 @@ logger = parent_logger.getChild("logs")
 logger.setLevel(logging.INFO)
 
 
-_BUILD_LOGS_DIR = "builds"
-_LOG_STREAM_TTL_SECS = 3600 * 6  # 6 hours
 _LOG_READ_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
@@ -53,6 +52,7 @@ class BuildLogsHandler:
     """Handle logs for all builds."""
 
     _logs_path: Path
+    _logs_cache_ttl_secs: int
     _backend: Backend
     _tasks: dict[BuildID, Task[None]]
     _finished_streams: dict[dt, list[BuildID]]
@@ -60,7 +60,7 @@ class BuildLogsHandler:
     _gc_task: asyncio.Task[None]
     _lock: aiorwlock.RWLock
 
-    def __init__(self, logs_path: Path, backend: Backend) -> None:
+    def __init__(self, logs_config: BuildLogsConfig, backend: Backend) -> None:
         """
         Handle logs for all builds, capturing from redis.
 
@@ -73,7 +73,8 @@ class BuildLogsHandler:
         :raises BuildLogsHandlerError: if the logs path exists and is not a directory
         :raises BuildLogsHandlerError: if the log file is not readable/writeable
         """
-        self._logs_path = logs_path / _BUILD_LOGS_DIR
+        self._logs_path = logs_config.dir_path
+        self._logs_cache_ttl_secs = logs_config.cache_ttl_secs
         self._backend = backend
         self._tasks = {}
         self._finished_streams = {}
@@ -143,6 +144,7 @@ class BuildLogsHandler:
                 logger.warning(f"build '{build_id}' not being tracked for logs")
                 return
 
+            logger.debug(f"cancelling logger task for build '{build_id}'")
             try:
                 _ = self._tasks[build_id].cancel()
                 await self._tasks[build_id]
@@ -153,6 +155,7 @@ class BuildLogsHandler:
                     f"error canceling log tracking task for build '{build_id}': {e}"
                 )
                 return
+            logger.debug(f"logger task for build '{build_id}' correctly cancelled")
 
             del self._tasks[build_id]
 
@@ -470,7 +473,13 @@ class BuildLogsHandler:
                 # retry from the top
                 continue
 
-            time_to_ttl = await self._gc_finished_streams(redis)
+            try:
+                time_to_ttl = await self._gc_finished_streams(redis)
+            except Exception as e:
+                logger.error(f"error gc finished streams: {e}")
+                self._lock.writer.release()
+                continue
+
             self._lock.writer.release()
             if time_to_ttl:
                 logger.info(f"build logs gc waiting for {time_to_ttl} seconds")
@@ -481,16 +490,17 @@ class BuildLogsHandler:
         gc_start = dt.now(datetime.UTC)
         logger.info("start gc finished build log streams")
         wait_until: float | None = None
+        finished: list[dt] = []
         for finished_at, builds_lst in self._finished_streams.items():
             # check what time it is on each iteration, so we always have an
             # up-to-date value in case we have waited for a significant long
             # time doing gc.
             now = dt.now(datetime.UTC)
             ttl_diff = (now - finished_at).total_seconds()
-            if ttl_diff <= _LOG_STREAM_TTL_SECS:
+            if ttl_diff <= self._logs_cache_ttl_secs:
                 # nothing to do for the rest of the iterator.
                 # return how long we need to wait until the next stream reaches its TTL.
-                wait_until = _LOG_STREAM_TTL_SECS - ttl_diff
+                wait_until = self._logs_cache_ttl_secs - ttl_diff
                 break
 
             for build_id in builds_lst:
@@ -498,7 +508,12 @@ class BuildLogsHandler:
                     f"gc build '{build_id}' logs, exceeded TTL {ttl_diff} seconds"
                 )
                 await self._gc_stream_key(redis, self._get_build_stream_key(build_id))
-            del self._finished_streams[finished_at]
+                logger.debug(f"garbage collected build '{build_id}' logs")
+
+            finished.append(finished_at)
+
+        for entry in finished:
+            del self._finished_streams[entry]
 
         delta = (dt.now(datetime.UTC) - gc_start).total_seconds()
         logger.info(f"finish gc build log streams in {delta} seconds")

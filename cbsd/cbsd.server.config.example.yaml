@@ -22,8 +22,14 @@ server:
   db: /cbs/data/db/
   # permissions definitions file
   permissions: /cbs/config/permissions.yaml
-  # path where build logs will be written to.
-  builds-logs-dir: /cbs/logs/builds
+  # build logs config
+  build-logs:
+    # path where build logs will be written to
+    dir-path: /cbs/logs/builds
+    # seconds to keep a build's logs in mem cache
+    # default: 21600 (6 hours)
+    cache-ttl-secs: 21600
+
   secrets:
     # config file for google's oauth2 application (currently mandatory).
     oauth2-secrets-file: /cbs/config/google-client-cbs.json

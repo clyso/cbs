@@ -81,6 +81,19 @@ class ServerSecretsConfig(pydantic.BaseModel):
     ]
 
 
+class BuildLogsConfig(pydantic.BaseModel):
+    model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        serialize_by_alias=True,
+    )
+
+    dir_path: Annotated[Path, pydantic.Field(alias="dir-path")]
+    cache_ttl_secs: Annotated[int, pydantic.Field(alias="cache-ttl-secs")] = (
+        3600 * 6
+    )  # 6 hours
+
+
 class ServerConfig(pydantic.BaseModel):
     model_config: ClassVar[pydantic.ConfigDict] = pydantic.ConfigDict(
         populate_by_name=True,
@@ -104,9 +117,9 @@ class ServerConfig(pydantic.BaseModel):
     #
     secrets: ServerSecretsConfig
 
-    # logging config
+    # build logs config
     #
-    builds_logs_dir: Annotated[Path, pydantic.Field(alias="builds-logs-dir")]
+    build_logs: Annotated[BuildLogsConfig, pydantic.Field(alias="build-logs")]
 
     def get_oauth_config(self) -> GoogleOAuthSecrets:
         return _GoogleOAuthSecrets.load(Path(self.secrets.oauth2_secrets_file))
