@@ -33,15 +33,20 @@ class BackendError(CESError):
 
 class Backend:
     _redis_url: str
-    # _redis: aioredis.Redis
+    _redis: aioredis.Redis
 
     def __init__(self, backend_url: str) -> None:
         self._redis_url = backend_url
-
-    async def redis(self) -> aioredis.Redis:
         try:
-            return aioredis.from_url(f"{self._redis_url}?decode_responses=True")  # pyright: ignore[reportUnknownMemberType]
+            self._redis = aioredis.from_url(f"{self._redis_url}?decode_responses=True")
         except Exception as e:
-            msg = f"error opening connection to redis backend: {e}"
+            msg = f"error creating redis connection pool: {e}"
             logger.error(msg)
             raise BackendError(msg) from e
+
+    async def redis(self) -> aioredis.Redis:
+        return self._redis
+
+    async def close(self) -> None:
+        """Close the Redis connection pool."""
+        await self._redis.aclose()
