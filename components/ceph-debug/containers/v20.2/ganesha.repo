@@ -1,0 +1,5 @@
+[ganesha]
+name = ganesha
+baseurl = https://buildlogs.centos.org/centos/$releasever-stream/storage/$basearch/nfsganesha-5/
+gpgcheck = 0
+enabled = 1

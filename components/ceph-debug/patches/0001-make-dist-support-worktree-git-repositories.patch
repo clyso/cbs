@@ -1,0 +1,46 @@
+From 38d1553f881c652914379b8c43e843a15c961abc Mon Sep 17 00:00:00 2001
+From: Joao Eduardo Luis <joao@clyso.com>
+Date: Wed, 26 Nov 2025 11:23:43 +0000
+Subject: [PATCH] make-dist: support worktree git repositories
+
+Signed-off-by: Joao Eduardo Luis <joao@clyso.com>
+---
+ bin/git-archive-all.sh | 8 ++++++--
+ make-dist              | 2 +-
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/bin/git-archive-all.sh b/bin/git-archive-all.sh
+index 513b50a2c49..e4049f34604 100755
+--- a/bin/git-archive-all.sh
++++ b/bin/git-archive-all.sh
+@@ -192,8 +192,12 @@ if [ $SEPARATE -eq 1 -a ! -d $OUT_FILE ]; then
+     echo "If it's not, you risk being surprised when your files are overwritten."
+     exit
+ elif [ `git config -l | grep -q '^core\.bare=false'; echo $?` -ne 0 ]; then
+-    echo "$PROGRAM must be run from a git working copy (i.e., not a bare repository)."
+-    exit
++    if [ -e ".git" ] && grep gitdir .git > /dev/null ; then
++        echo "Found .git file with gitdir, assuming non-bare repository."
++    else
++        echo "$PROGRAM must be run from a git working copy (i.e., not a bare repository)."
++        exit
++    fi
+ fi
+ 
+ # Create the superproject's git-archive
+diff --git a/make-dist b/make-dist
+index 388fae8a2a7..c8b8911bcd9 100755
+--- a/make-dist
++++ b/make-dist
+@@ -3,7 +3,7 @@
+ SCRIPTNAME="$(basename "${0}")"
+ BASEDIR="$(readlink -f "$(dirname "${0}")")"
+ 
+-if [ ! -d .git ]; then
++if [ ! -e .git ]; then
+     echo "$SCRIPTNAME: Full path to the script: $BASEDIR/$SCRIPTNAME"
+     echo "$SCRIPTNAME: No .git present. Run this from the base dir of the git checkout."
+     exit 1
+-- 
+2.51.0
+
