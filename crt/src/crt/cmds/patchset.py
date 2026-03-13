@@ -23,6 +23,7 @@ from typing import cast
 import click
 import pydantic
 import rich.box
+from cbscommon.git import SHA  # SHA is now imported from cbscommon.git
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.table import Table
@@ -43,7 +44,6 @@ from crt.crtlib.errors.patchset import (
     MalformedPatchSetError,
 )
 from crt.crtlib.git_utils import (
-    SHA,
     GitError,
     git_branch_delete,
     git_branch_from,

@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import override
 
 import git
+from cbscommon.git import SHA  # SHA is now imported from cbscommon.git
 
 from crt.crtlib.git_utils import (
-    SHA,
     GitAMApplyError,
     git_am_abort,
     git_am_apply,

@@ -20,13 +20,13 @@ from typing import cast, override
 
 import git
 
+# cbscommon.git contains shared git types like SHA
+from cbscommon.git import SHA
+
 from crt.crtlib.errors import CRTError
 from crt.crtlib.logger import logger as parent_logger
 
 logger = parent_logger.getChild("git")
-
-
-SHA = str
 
 
 class GitError(CRTError):
