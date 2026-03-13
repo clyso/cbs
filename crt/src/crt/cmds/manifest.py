@@ -23,6 +23,14 @@ from typing import cast
 
 import click
 import rich.box
+from cbscommon.git import (
+    GitError,
+    git_get_remote_ref,
+    git_prepare_remote,
+    git_push,
+    git_remote,
+    git_tag_exists_in_remote,
+)  # Git exceptions and functions are now imported from cbscommon.git
 from cbscore.versions.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
@@ -39,14 +47,6 @@ from crt.crtlib.errors.manifest import (
 )
 from crt.crtlib.errors.patchset import NoSuchPatchSetError, PatchSetError
 from crt.crtlib.errors.release import NoSuchReleaseError, ReleaseError
-from crt.crtlib.git_utils import (
-    GitError,
-    git_get_remote_ref,
-    git_prepare_remote,
-    git_push,
-    git_remote,
-    git_tag_exists_in_remote,
-)
 from crt.crtlib.github import gh_get_pr
 from crt.crtlib.manifest import (
     ManifestExecuteResult,

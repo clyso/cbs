@@ -20,18 +20,7 @@ from pathlib import Path
 from typing import cast
 
 import pydantic
-from cbscore.versions.utils import parse_version
-
-from crt.crtlib.apply import ApplyError, apply_manifest
-from crt.crtlib.errors import CRTError
-from crt.crtlib.errors.manifest import (
-    MalformedManifestError,
-    ManifestError,
-    ManifestExistsError,
-    NoSuchManifestError,
-)
-from crt.crtlib.errors.stages import MissingStagePatchError
-from crt.crtlib.git_utils import (
+from cbscommon.git import (
     GitCreateHeadExistsError,
     GitError,
     GitFetchError,
@@ -45,7 +34,18 @@ from crt.crtlib.git_utils import (
     git_prepare_remote,
     git_push,
     git_status,
+)  # Git exceptions and functions are now imported from cbscommon.git
+from cbscore.versions.utils import parse_version
+
+from crt.crtlib.apply import ApplyError, apply_manifest
+from crt.crtlib.errors import CRTError
+from crt.crtlib.errors.manifest import (
+    MalformedManifestError,
+    ManifestError,
+    ManifestExistsError,
+    NoSuchManifestError,
 )
+from crt.crtlib.errors.stages import MissingStagePatchError
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest

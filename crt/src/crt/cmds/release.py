@@ -19,15 +19,7 @@ from typing import cast
 
 import click
 import rich.box
-from cbscore.versions.utils import parse_version
-from git import GitError
-from rich.padding import Padding
-from rich.table import Table
-
-from crt.cmds._common import CRTExitError, CRTProgress
-from crt.crtlib.errors.manifest import NoSuchManifestError
-from crt.crtlib.errors.release import NoSuchReleaseError
-from crt.crtlib.git_utils import (
+from cbscommon.git import (
     GitFetchHeadNotFoundError,
     GitIsTagError,
     git_branch_from,
@@ -40,7 +32,15 @@ from crt.crtlib.git_utils import (
     git_remote,
     git_reset_head,
     git_tag,
-)
+)  # Git exceptions and functions are now imported from cbscommon.git
+from cbscore.versions.utils import parse_version
+from git import GitError
+from rich.padding import Padding
+from rich.table import Table
+
+from crt.cmds._common import CRTExitError, CRTProgress
+from crt.crtlib.errors.manifest import NoSuchManifestError
+from crt.crtlib.errors.release import NoSuchReleaseError
 from crt.crtlib.manifest import load_manifest_by_name_or_uuid
 from crt.crtlib.models.release import Release
 from crt.crtlib.release import load_release, release_exists, store_release

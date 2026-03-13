@@ -18,14 +18,7 @@ from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
-
-from crt.crtlib.errors.patchset import (
-    MalformedPatchSetError,
-    NoSuchPatchSetError,
-    PatchSetCheckError,
-    PatchSetError,
-)
-from crt.crtlib.git_utils import (
+from cbscommon.git import (
     GitEmptyPatchDiffError,
     GitError,
     GitPatchDiffError,
@@ -34,6 +27,13 @@ from crt.crtlib.git_utils import (
     git_check_patches_diff,
     git_format_patch,
     git_prepare_remote,
+)  # Git exceptions and functions are now imported from cbscommon.git
+
+from crt.crtlib.errors.patchset import (
+    MalformedPatchSetError,
+    NoSuchPatchSetError,
+    PatchSetCheckError,
+    PatchSetError,
 )
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry

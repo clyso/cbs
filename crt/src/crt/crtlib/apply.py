@@ -18,8 +18,7 @@ from pathlib import Path
 from typing import override
 
 import git
-
-from crt.crtlib.git_utils import (
+from cbscommon.git import (
     SHA,
     GitAMApplyError,
     git_am_abort,
@@ -27,7 +26,8 @@ from crt.crtlib.git_utils import (
     git_cleanup_repo,
     git_get_local_head,
     git_prepare_remote,
-)
+)  # Git types, exceptions and functions are now imported from cbscommon.git
+
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
