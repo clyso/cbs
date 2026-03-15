@@ -299,6 +299,12 @@ fn argon2_verify(raw_key: &str, hash_str: &str) -> bool {
         .is_ok()
 }
 
+/// Minimal hex encode (lowercase). Exposed for use by `db::seed`.
+#[allow(dead_code)]
+pub(crate) fn hex_encode_bytes(bytes: &[u8]) -> String {
+    hex_encode(bytes)
+}
+
 /// Minimal hex encode (lowercase).
 fn hex_encode(bytes: &[u8]) -> String {
     use std::fmt::Write;

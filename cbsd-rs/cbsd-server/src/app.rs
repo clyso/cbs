@@ -57,6 +57,8 @@ pub struct AppState {
     pub log_writer: SharedLogWriter,
     /// Handle for the periodic re-dispatch sweep task.
     pub sweep_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Handle for the log GC background task.
+    pub gc_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Build the axum router.
