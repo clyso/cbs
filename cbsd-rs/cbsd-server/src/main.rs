@@ -128,6 +128,9 @@ async fn main() {
     tracing::info!("loaded {} component(s)", loaded_components.len());
 
     // Build app state and router
+    let worker_senders = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let log_watchers = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
@@ -135,6 +138,8 @@ async fn main() {
         api_key_cache,
         queue: build_queue,
         components: loaded_components,
+        worker_senders,
+        log_watchers,
     };
     let router = app::build_router(state.clone(), session_layer);
 

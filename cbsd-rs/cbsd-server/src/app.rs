@@ -10,12 +10,14 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use axum::extract::ws::Message;
 use axum::{Json, Router, routing::get};
 use crate::ws;
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, watch, Mutex};
 use tower_sessions::service::SignedCookie;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
@@ -27,6 +29,16 @@ use crate::config::ServerConfig;
 use crate::queue::SharedBuildQueue;
 use crate::routes;
 
+/// Per-worker channel sender for outbound WebSocket messages.
+/// The WS handler loop reads from the receiver and forwards to the socket.
+pub type WorkerSender = mpsc::UnboundedSender<Message>;
+
+/// Map of connection_id -> WorkerSender for all connected workers.
+pub type WorkerSenders = Arc<Mutex<HashMap<String, WorkerSender>>>;
+
+/// Map of build_id -> watch::Sender for log file change notifications.
+pub type LogWatchers = Arc<Mutex<HashMap<i64, watch::Sender<()>>>>;
+
 /// Shared application state. Extended by subsequent commits.
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +48,10 @@ pub struct AppState {
     pub api_key_cache: Arc<Mutex<ApiKeyCache>>,
     pub queue: SharedBuildQueue,
     pub components: Vec<ComponentInfo>,
+    /// Per-worker outbound message channels.
+    pub worker_senders: WorkerSenders,
+    /// Build log file change watchers (notifies SSE/follow endpoints).
+    pub log_watchers: LogWatchers,
 }
 
 /// Build the axum router.

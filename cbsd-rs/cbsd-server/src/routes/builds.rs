@@ -24,6 +24,7 @@ use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail, ScopeType};
 use crate::components;
 use crate::db;
 use crate::queue::QueuedBuild;
+use crate::ws;
 
 /// Build the builds sub-router: `/api/builds/*`.
 pub fn router() -> Router<AppState> {
@@ -164,12 +165,8 @@ async fn submit_build(
         queue.enqueue(queued_build);
         let (h, n, l) = queue.pending_counts();
         let total = h + n + l;
-        // Warn if there are other builds ahead (workers not dispatching yet)
         warning = if total > 1 {
-            Some(format!(
-                "{} build(s) in queue — full dispatch available in Phase 4",
-                total
-            ))
+            Some(format!("{total} build(s) in queue"))
         } else {
             None
         };
@@ -179,6 +176,14 @@ async fn submit_build(
         "user {} submitted build {build_id} (priority={priority_str})",
         user.email
     );
+
+    // Attempt immediate dispatch (non-blocking — spawned as background task).
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = ws::dispatch::try_dispatch(&state_clone).await {
+            tracing::debug!("post-submit dispatch for build {build_id}: {e}");
+        }
+    });
 
     Ok((
         StatusCode::ACCEPTED,

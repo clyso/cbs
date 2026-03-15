@@ -13,6 +13,8 @@
 //! Component discovery: scans the components directory for `cbs.component.yaml`
 //! files and enumerates available container versions.
 
+pub mod tarball;
+
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};

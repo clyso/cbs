@@ -144,6 +144,63 @@ pub async fn insert_build_log_row(
     Ok(())
 }
 
+/// Set the trace_id and worker_id on a build, and mark it as dispatched.
+/// Returns `true` if a row was updated.
+pub async fn set_build_dispatched(
+    pool: &SqlitePool,
+    id: i64,
+    trace_id: &str,
+    worker_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE builds SET state = 'dispatched', trace_id = ?, worker_id = ?
+         WHERE id = ?",
+    )
+    .bind(trace_id)
+    .bind(worker_id)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Mark a build as started and set started_at to the current time.
+/// Returns `true` if a row was updated.
+pub async fn set_build_started(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE builds SET state = 'started', started_at = unixepoch()
+         WHERE id = ?",
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Mark a build as finished (success, failure, or revoked) and set finished_at.
+/// Optionally records an error message.
+/// Returns `true` if a row was updated.
+pub async fn set_build_finished(
+    pool: &SqlitePool,
+    id: i64,
+    state: &str,
+    error: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE builds SET state = ?, finished_at = unixepoch(), error = COALESCE(?, error)
+         WHERE id = ?",
+    )
+    .bind(state)
+    .bind(error)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 /// Map a sqlx Row to a BuildRecord.
 fn row_to_build_record(r: sqlx::sqlite::SqliteRow) -> BuildRecord {
     BuildRecord {
