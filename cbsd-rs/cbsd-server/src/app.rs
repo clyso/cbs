@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
+use crate::ws;
 use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 use tower_sessions::service::SignedCookie;
@@ -48,10 +49,11 @@ pub fn build_router(
         .nest("/permissions", routes::permissions::router())
         .nest("/admin", routes::admin::router())
         .nest("/builds", routes::builds::router())
-        .nest("/components", routes::components::router());
+        .nest("/components", routes::components::router())
+        .nest("/workers", routes::workers::router());
 
     Router::new()
-        .nest("/api", api)
+        .nest("/api", api.route("/ws/worker", get(ws::handler::ws_upgrade)))
         .layer(session_layer)
         .with_state(state)
 }

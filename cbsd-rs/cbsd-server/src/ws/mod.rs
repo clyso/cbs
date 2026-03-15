@@ -10,9 +10,5 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-pub mod admin;
-pub mod auth;
-pub mod builds;
-pub mod components;
-pub mod permissions;
-pub mod workers;
+pub mod handler;
+pub mod liveness;
