@@ -14,12 +14,15 @@ mod app;
 mod auth;
 mod config;
 mod db;
+mod routes;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use hkdf::Hkdf;
+use sha2::Sha256;
 use tower_sessions::session_store::ExpiredDeletion;
 use tower_sessions_sqlx_store::SqliteStore;
 use tracing_subscriber::EnvFilter;
@@ -66,8 +69,21 @@ async fn main() {
         .await
         .expect("failed to initialize session store");
 
-    // Session layer with 10-minute expiry (OAuth flows only)
+    // Derive session signing key from token_secret_key via HKDF-SHA256
+    // (deterministic across restarts, domain-separated from PASETO key)
+    let token_key_bytes = config
+        .secrets
+        .token_secret_key
+        .as_bytes();
+    let hk = Hkdf::<Sha256>::new(None, token_key_bytes);
+    let mut session_key_bytes = [0u8; 64];
+    hk.expand(b"cbsd-oauth-session-v1", &mut session_key_bytes)
+        .expect("HKDF expand failed for session key");
+    let session_key = tower_sessions::cookie::Key::from(&session_key_bytes);
+
+    // Session layer with signed cookies and 10-minute expiry (OAuth flows only)
     let session_layer = tower_sessions::SessionManagerLayer::new(session_store.clone())
+        .with_signed(session_key)
         .with_expiry(tower_sessions::Expiry::OnInactivity(
             time::Duration::minutes(10),
         ));
@@ -79,10 +95,16 @@ async fn main() {
             .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
     );
 
+    // Load Google OAuth configuration from secrets file
+    let oauth = auth::oauth::load_oauth_config(&config.oauth.secrets_file)
+        .expect("failed to load OAuth secrets");
+    tracing::info!("loaded OAuth configuration");
+
     // Build app state and router
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
+        oauth,
     };
     let router = app::build_router(state.clone(), session_layer);
 
@@ -98,10 +120,13 @@ async fn main() {
         .await
         .expect("failed to bind");
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal(cli.drain))
-        .await
-        .expect("server error");
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(cli.drain))
+    .await
+    .expect("server error");
 
     tracing::info!("cbsd-server shut down");
 }

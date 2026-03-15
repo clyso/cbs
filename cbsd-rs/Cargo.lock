@@ -281,6 +281,7 @@ dependencies = [
  "argon2",
  "axum",
  "axum-extra",
+ "base64",
  "cbsd-proto",
  "chrono",
  "clap",
@@ -413,7 +414,12 @@ version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ddef33a339a91ea89fb53151bd0a4689cfce27055c291dfa69945475d22c747"
 dependencies = [
+ "base64",
+ "hmac",
  "percent-encoding",
+ "rand",
+ "sha2",
+ "subtle",
  "time",
  "version_check",
 ]
