@@ -11,6 +11,7 @@
 // GNU Affero General Public License for more details.
 
 mod app;
+mod auth;
 mod config;
 mod db;
 
