@@ -1,0 +1,163 @@
+# CBS build service daemon (cbsd-rs) — multi-stage Containerfile
+#
+# Copyright (C) 2026  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Stages (production):
+#   rust-builder       compile both binaries in release mode
+#   cbsd-rs-server     minimal server image (binary + ca-certs)
+#   cbsd-rs-worker     worker image (binary + Python + podman for cbscore)
+#
+# Stages (development — cargo-watch, source bind-mounted at /cbs/src):
+#   dev-base           Rust toolchain + cargo-watch + build deps
+#   cbsd-rs-dev-server dev server (cargo-watch on cbsd-server)
+#   cbsd-rs-dev-worker dev worker (cargo-watch on cbsd-worker + Python + podman)
+#
+# Build requirements:
+#   Production builds require the sqlx offline query cache to be present
+#   at cbsd-rs/.sqlx/ (SQLX_OFFLINE=true). Populate it on the host with:
+#     cd cbsd-rs && cargo sqlx prepare --workspace
+#
+# Usage (from repository root):
+#   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-server .
+#   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-worker .
+#   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-dev-server .
+#   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-dev-worker .
+
+# ==========================================================================
+# Production build stage
+# ==========================================================================
+
+FROM rust:1-alpine3.21 AS rust-builder
+
+# musl-dev: C stdlib headers for crates that compile C code (sqlx/sqlite)
+# hadolint ignore=DL3018
+RUN apk add --no-cache musl-dev
+
+WORKDIR /build
+
+# Copy only the Rust workspace (build context is the repository root)
+COPY cbsd-rs/ .
+
+# Use the committed sqlx offline query cache — no live DB needed at build time.
+# Ensure cbsd-rs/.sqlx/ is populated before building this image.
+ENV SQLX_OFFLINE=true
+
+RUN cargo build --release --workspace
+
+# ==========================================================================
+# Production server image
+# ==========================================================================
+
+FROM python:3.13-alpine3.20 AS cbsd-rs-server
+
+# ca-certificates: needed by reqwest (rustls-tls) for TLS peer verification
+# hadolint ignore=DL3018
+RUN apk add --no-cache ca-certificates
+
+COPY --from=rust-builder /build/target/release/cbsd-server /usr/local/bin/cbsd-server
+COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+VOLUME ["/cbs/config"]
+
+# CBSD_CONFIG: path to server.yaml inside the container
+ENV CBSD_CONFIG=/cbs/config/server.yaml
+
+ENTRYPOINT ["/entrypoint.sh", "server"]
+
+# ==========================================================================
+# Production worker image
+# ==========================================================================
+
+FROM python:3.13-alpine3.20 AS cbsd-rs-worker
+
+# podman:          container runtime for cbscore build execution
+# ca-certificates: TLS peer verification
+# curl:            required by some podman helper scripts
+# hadolint ignore=DL3018
+RUN apk add --no-cache podman ca-certificates curl
+
+COPY --from=rust-builder /build/target/release/cbsd-worker /usr/local/bin/cbsd-worker
+
+# cbscore-wrapper.py: Python bridge between cbsd-worker and cbscore library.
+# When cbscore is fully integrated, cbscore and its dependencies must also
+# be installed here (e.g. via uv).
+COPY cbsd-rs/scripts/cbscore-wrapper.py /opt/cbsd-rs/cbscore-wrapper.py
+
+COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+VOLUME ["/cbs/config"]
+VOLUME ["/cbs/scratch"]
+VOLUME ["/var/lib/containers"]
+VOLUME ["/cbs/components"]
+VOLUME ["/cbs/ccache"]
+
+# CBSD_CONFIG: path to worker.yaml inside the container
+ENV CBSD_CONFIG=/cbs/config/worker.yaml
+
+ENTRYPOINT ["/entrypoint.sh", "worker"]
+
+# ==========================================================================
+# Development base stage (shared by server-dev and worker-dev)
+# ==========================================================================
+
+FROM rust:1-alpine3.21 AS dev-base
+
+# Same build deps as rust-builder, plus cargo-watch for auto-reload.
+# hadolint ignore=DL3018
+RUN apk add --no-cache musl-dev
+
+# Install cargo-watch (compiled from source, cached in this layer).
+RUN cargo install cargo-watch
+
+COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# ==========================================================================
+# Development server image
+# ==========================================================================
+
+FROM dev-base AS cbsd-rs-dev-server
+
+# Source is bind-mounted at runtime — see podman-compose.cbsd-rs.yaml.
+WORKDIR /cbs/src
+
+VOLUME ["/cbs/config"]
+VOLUME ["/cbs/src"]
+
+# CBSD_CONFIG: path to server.yaml inside the container
+ENV CBSD_CONFIG=/cbs/config/server.yaml
+
+ENTRYPOINT ["/entrypoint.sh", "server-dev"]
+
+# ==========================================================================
+# Development worker image
+# ==========================================================================
+
+FROM dev-base AS cbsd-rs-dev-worker
+
+# python3: required to run cbscore-wrapper.py during development
+# podman:  container runtime for cbscore build execution
+# hadolint ignore=DL3018
+RUN apk add --no-cache python3 podman curl
+
+# Source is bind-mounted at runtime — see podman-compose.cbsd-rs.yaml.
+WORKDIR /cbs/src
+
+VOLUME ["/cbs/config"]
+VOLUME ["/cbs/src"]
+VOLUME ["/cbs/scratch"]
+VOLUME ["/var/lib/containers"]
+VOLUME ["/cbs/components"]
+VOLUME ["/cbs/ccache"]
+
+# CBSD_CONFIG: path to worker.yaml inside the container
+ENV CBSD_CONFIG=/cbs/config/worker.yaml
+
+ENTRYPOINT ["/entrypoint.sh", "worker-dev"]
