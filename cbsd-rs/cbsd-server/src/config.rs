@@ -1,0 +1,220 @@
+// Copyright (C) 2026  Clyso
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+
+use std::path::PathBuf;
+
+use serde::Deserialize;
+
+/// Top-level server configuration. Loaded from YAML.
+#[derive(Debug, Deserialize)]
+pub struct ServerConfig {
+    /// Listen address (e.g., "0.0.0.0:8080").
+    #[serde(default = "default_listen_addr")]
+    pub listen_addr: String,
+
+    /// TLS certificate path (optional — if absent, plain HTTP).
+    #[allow(dead_code)]
+    pub tls_cert_path: Option<PathBuf>,
+    /// TLS private key path.
+    #[allow(dead_code)]
+    pub tls_key_path: Option<PathBuf>,
+
+    /// SQLite database file path.
+    #[serde(default = "default_db_path")]
+    pub db_path: String,
+
+    /// Build log storage directory.
+    #[serde(default = "default_log_dir")]
+    pub log_dir: PathBuf,
+
+    /// Secrets configuration.
+    pub secrets: SecretsConfig,
+
+    /// Google OAuth configuration.
+    pub oauth: OAuthConfig,
+
+    /// Build queue timeouts.
+    #[serde(default)]
+    pub timeouts: TimeoutsConfig,
+
+    /// Log retention.
+    #[serde(default)]
+    pub log_retention: LogRetentionConfig,
+
+    /// First-startup seeding.
+    #[serde(default)]
+    pub seed: SeedConfig,
+
+    /// Tracing / logging configuration.
+    #[serde(default)]
+    pub logging: LoggingConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SecretsConfig {
+    /// 64-byte hex key for PASETO tokens and session key derivation (HKDF).
+    pub token_secret_key: String,
+
+    /// Maximum token TTL in seconds. `None` = infinite allowed.
+    pub max_token_ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OAuthConfig {
+    /// Path to Google OAuth2 secrets JSON file.
+    pub secrets_file: PathBuf,
+
+    /// Allowed email domains for Google SSO.
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+
+    /// Explicitly allow any Google account (must be true if allowed_domains empty).
+    #[serde(default)]
+    pub allow_any_google_account: bool,
+}
+
+/// Build queue and worker liveness timeouts. The parent struct uses
+/// `#[serde(default)]`, so serde calls `TimeoutsConfig::default()` when the
+/// entire section is missing. Per-field defaults are not needed.
+#[derive(Debug, Deserialize)]
+pub struct TimeoutsConfig {
+    /// Seconds to wait for build_accepted after build_new.
+    pub dispatch_ack_timeout_secs: u64,
+
+    /// Seconds after WS drop before declaring worker dead.
+    pub liveness_grace_period_secs: u64,
+
+    /// Max backoff ceiling for worker reconnection (must be < grace period).
+    pub reconnect_backoff_ceiling_secs: u64,
+
+    /// Seconds to wait for build_finished after build_revoke.
+    pub revoke_ack_timeout_secs: u64,
+
+    /// Seconds before SIGTERM → SIGKILL escalation on worker subprocess.
+    #[allow(dead_code)]
+    pub sigkill_escalation_timeout_secs: u64,
+}
+
+impl Default for TimeoutsConfig {
+    fn default() -> Self {
+        Self {
+            dispatch_ack_timeout_secs: 15,
+            liveness_grace_period_secs: 90,
+            reconnect_backoff_ceiling_secs: 30,
+            revoke_ack_timeout_secs: 30,
+            sigkill_escalation_timeout_secs: 15,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogRetentionConfig {
+    /// Days to retain build log files.
+    pub log_retention_days: u32,
+}
+
+impl Default for LogRetentionConfig {
+    fn default() -> Self {
+        Self {
+            log_retention_days: 30,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SeedConfig {
+    /// Admin email for first-startup seeding.
+    pub seed_admin: Option<String>,
+
+    /// Worker API keys to provision on first startup.
+    #[serde(default)]
+    pub seed_worker_api_keys: Vec<SeedWorkerKey>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SeedWorkerKey {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoggingConfig {
+    /// Log level (e.g., "info", "debug", "trace").
+    #[serde(default = "default_log_level")]
+    pub level: String,
+
+    /// Optional log file path (in addition to stdout).
+    #[allow(dead_code)]
+    pub log_file: Option<PathBuf>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".to_string(),
+            log_file: None,
+        }
+    }
+}
+
+// -- defaults for serde --
+
+fn default_listen_addr() -> String {
+    "0.0.0.0:8080".to_string()
+}
+
+fn default_db_path() -> String {
+    "cbsd.db".to_string()
+}
+
+fn default_log_dir() -> PathBuf {
+    PathBuf::from("./logs")
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+// -- validation --
+
+impl ServerConfig {
+    /// Validate configuration invariants. Panics on invalid config.
+    pub fn validate(&self) {
+        if self.oauth.allowed_domains.is_empty() && !self.oauth.allow_any_google_account {
+            panic!(
+                "config error: oauth.allowed_domains is empty and \
+                 oauth.allow_any_google_account is not true — \
+                 this would allow any Google account to authenticate"
+            );
+        }
+
+        if self.timeouts.reconnect_backoff_ceiling_secs
+            >= self.timeouts.liveness_grace_period_secs
+        {
+            panic!(
+                "config error: reconnect_backoff_ceiling_secs ({}) must be less than \
+                 liveness_grace_period_secs ({})",
+                self.timeouts.reconnect_backoff_ceiling_secs,
+                self.timeouts.liveness_grace_period_secs,
+            );
+        }
+    }
+}
+
+/// Load and validate server config from a YAML file.
+pub fn load_config(path: &std::path::Path) -> ServerConfig {
+    let contents = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read config file {}: {e}", path.display()));
+    let config: ServerConfig = serde_yml::from_str(&contents)
+        .unwrap_or_else(|e| panic!("failed to parse config file {}: {e}", path.display()));
+    config.validate();
+    config
+}
