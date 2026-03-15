@@ -1,0 +1,102 @@
+# Phase 2 — Authentication: PASETO, OAuth, API Keys, Extractors
+
+## Progress
+
+| Item | Status |
+|------|--------|
+| Commit 3: PASETO tokens, user/token DB ops, AuthUser extractor | Done |
+| Commit 4: Google OAuth, API keys (with LRU cache), auth routes | Done |
+
+## Goal
+
+Fully functional authentication subsystem. Users can log in via Google SSO,
+receive PASETO tokens, create API keys, and all endpoints can be gated by
+`AuthUser` and capability extractors.
+
+## Depends on
+
+Phase 1 (schema, config, server scaffold).
+
+## Commit 3: PASETO tokens, user/token DB ops, AuthUser extractor
+
+The core token path that all other auth features build on.
+
+**auth/paseto.rs:**
+- `token_create(email, expires_at, secret_key) -> (raw_token, sha256_hash)`
+- `token_decode(raw_token, secret_key) -> CbsdTokenPayloadV1`
+- Frozen payload: `{"expires":<i64|null>,"user":"email"}` — alphabetical keys,
+  epoch integers, no whitespace. PASETO v4.local via `pasetors`.
+- `max_token_ttl_seconds` config clamping.
+
+**db/users.rs:**
+- `create_or_update_user(email, name)`, `get_user(email)`,
+  `is_user_active(email)`.
+
+**db/tokens.rs:**
+- `insert_token(user_email, token_hash, expires_at)`,
+  `is_token_revoked(token_hash)`, `revoke_token(token_hash)`,
+  `revoke_all_for_user(user_email)`.
+
+**auth/extractors.rs:**
+- `AuthUser` axum extractor: reads `Authorization: Bearer`, distinguishes
+  PASETO vs API key by prefix (`cbsk_`), decodes token, checks revocation in
+  DB, checks expiry, checks `users.active`, loads user record + roles + caps.
+  Returns 401 on failure.
+
+**Testable:** Token create → decode round-trip. Token revocation check.
+`AuthUser` extractor rejects expired/revoked/inactive tokens. PASETO
+cross-language test: construct identical payload in Rust, verify SHA-256
+matches hardcoded expected bytes (canonical JSON form verification).
+
+## Commit 4: Google OAuth, API keys (with LRU cache), auth routes
+
+Full OAuth flow and API key management.
+
+**auth/oauth.rs:**
+- `GET /api/auth/login?client=cli|web` — builds Google auth URL with `hd=`
+  domain hint, stores `oauth_state` + `client_type` + optional `cli_port` in
+  `tower-sessions` SQLite session (10-minute TTL). **Session signing key
+  derived from `token_secret_key` via HKDF-SHA256** (requires `hkdf` crate):
+  `Hkdf::<Sha256>::new(None, key).expand(b"cbsd-oauth-session-v1", &mut out)`
+  — deterministic across restarts.
+- `GET /api/auth/callback` — exchanges code, validates domain against
+  `allowed_domains`, creates/updates user, creates PASETO token, regenerates
+  session ID (fixation prevention).
+- CLI response: HTML page with base64-encoded token (CSP:
+  `default-src 'none'`), optional JS redirect to `localhost:<cli_port>`.
+- Web response: redirect to `/#token=<base64>`.
+
+**auth/api_keys.rs:**
+- `create_api_key(name, owner_email) -> (plaintext, prefix)` — generates
+  `cbsk_<32 random hex>`, stores argon2 hash + 12-char prefix.
+- `verify_api_key(raw_key) -> CachedApiKey` — SHA-256 lookup in
+  `Arc<Mutex<ApiKeyCache>>` (512 entries). Cache miss → argon2 verify against
+  DB. `CachedApiKey` includes `key_prefix` for eviction cleanup.
+- Concrete `insert()` with `push()` return value for LRU eviction + reverse
+  map cleanup (`by_prefix`, `by_owner`).
+
+**db/api_keys.rs:**
+- CRUD against `api_keys` table.
+
+**routes/auth.rs:**
+- `GET /api/auth/login`, `GET /api/auth/callback`, `GET /api/auth/whoami`
+  (response: `{email, name, roles[], effective_caps[]}`),
+  `POST /api/auth/token/revoke` (self-revoke from bearer),
+  `POST /api/auth/tokens/revoke-all` (bulk, requires `permissions:manage`).
+- `POST /api/auth/api-keys`, `GET /api/auth/api-keys`,
+  `DELETE /api/auth/api-keys/{prefix}`.
+- Rate limiting via `tower-governor` on login/callback (10 req/min/IP).
+
+**Error response schema:** `{"detail": "..."}` on all error endpoints.
+
+**Implementation notes:**
+- Argon2 verification on cache miss must use `tokio::task::spawn_blocking`
+  (~100–500ms blocks a tokio worker thread without it).
+- `connection_id` and `trace_id` are `String` in proto (no `uuid` dep in
+  `cbsd-proto`). Server generates UUIDs internally, serializes to string.
+
+**Testable:** OAuth flow (manual integration test with test Google project;
+automated tests mock the token exchange endpoint). Token create/decode/revoke.
+API key create/verify/revoke cycle. `AuthUser` extractor correctly gates
+endpoints. LRU cache hit/miss/eviction (including reverse-map cleanup on
+eviction).

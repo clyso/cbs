@@ -8,16 +8,27 @@ description = "CBS build service daemon — server binary"
 
 [dependencies]
 cbsd-proto = { path = "../cbsd-proto" }
+argon2 = "0.5"
 axum = { version = "0.7", features = ["ws"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+chrono.workspace = true
 clap = { version = "4", features = ["derive"] }
+hkdf = "0.12"
+lru = "0.12"
+pasetors = "0.7"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yml = "0.0.12"
+sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+time = "0.3"
 tokio = { version = "1", features = ["full"] }
+tower_governor = "0.4"
 tower-sessions = "0.13"
 tower-sessions-sqlx-store = { version = "0.14", features = ["sqlite"] }
-time = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+uuid = { version = "1", features = ["v4"] }
