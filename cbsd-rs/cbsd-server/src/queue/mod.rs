@@ -162,6 +162,27 @@ impl BuildQueue {
         }
     }
 
+    /// Returns `true` if any priority lane has pending builds.
+    pub fn has_pending(&self) -> bool {
+        !self.high.is_empty() || !self.normal.is_empty() || !self.low.is_empty()
+    }
+
+    /// Returns `true` if any connected worker is idle (has no active build).
+    pub fn has_idle_workers(&self) -> bool {
+        self.workers.iter().any(|(cid, ws)| {
+            ws.is_dispatch_eligible() && !self.active.values().any(|ab| ab.connection_id == *cid)
+        })
+    }
+
+    /// Return all active builds assigned to a given connection.
+    pub fn active_builds_for_connection(&self, connection_id: &str) -> Vec<i64> {
+        self.active
+            .values()
+            .filter(|ab| ab.connection_id == connection_id)
+            .map(|ab| ab.build_id)
+            .collect()
+    }
+
     /// Return summary information for all workers (for `GET /api/workers`).
     pub fn connected_workers(&self) -> Vec<WorkerInfo> {
         self.workers

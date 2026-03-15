@@ -201,6 +201,29 @@ pub async fn set_build_finished(
     Ok(result.rows_affected() > 0)
 }
 
+/// Set a build's state to "revoking".
+/// Returns `true` if a row was updated.
+pub async fn set_build_revoking(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("UPDATE builds SET state = 'revoking' WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Mark a build log as finished (`build_logs.finished = 1`).
+pub async fn set_build_log_finished(pool: &SqlitePool, build_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+    )
+    .bind(build_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 /// Map a sqlx Row to a BuildRecord.
 fn row_to_build_record(r: sqlx::sqlite::SqliteRow) -> BuildRecord {
     BuildRecord {

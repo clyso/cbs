@@ -74,3 +74,47 @@ impl WorkerState {
         }
     }
 }
+
+/// Spawn a background task that sleeps for `grace_secs`, then checks if the
+/// worker is still `Disconnected`. If so, transitions to `Dead` and handles
+/// active builds per the dead-worker resolution table.
+pub fn start_grace_period_monitor(
+    state: &crate::app::AppState,
+    connection_id: &str,
+    grace_secs: u64,
+) {
+    let state = state.clone();
+    let connection_id = connection_id.to_string();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(grace_secs)).await;
+
+        // Check if the worker is still Disconnected.
+        let still_disconnected = {
+            let queue = state.queue.lock().await;
+            matches!(
+                queue.get_worker(&connection_id),
+                Some(WorkerState::Disconnected { .. })
+            )
+        };
+
+        if !still_disconnected {
+            // Worker reconnected or was already marked dead.
+            return;
+        }
+
+        tracing::warn!(
+            connection_id = %connection_id,
+            grace_secs = grace_secs,
+            "grace period expired — marking worker dead"
+        );
+
+        {
+            let mut queue = state.queue.lock().await;
+            queue.set_worker_state(&connection_id, WorkerState::Dead);
+        }
+
+        // Resolve active builds.
+        crate::ws::handler::handle_worker_dead(&state, &connection_id).await;
+    });
+}

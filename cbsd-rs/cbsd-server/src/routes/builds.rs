@@ -305,34 +305,64 @@ async fn revoke_build(
         return Err(auth_error(StatusCode::NOT_FOUND, "build not found"));
     }
 
-    // Only QUEUED builds can be revoked in Phase 3.
-    // DISPATCHED/STARTED handling deferred to Phase 4.
-    if build.state != "queued" {
-        return Err(auth_error(
-            StatusCode::CONFLICT,
-            "build not in queued state — revocation of dispatched/started builds available in Phase 4",
-        ));
+    match build.state.as_str() {
+        "queued" => {
+            // Remove from in-memory queue.
+            {
+                let mut queue = state.queue.lock().await;
+                queue.remove_by_id(BuildId(id));
+            }
+
+            // Update DB state to revoked.
+            db::builds::update_build_state(&state.pool, id, "revoked", None)
+                .await
+                .map_err(|e| {
+                    tracing::error!("failed to update build {id} state to revoked: {e}");
+                    auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+                })?;
+
+            tracing::info!("user {} revoked queued build {id}", user.email);
+
+            Ok(Json(
+                serde_json::json!({"detail": format!("build {id} revoked")}),
+            ))
+        }
+        "dispatched" | "started" => {
+            // Send revoke to worker.
+            ws::dispatch::send_build_revoke(&state, id).await.map_err(|e| {
+                tracing::error!("failed to send revoke for build {id}: {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to send revoke")
+            })?;
+
+            tracing::info!(
+                "user {} requested revoke of {state_name} build {id}",
+                user.email,
+                state_name = build.state,
+            );
+
+            Ok(Json(
+                serde_json::json!({"detail": format!("build {id} revoke sent — now revoking")}),
+            ))
+        }
+        "revoking" => {
+            tracing::info!("user {} revoke of build {id} — already revoking", user.email);
+            Ok(Json(
+                serde_json::json!({"detail": format!("build {id} already revoking")}),
+            ))
+        }
+        "success" | "failure" | "revoked" => {
+            Err(auth_error(
+                StatusCode::CONFLICT,
+                &format!("build already in terminal state: {}", build.state),
+            ))
+        }
+        _ => {
+            Err(auth_error(
+                StatusCode::CONFLICT,
+                &format!("unexpected build state: {}", build.state),
+            ))
+        }
     }
-
-    // Remove from in-memory queue
-    {
-        let mut queue = state.queue.lock().await;
-        queue.remove_by_id(BuildId(id));
-    }
-
-    // Update DB state to revoked
-    db::builds::update_build_state(&state.pool, id, "revoked", None)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to update build {id} state to revoked: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
-
-    tracing::info!("user {} revoked build {id}", user.email);
-
-    Ok(Json(
-        serde_json::json!({"detail": format!("build {id} revoked")}),
-    ))
 }
 
 // ---------------------------------------------------------------------------
