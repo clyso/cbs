@@ -21,7 +21,9 @@ use tower_sessions_sqlx_store::SqliteStore;
 
 use crate::auth::api_keys::ApiKeyCache;
 use crate::auth::oauth::OAuthState;
+use crate::components::ComponentInfo;
 use crate::config::ServerConfig;
+use crate::queue::SharedBuildQueue;
 use crate::routes;
 
 /// Shared application state. Extended by subsequent commits.
@@ -31,6 +33,8 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub oauth: OAuthState,
     pub api_key_cache: Arc<Mutex<ApiKeyCache>>,
+    pub queue: SharedBuildQueue,
+    pub components: Vec<ComponentInfo>,
 }
 
 /// Build the axum router.
@@ -42,7 +46,9 @@ pub fn build_router(
         .route("/health", get(health))
         .nest("/auth", routes::auth::router())
         .nest("/permissions", routes::permissions::router())
-        .nest("/admin", routes::admin::router());
+        .nest("/admin", routes::admin::router())
+        .nest("/builds", routes::builds::router())
+        .nest("/components", routes::components::router());
 
     Router::new()
         .nest("/api", api)

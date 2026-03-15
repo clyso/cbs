@@ -14,7 +14,7 @@
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::put;
+use axum::routing::{get, put};
 use axum::{Json, Router};
 
 use crate::app::AppState;
@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/users/{email}/deactivate", put(deactivate_user))
         .route("/users/{email}/activate", put(activate_user))
+        .route("/queue", get(queue_status))
 }
 
 // ---------------------------------------------------------------------------
@@ -185,4 +186,32 @@ async fn activate_user(
     Ok(Json(
         serde_json::json!({"detail": format!("user '{email}' activated")}),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/queue
+// ---------------------------------------------------------------------------
+
+/// Return the number of pending builds per priority lane.
+async fn queue_status(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("admin:queue:view") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: admin:queue:view",
+        ));
+    }
+
+    let (high, normal, low) = {
+        let queue = state.queue.lock().await;
+        queue.pending_counts()
+    };
+
+    Ok(Json(serde_json::json!({
+        "high": high,
+        "normal": normal,
+        "low": low,
+    })))
 }

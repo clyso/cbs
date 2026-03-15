@@ -12,8 +12,10 @@
 
 mod app;
 mod auth;
+mod components;
 mod config;
 mod db;
+mod queue;
 mod routes;
 
 use std::net::SocketAddr;
@@ -103,12 +105,35 @@ async fn main() {
     // Create API key LRU cache (capacity: 512)
     let api_key_cache = auth::api_keys::ApiKeyCache::new(512);
 
+    // Create the in-memory build queue
+    let build_queue = Arc::new(tokio::sync::Mutex::new(queue::BuildQueue::new()));
+
+    // Load component definitions
+    let loaded_components = if config.components_dir.exists() {
+        components::load_components(&config.components_dir).unwrap_or_else(|e| {
+            tracing::warn!(
+                "failed to load components from {}: {e}",
+                config.components_dir.display()
+            );
+            Vec::new()
+        })
+    } else {
+        tracing::warn!(
+            "components directory {} does not exist — no components loaded",
+            config.components_dir.display()
+        );
+        Vec::new()
+    };
+    tracing::info!("loaded {} component(s)", loaded_components.len());
+
     // Build app state and router
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
         oauth,
         api_key_cache,
+        queue: build_queue,
+        components: loaded_components,
     };
     let router = app::build_router(state.clone(), session_layer);
 
