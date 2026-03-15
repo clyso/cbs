@@ -12,6 +12,8 @@
 
 //! In-memory build queue with three priority lanes.
 
+pub mod recovery;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
