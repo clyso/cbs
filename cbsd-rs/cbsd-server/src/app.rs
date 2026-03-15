@@ -26,6 +26,7 @@ use crate::auth::api_keys::ApiKeyCache;
 use crate::auth::oauth::OAuthState;
 use crate::components::ComponentInfo;
 use crate::config::ServerConfig;
+use crate::logs::writer::SharedLogWriter;
 use crate::queue::SharedBuildQueue;
 use crate::routes;
 
@@ -52,6 +53,8 @@ pub struct AppState {
     pub worker_senders: WorkerSenders,
     /// Build log file change watchers (notifies SSE/follow endpoints).
     pub log_watchers: LogWatchers,
+    /// Build log writer state (seq-to-offset indices).
+    pub log_writer: SharedLogWriter,
     /// Handle for the periodic re-dispatch sweep task.
     pub sweep_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }

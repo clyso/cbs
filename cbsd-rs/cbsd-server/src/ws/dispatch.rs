@@ -370,6 +370,9 @@ pub async fn handle_build_finished(
         queue.active.remove(&build_id);
     }
 
+    // Finalize the build log (drop seq index, mark DB finished).
+    crate::logs::writer::finish_build_log(&state.log_writer, &state.pool, build_id).await;
+
     // Drop watch sender (signals SSE followers that the log is done).
     {
         let mut watchers = state.log_watchers.lock().await;

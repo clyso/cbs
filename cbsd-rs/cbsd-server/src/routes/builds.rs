@@ -12,12 +12,15 @@
 
 //! Route handlers for `/api/builds/*`: build submission, listing, revocation.
 
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use cbsd_proto::{BuildDescriptor, BuildId, Priority};
 use serde::{Deserialize, Serialize};
+use tokio_util::io::ReaderStream;
 
 use crate::app::AppState;
 use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail, ScopeType};
@@ -366,14 +369,68 @@ async fn revoke_build(
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/builds/{id}/logs/tail
+// GET /api/builds/{id}/logs/tail?n=30
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct LogsTailQuery {
+    #[serde(default = "default_tail_n")]
+    n: u32,
+}
+
+fn default_tail_n() -> u32 {
+    30
+}
+
+/// Maximum number of lines the tail endpoint will return.
+const MAX_TAIL_LINES: u32 = 10_000;
+
 async fn logs_tail(
+    State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(params): Query<LogsTailQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
-    let _ = id;
-    Err(auth_error(StatusCode::NOT_FOUND, "no logs yet"))
+    // Cap n at MAX_TAIL_LINES.
+    let n = params.n.min(MAX_TAIL_LINES) as usize;
+
+    // Check build exists.
+    db::builds::get_build(&state.pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get build {id}: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "build not found"))?;
+
+    // Determine log file path.
+    let log_path = state.config.log_dir.join(format!("builds/{id}.log"));
+
+    // Read the file (if it exists).
+    let contents = match tokio::fs::read_to_string(&log_path).await {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(auth_error(StatusCode::NOT_FOUND, "no logs yet"));
+        }
+        Err(e) => {
+            tracing::error!("failed to read log file for build {id}: {e}");
+            return Err(auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to read log file",
+            ));
+        }
+    };
+
+    // Take last N lines.
+    let all_lines: Vec<&str> = contents.lines().collect();
+    let start = all_lines.len().saturating_sub(n);
+    let tail: Vec<&str> = all_lines[start..].to_vec();
+
+    Ok(Json(serde_json::json!({
+        "build_id": id,
+        "lines": tail,
+        "total_lines": all_lines.len(),
+        "returned": tail.len(),
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -381,10 +438,12 @@ async fn logs_tail(
 // ---------------------------------------------------------------------------
 
 async fn logs_follow(
+    State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
-    let _ = id;
-    Err(auth_error(StatusCode::NOT_FOUND, "no logs yet"))
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let last_event_id = crate::logs::sse::parse_last_event_id(&headers);
+    crate::logs::sse::sse_follow(state, id, last_event_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -392,8 +451,41 @@ async fn logs_follow(
 // ---------------------------------------------------------------------------
 
 async fn logs_full(
+    State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
-    let _ = id;
-    Err(auth_error(StatusCode::NOT_FOUND, "no logs yet"))
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorDetail>)> {
+    // Check build exists.
+    db::builds::get_build(&state.pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get build {id}: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "build not found"))?;
+
+    // Open the log file.
+    let log_path = state.config.log_dir.join(format!("builds/{id}.log"));
+    let file = tokio::fs::File::open(&log_path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            auth_error(StatusCode::NOT_FOUND, "no logs yet")
+        } else {
+            tracing::error!("failed to open log file for build {id}: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to open log file",
+            )
+        }
+    })?;
+
+    // Stream the file as application/octet-stream.
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/octet-stream",
+        )],
+        body,
+    ))
 }
