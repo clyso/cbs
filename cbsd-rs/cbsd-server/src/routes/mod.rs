@@ -12,4 +12,6 @@
 
 pub mod admin;
 pub mod auth;
+pub mod builds;
+pub mod components;
 pub mod permissions;

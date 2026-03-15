@@ -36,6 +36,10 @@ pub struct ServerConfig {
     #[serde(default = "default_log_dir")]
     pub log_dir: PathBuf,
 
+    /// Component definitions directory (contains dirs with cbs.component.yaml).
+    #[serde(default = "default_components_dir")]
+    pub components_dir: PathBuf,
+
     /// Secrets configuration.
     pub secrets: SecretsConfig,
 
@@ -177,6 +181,10 @@ fn default_db_path() -> String {
 
 fn default_log_dir() -> PathBuf {
     PathBuf::from("./logs")
+}
+
+fn default_components_dir() -> PathBuf {
+    PathBuf::from("./components")
 }
 
 fn default_log_level() -> String {

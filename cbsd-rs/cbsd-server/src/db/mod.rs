@@ -11,6 +11,7 @@
 // GNU Affero General Public License for more details.
 
 pub mod api_keys;
+pub mod builds;
 pub mod roles;
 pub mod tokens;
 pub mod users;
