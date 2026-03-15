@@ -100,11 +100,15 @@ async fn main() {
         .expect("failed to load OAuth secrets");
     tracing::info!("loaded OAuth configuration");
 
+    // Create API key LRU cache (capacity: 512)
+    let api_key_cache = auth::api_keys::ApiKeyCache::new(512);
+
     // Build app state and router
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
         oauth,
+        api_key_cache,
     };
     let router = app::build_router(state.clone(), session_layer);
 

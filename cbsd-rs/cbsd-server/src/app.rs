@@ -14,10 +14,12 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use sqlx::SqlitePool;
+use tokio::sync::Mutex;
 use tower_sessions::service::SignedCookie;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
+use crate::auth::api_keys::ApiKeyCache;
 use crate::auth::oauth::OAuthState;
 use crate::config::ServerConfig;
 use crate::routes;
@@ -28,6 +30,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<ServerConfig>,
     pub oauth: OAuthState,
+    pub api_key_cache: Arc<Mutex<ApiKeyCache>>,
 }
 
 /// Build the axum router.
