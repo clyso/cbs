@@ -27,8 +27,8 @@ use crate::db;
 /// Authenticated user extracted from the `Authorization: Bearer` header.
 ///
 /// Distinguishes PASETO tokens from API keys by the `cbsk_` prefix.
-/// For Commit 3, only PASETO tokens are supported. API key support is
-/// added in Commit 4.
+/// For now, only PASETO tokens are supported. API key support is added
+/// in the next commit.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub email: String,
@@ -75,7 +75,6 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // Distinguish API keys (cbsk_ prefix) from PASETO tokens
         if token_str.starts_with("cbsk_") {
-            // API key authentication — added in Commit 4
             return Err(auth_error(
                 StatusCode::UNAUTHORIZED,
                 "API key authentication not yet implemented",
@@ -101,7 +100,7 @@ impl FromRequestParts<AppState> for AuthUser {
             return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
         }
 
-        // Load user record and check active status in a single query
+        // Load user record and check active status
         let user = db::users::get_user(&state.pool, &payload.user)
             .await
             .map_err(|_| {

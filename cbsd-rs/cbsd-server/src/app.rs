@@ -14,21 +14,30 @@ use std::sync::Arc;
 
 use axum::{Json, Router, routing::get};
 use sqlx::SqlitePool;
+use tower_sessions::service::SignedCookie;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
+use crate::auth::oauth::OAuthState;
 use crate::config::ServerConfig;
+use crate::routes;
 
 /// Shared application state. Extended by subsequent commits.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<ServerConfig>,
+    pub oauth: OAuthState,
 }
 
 /// Build the axum router.
-pub fn build_router(state: AppState, session_layer: SessionManagerLayer<SqliteStore>) -> Router {
-    let api = Router::new().route("/health", get(health));
+pub fn build_router(
+    state: AppState,
+    session_layer: SessionManagerLayer<SqliteStore, SignedCookie>,
+) -> Router {
+    let api = Router::new()
+        .route("/health", get(health))
+        .nest("/auth", routes::auth::router());
 
     Router::new()
         .nest("/api", api)

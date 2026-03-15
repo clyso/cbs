@@ -10,6 +10,4 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-pub mod extractors;
-pub mod oauth;
-pub mod paseto;
+pub mod auth;
