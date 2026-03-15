@@ -21,12 +21,17 @@ use serde::Serialize;
 use crate::ws::liveness::{ConnectionId, WorkerState};
 
 /// A build that has been dispatched to a worker and is currently active.
+#[allow(dead_code)]
 pub struct ActiveBuild {
     pub build_id: i64,
     pub connection_id: ConnectionId,
     pub dispatched_at: tokio::time::Instant,
     pub trace_id: String,
     pub descriptor: BuildDescriptor,
+    pub priority: Priority,
+    /// Cancel token for the dispatch ack timeout. Cancelled when
+    /// `build_accepted` is received.
+    pub ack_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Summary information about a connected worker (returned by `GET /workers`).

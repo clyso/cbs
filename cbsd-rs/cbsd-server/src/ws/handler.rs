@@ -17,9 +17,10 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
-use cbsd_proto::ws::{ServerMessage, WorkerMessage};
+use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage};
 
 use crate::app::AppState;
+use crate::ws::dispatch;
 use crate::ws::liveness::WorkerState;
 
 /// HTTP upgrade handler for `GET /ws/worker`.
@@ -159,6 +160,15 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
         );
     }
 
+    // Step 3b: Register an outbound message channel for this worker.
+    // The dispatch engine sends messages via this channel; the forwarding
+    // task below reads from it and writes to the actual WebSocket.
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    {
+        let mut senders = state.worker_senders.lock().await;
+        senders.insert(connection_id.clone(), outbound_tx);
+    }
+
     // Step 4: Send welcome message.
     let grace_period_secs = state.config.timeouts.liveness_grace_period_secs;
     if let Err(e) = send_json(
@@ -179,53 +189,100 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
         return;
     }
 
-    // Step 5: Message loop.
-    use futures_util::StreamExt;
-    while let Some(result) = receiver.next().await {
-        let msg = match result {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!(
-                    connection_id = %connection_id,
-                    worker_id = %worker_id,
-                    "ws receive error: {e}"
+    // Step 4b: Try to dispatch a queued build to this newly connected worker.
+    {
+        let state_clone = state.clone();
+        let cid = connection_id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = dispatch::try_dispatch(&state_clone).await {
+                tracing::debug!(
+                    connection_id = %cid,
+                    "post-connect dispatch: {e}"
                 );
+            }
+        });
+    }
+
+    // Step 5: Message loop.
+    //
+    // We run two concurrent tasks:
+    // - Forwarding: reads from outbound_rx and writes to the WebSocket sender.
+    // - Receiving: reads from the WebSocket receiver and dispatches messages.
+    //
+    // When either task ends, we cancel the other.
+    use futures_util::{SinkExt, StreamExt};
+
+    let forward_task = async {
+        while let Some(msg) = outbound_rx.recv().await {
+            if sender.send(msg).await.is_err() {
                 break;
             }
-        };
+        }
+    };
 
-        match msg {
-            Message::Text(text) => {
-                let parsed: Result<WorkerMessage, _> = serde_json::from_str(&text);
-                match parsed {
-                    Ok(worker_msg) => {
-                        handle_worker_message(
-                            &state,
-                            &connection_id,
-                            &worker_id,
-                            worker_msg,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            connection_id = %connection_id,
-                            worker_id = %worker_id,
-                            "failed to parse worker message: {e}"
-                        );
+    let receive_task = async {
+        while let Some(result) = receiver.next().await {
+            let msg = match result {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        connection_id = %connection_id,
+                        worker_id = %worker_id,
+                        "ws receive error: {e}"
+                    );
+                    break;
+                }
+            };
+
+            match msg {
+                Message::Text(text) => {
+                    let parsed: Result<WorkerMessage, _> = serde_json::from_str(&text);
+                    match parsed {
+                        Ok(worker_msg) => {
+                            handle_worker_message(
+                                &state,
+                                &connection_id,
+                                &worker_id,
+                                worker_msg,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                connection_id = %connection_id,
+                                worker_id = %worker_id,
+                                "failed to parse worker message: {e}"
+                            );
+                        }
                     }
                 }
+                Message::Close(_) => {
+                    tracing::info!(
+                        connection_id = %connection_id,
+                        worker_id = %worker_id,
+                        "ws close frame received"
+                    );
+                    break;
+                }
+                // Ping/Pong handled automatically by axum; binary frames ignored.
+                _ => {}
             }
-            Message::Close(_) => {
-                tracing::info!(
-                    connection_id = %connection_id,
-                    worker_id = %worker_id,
-                    "ws close frame received"
-                );
-                break;
-            }
-            // Ping/Pong handled automatically by axum; binary frames ignored.
-            _ => {}
+        }
+    };
+
+    // Run both tasks concurrently; when one finishes the other is dropped.
+    tokio::select! {
+        () = forward_task => {
+            tracing::debug!(
+                connection_id = %connection_id,
+                "outbound channel closed"
+            );
+        }
+        () = receive_task => {
+            tracing::debug!(
+                connection_id = %connection_id,
+                "inbound stream ended"
+            );
         }
     }
 
@@ -293,20 +350,10 @@ async fn handle_worker_message(
             );
         }
         WorkerMessage::BuildAccepted { build_id } => {
-            tracing::info!(
-                connection_id = %connection_id,
-                worker_id = %worker_id,
-                build_id = %build_id,
-                "build accepted (dispatch handling deferred to Commit 8a)"
-            );
+            dispatch::handle_build_accepted(state, connection_id, build_id.0).await;
         }
         WorkerMessage::BuildStarted { build_id } => {
-            tracing::info!(
-                connection_id = %connection_id,
-                worker_id = %worker_id,
-                build_id = %build_id,
-                "build started"
-            );
+            dispatch::handle_build_started(state, build_id.0).await;
         }
         WorkerMessage::BuildOutput {
             build_id,
@@ -327,26 +374,25 @@ async fn handle_worker_message(
             status,
             ref error,
         } => {
-            tracing::info!(
-                connection_id = %connection_id,
-                worker_id = %worker_id,
-                build_id = %build_id,
-                status = ?status,
-                error = ?error,
-                "build finished"
-            );
+            let status_str = match status {
+                BuildFinishedStatus::Success => "success",
+                BuildFinishedStatus::Failure => "failure",
+                BuildFinishedStatus::Revoked => "revoked",
+            };
+            dispatch::handle_build_finished(
+                state,
+                connection_id,
+                build_id.0,
+                status_str,
+                error.as_deref(),
+            )
+            .await;
         }
         WorkerMessage::BuildRejected {
             build_id,
             ref reason,
         } => {
-            tracing::warn!(
-                connection_id = %connection_id,
-                worker_id = %worker_id,
-                build_id = %build_id,
-                reason = %reason,
-                "build rejected"
-            );
+            dispatch::handle_build_rejected(state, connection_id, build_id.0, reason).await;
         }
         WorkerMessage::WorkerStatus { state: ws, build_id } => {
             tracing::info!(
@@ -385,6 +431,12 @@ async fn cleanup_worker(
     worker_id: &str,
     is_stopping: bool,
 ) {
+    // Remove the outbound sender channel.
+    {
+        let mut senders = state.worker_senders.lock().await;
+        senders.remove(connection_id);
+    }
+
     let mut queue = state.queue.lock().await;
     if is_stopping {
         tracing::info!(
