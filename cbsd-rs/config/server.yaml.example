@@ -1,0 +1,138 @@
+# CBS build service daemon (cbsd-rs) — server configuration example
+# Copy to server.yaml and fill in your values before starting the server.
+#
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# Address and port to listen on.
+# Default: 0.0.0.0:8080
+listen_addr: "0.0.0.0:8080"
+
+# TLS certificate and private key paths (optional).
+# Omit both to run plain HTTP (suitable for reverse-proxy deployments).
+# tls_cert_path: /cbs/config/server.crt
+# tls_key_path:  /cbs/config/server.key
+
+# SQLite database file path.
+# Default: cbsd.db (relative to working directory)
+db_path: /cbs/data/cbsd.db
+
+# Directory where per-build log files are stored.
+# Default: ./logs
+log_dir: /cbs/logs
+
+# Directory containing component definitions.
+# Each subdirectory must contain a cbs.component.yaml file.
+# Default: ./components
+components_dir: /cbs/components
+
+# --------------------------------------------------------------------------
+# Secrets
+# --------------------------------------------------------------------------
+
+secrets:
+  # 64-character hex key used for PASETO token signing and for deriving the
+  # OAuth session signing key via HKDF-SHA256. Must remain stable across
+  # restarts — rotating it invalidates all issued tokens and sessions.
+  #
+  # Generate with: openssl rand -hex 32
+  token_secret_key: "REPLACE_WITH_64_HEX_CHARS"
+
+  # Maximum allowed token TTL in seconds. Omit (or set to null) to allow
+  # tokens with unlimited lifetimes.
+  # max_token_ttl_seconds: 86400
+
+# --------------------------------------------------------------------------
+# Google OAuth 2.0
+# --------------------------------------------------------------------------
+
+oauth:
+  # Path to the Google OAuth 2.0 client secrets JSON file.
+  # Download from: Google Cloud Console → APIs & Services → Credentials
+  # → OAuth 2.0 Client ID → Download JSON.
+  secrets_file: /cbs/config/oauth2-secrets.json
+
+  # Restrict login to users whose email domain matches one of these values.
+  # At least one of allowed_domains or allow_any_google_account must be set.
+  allowed_domains:
+    - example.com
+
+  # Set to true to allow any Google account to authenticate.
+  # Only appropriate for fully internal or isolated deployments.
+  # allow_any_google_account: false
+
+# --------------------------------------------------------------------------
+# First-startup database seeding
+#
+# Runs exactly once when the database is empty (fresh install).
+# After the first successful startup, this section has no effect.
+# --------------------------------------------------------------------------
+
+seed:
+  # Email address of the initial administrator.
+  # Must match the user's Google account email (used for OAuth login).
+  # The admin user is assigned the built-in 'admin' role.
+  seed_admin: "admin@example.com"
+
+  # Worker API keys to provision at first startup.
+  # The plaintext key (format: cbsk_<hex>) is printed to stdout immediately
+  # after the transaction commits — capture it from the startup log.
+  # It cannot be recovered after that point.
+  seed_worker_api_keys:
+    - name: worker-x86-01
+    # - name: worker-arm-01
+
+# --------------------------------------------------------------------------
+# Timeouts  (all values in seconds — defaults shown)
+# --------------------------------------------------------------------------
+
+timeouts:
+  # How long to wait for build_accepted after dispatching build_new to a
+  # worker. If the worker does not acknowledge within this window, the build
+  # is re-queued at the front of its priority lane.
+  dispatch_ack_timeout_secs: 15
+
+  # How long after a worker WebSocket disconnects before it is declared dead
+  # and its active build is re-queued. Must be greater than
+  # reconnect_backoff_ceiling_secs so that a worker reconnecting at maximum
+  # backoff is not declared dead before it has a chance to reconnect.
+  liveness_grace_period_secs: 90
+
+  # Maximum ceiling for worker reconnection exponential backoff.
+  # Must be less than liveness_grace_period_secs.
+  reconnect_backoff_ceiling_secs: 30
+
+  # How long to wait for build_finished after sending build_revoke during
+  # drain shutdown. Builds that do not respond in time are marked as failures.
+  revoke_ack_timeout_secs: 30
+
+  # Seconds between SIGTERM and SIGKILL escalation when terminating a build
+  # subprocess on the worker side. Sent to the worker at dispatch time.
+  sigkill_escalation_timeout_secs: 15
+
+# --------------------------------------------------------------------------
+# Log retention
+# --------------------------------------------------------------------------
+
+log_retention:
+  # Number of days to retain per-build log files on disk.
+  # The GC task runs every 24 hours (first tick delayed by 24h after startup).
+  # Default: 30
+  log_retention_days: 30
+
+# --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
+
+logging:
+  # Log level for structured output: trace, debug, info, warn, error.
+  # Can be overridden at runtime with the RUST_LOG environment variable.
+  # Default: info
+  level: info
+
+  # Optional path to write logs to a file in addition to stdout.
+  # log_file: /cbs/logs/server.log

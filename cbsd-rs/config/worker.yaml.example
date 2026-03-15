@@ -1,0 +1,68 @@
+# CBS build service daemon (cbsd-rs) — worker configuration example
+# Copy to worker.yaml and fill in your values before starting the worker.
+#
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# WebSocket endpoint of the cbsd-rs server.
+#
+# Plain HTTP server:
+#   ws://cbsd.example.com:8080/api/ws/worker
+#
+# TLS-enabled server:
+#   wss://cbsd.example.com:8443/api/ws/worker
+#
+# Within a podman-compose deployment, use the server's service name:
+#   ws://server:8080/api/ws/worker
+server_url: "ws://server:8080/api/ws/worker"
+
+# API key issued by the server during first-startup seeding.
+# Format: cbsk_<64 hex chars>
+# Obtain from the server's stdout output on first startup.
+api_key: "cbsk_REPLACE_WITH_YOUR_API_KEY"
+
+# Human-readable label for this worker instance.
+# Displayed in the build UI and structured log output.
+# Use something that identifies the host and architecture, e.g.:
+#   build-host-01, arm-builder-02
+worker_id: "build-host-01"
+
+# Build architecture served by this worker.
+# Valid values: x86_64, aarch64
+arch: "x86_64"
+
+# Path to a custom TLS CA bundle (PEM format).
+# Required when the server uses a self-signed certificate or an internal CA.
+# Omit for servers using a publicly trusted certificate.
+# tls_ca_bundle_path: /cbs/config/internal-ca.pem
+
+# Path to the cbscore-wrapper.py script that bridges the worker to the
+# cbscore Python build library. Defaults to cbscore-wrapper.py located
+# in the same directory as the cbsd-worker binary.
+cbscore_wrapper_path: /opt/cbsd-rs/cbscore-wrapper.py
+
+# Path to the cbscore configuration file (cbs-build.config.yaml).
+# This is the same config file used by cbsbuild CLI.
+cbscore_config_path: /cbs/config/cbs-build.config.yaml
+
+# Maximum build duration in seconds before the build is forcibly terminated.
+# Omit to allow unlimited build time.
+# build_timeout_secs: 7200
+
+# Temporary directory for staging component tarballs before unpacking.
+# Defaults to the system temporary directory.
+# component_temp_dir: /cbs/scratch/components
+
+# Seconds between SIGTERM and SIGKILL escalation when terminating a build
+# subprocess. The server sends a suggested value at dispatch time; this
+# setting overrides it locally on the worker.
+# sigkill_escalation_timeout_secs: 15
+
+# Maximum ceiling for reconnection exponential backoff in seconds.
+# Must be less than the server's liveness_grace_period_secs (default: 90).
+# Default: 30
+# reconnect_backoff_ceiling_secs: 30
