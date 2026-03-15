@@ -49,6 +49,10 @@ pub struct WorkerConfig {
     #[serde(default)]
     pub component_temp_dir: Option<PathBuf>,
 
+    /// Seconds before SIGTERM → SIGKILL escalation on build subprocess.
+    #[serde(default)]
+    pub sigkill_escalation_timeout_secs: Option<u64>,
+
     /// Ceiling for reconnection backoff in seconds (default: 30).
     #[serde(default)]
     pub reconnect_backoff_ceiling_secs: Option<u64>,
