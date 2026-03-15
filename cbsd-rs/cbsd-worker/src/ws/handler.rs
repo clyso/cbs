@@ -10,19 +10,33 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite;
 
-use cbsd_proto::ws::{ServerMessage, WorkerMessage, WorkerReportedState};
+use cbsd_proto::build::BuildId;
+use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage, WorkerReportedState};
 
+use crate::build::{component, executor, output};
 use crate::config::WorkerConfig;
 use crate::signal::ShutdownState;
 use crate::ws::connection::WsStream;
 
 /// Current protocol version.
 const PROTOCOL_VERSION: u32 = 1;
+
+/// Channel capacity for the output message sender.
+const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+
+/// State tracking for an active build.
+struct ActiveBuild {
+    build_id: BuildId,
+    executor: executor::BuildExecutor,
+    component_dir: PathBuf,
+}
 
 /// Run a single WebSocket connection: send Hello, wait for Welcome, then
 /// enter the message loop.
@@ -119,7 +133,7 @@ pub async fn run_connection(
     };
 
     // --- Report status on reconnect (if mid-build) ---
-    // TODO(commit-11): Check if there's an active build in executor state
+    // TODO: Check if there's an active build in executor state
     // and send WorkerStatus { state: Building, build_id }.
     // For now, report idle.
     let status = WorkerMessage::WorkerStatus {
@@ -135,6 +149,12 @@ pub async fn run_connection(
 
     // --- Message loop ---
     tracing::info!(%connection_id, "entering message loop");
+
+    // Active build state — only one build at a time.
+    let mut active_build: Option<ActiveBuild> = None;
+
+    // Channel for build output messages from the background streaming task.
+    let (output_tx, mut output_rx) = mpsc::channel::<WorkerMessage>(OUTPUT_CHANNEL_CAPACITY);
 
     loop {
         tokio::select! {
@@ -164,22 +184,225 @@ pub async fn run_connection(
                 };
 
                 match server_msg {
-                    ServerMessage::BuildNew { build_id, trace_id, priority, .. } => {
-                        // TODO(commit-11): Wire up executor to accept and run the build.
+                    ServerMessage::BuildNew {
+                        build_id,
+                        trace_id,
+                        priority,
+                        descriptor,
+                        component_sha256,
+                    } => {
                         tracing::info!(
                             %build_id,
                             %trace_id,
                             ?priority,
-                            "build dispatch received (executor not yet wired)"
+                            "build dispatch received"
                         );
+
+                        // If already building, reject.
+                        if active_build.is_some() {
+                            tracing::warn!(%build_id, "rejecting build: already building");
+                            send_msg(
+                                &mut sender,
+                                &WorkerMessage::BuildRejected {
+                                    build_id,
+                                    reason: "worker is busy".to_string(),
+                                },
+                            ).await?;
+                            continue;
+                        }
+
+                        // Read the next binary frame (component tarball).
+                        let tarball = match read_binary_frame(&mut receiver).await {
+                            Ok(data) => data,
+                            Err(err) => {
+                                tracing::error!(
+                                    %build_id,
+                                    %err,
+                                    "failed to read component tarball"
+                                );
+                                send_msg(
+                                    &mut sender,
+                                    &WorkerMessage::BuildRejected {
+                                        build_id,
+                                        reason: format!(
+                                            "failed to read component tarball: {err}"
+                                        ),
+                                    },
+                                ).await?;
+                                continue;
+                            }
+                        };
+
+                        // Validate + unpack component.
+                        let temp_dir = config
+                            .component_temp_dir
+                            .clone()
+                            .unwrap_or_else(|| std::env::temp_dir().join("cbsd-components"));
+
+                        if let Err(err) = std::fs::create_dir_all(&temp_dir) {
+                            tracing::error!(
+                                %build_id,
+                                path = %temp_dir.display(),
+                                %err,
+                                "failed to create component temp dir"
+                            );
+                            send_msg(
+                                &mut sender,
+                                &WorkerMessage::BuildRejected {
+                                    build_id,
+                                    reason: format!(
+                                        "failed to create temp directory: {err}"
+                                    ),
+                                },
+                            ).await?;
+                            continue;
+                        }
+
+                        let component_dir = match component::validate_and_unpack(
+                            &tarball,
+                            &component_sha256,
+                            &temp_dir,
+                        ) {
+                            Ok(dir) => dir,
+                            Err(err) => {
+                                tracing::error!(
+                                    %build_id,
+                                    %err,
+                                    "component validation failed"
+                                );
+                                send_msg(
+                                    &mut sender,
+                                    &WorkerMessage::BuildRejected {
+                                        build_id,
+                                        reason: "component integrity check failed".to_string(),
+                                    },
+                                ).await?;
+                                continue;
+                            }
+                        };
+
+                        // Accept the build.
+                        send_msg(
+                            &mut sender,
+                            &WorkerMessage::BuildAccepted { build_id },
+                        ).await?;
+                        tracing::info!(%build_id, "build accepted");
+
+                        // Spawn the build executor.
+                        let mut exec = match executor::spawn_build(
+                            config,
+                            build_id,
+                            &descriptor,
+                            &component_dir,
+                            &trace_id,
+                        ).await {
+                            Ok(e) => e,
+                            Err(err) => {
+                                tracing::error!(%build_id, %err, "failed to spawn build");
+                                component::cleanup(&component_dir);
+                                send_msg(
+                                    &mut sender,
+                                    &WorkerMessage::BuildFinished {
+                                        build_id,
+                                        status: BuildFinishedStatus::Failure,
+                                        error: Some(format!("spawn failed: {err}")),
+                                    },
+                                ).await?;
+                                continue;
+                            }
+                        };
+
+                        // Send BuildStarted.
+                        send_msg(
+                            &mut sender,
+                            &WorkerMessage::BuildStarted { build_id },
+                        ).await?;
+                        tracing::info!(%build_id, "build started");
+
+                        // Take stdout for the output streamer.
+                        let stdout = exec.child_mut().stdout.take();
+
+                        // Spawn background output streaming task.
+                        let bg_tx = output_tx.clone();
+                        tokio::spawn(async move {
+                            if let Some(stdout) = stdout {
+                                match output::stream_output(stdout, build_id, &bg_tx).await {
+                                    Ok((status, error)) => {
+                                        let _ = bg_tx.send(WorkerMessage::BuildFinished {
+                                            build_id,
+                                            status,
+                                            error,
+                                        }).await;
+                                    }
+                                    Err(err) => {
+                                        tracing::error!(
+                                            %build_id,
+                                            %err,
+                                            "output streaming failed"
+                                        );
+                                        let _ = bg_tx.send(WorkerMessage::BuildFinished {
+                                            build_id,
+                                            status: BuildFinishedStatus::Failure,
+                                            error: Some(format!("output streaming error: {err}")),
+                                        }).await;
+                                    }
+                                }
+                            } else {
+                                tracing::error!(
+                                    %build_id,
+                                    "no stdout on build subprocess"
+                                );
+                                let _ = bg_tx.send(WorkerMessage::BuildFinished {
+                                    build_id,
+                                    status: BuildFinishedStatus::Failure,
+                                    error: Some("no stdout on subprocess".to_string()),
+                                }).await;
+                            }
+                        });
+
+                        active_build = Some(ActiveBuild {
+                            build_id,
+                            executor: exec,
+                            component_dir,
+                        });
                     }
+
                     ServerMessage::BuildRevoke { build_id } => {
-                        // TODO(commit-11): Wire up executor to cancel the build.
-                        tracing::info!(
-                            %build_id,
-                            "build revoke received (executor not yet wired)"
-                        );
+                        tracing::info!(%build_id, "build revoke received");
+
+                        if let Some(ref ab) = active_build {
+                            if ab.build_id == build_id {
+                                tracing::info!(
+                                    %build_id,
+                                    "killing active build process"
+                                );
+                                ab.executor.kill();
+                                // The output streamer will detect the exit and
+                                // send BuildFinished(revoked) via the channel.
+                            } else {
+                                tracing::warn!(
+                                    %build_id,
+                                    active = %ab.build_id,
+                                    "revoke for non-active build, ignoring"
+                                );
+                            }
+                        } else {
+                            // No active build — pre-accept revoke.
+                            tracing::info!(
+                                %build_id,
+                                "no active build, sending immediate BuildFinished(revoked)"
+                            );
+                            send_msg(
+                                &mut sender,
+                                &WorkerMessage::BuildFinished {
+                                    build_id,
+                                    status: BuildFinishedStatus::Revoked,
+                                    error: None,
+                                },
+                            ).await?;
+                        }
                     }
+
                     ServerMessage::Welcome { .. } => {
                         tracing::warn!("unexpected Welcome after handshake, ignoring");
                     }
@@ -189,6 +412,28 @@ pub async fn run_connection(
                     }
                 }
             }
+
+            // Forward output messages from the background streaming task.
+            Some(output_msg) = output_rx.recv() => {
+                let is_finished = matches!(output_msg, WorkerMessage::BuildFinished { .. });
+
+                send_msg(&mut sender, &output_msg).await?;
+
+                if is_finished {
+                    // Clean up the active build.
+                    if let Some(mut ab) = active_build.take() {
+                        // Wait for the subprocess to fully exit.
+                        let exit_code = ab.executor.wait().await;
+                        tracing::info!(
+                            build_id = %ab.build_id,
+                            ?exit_code,
+                            "build subprocess exited"
+                        );
+                        component::cleanup(&ab.component_dir);
+                    }
+                }
+            }
+
             () = state.notify.notified(), if !state.is_stopping() => {
                 // Shutdown requested while in message loop.
                 tracing::info!("shutdown requested, sending WorkerStopping");
@@ -199,7 +444,57 @@ pub async fn run_connection(
                 if let Ok(json) = serde_json::to_string(&stopping) {
                     let _ = sender.send(tungstenite::Message::Text(json)).await;
                 }
+                // Kill any active build before returning.
+                if let Some(ref ab) = active_build {
+                    ab.executor.kill();
+                }
                 return Ok(());
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Send a `WorkerMessage` as a JSON text frame.
+async fn send_msg<S>(sender: &mut S, msg: &WorkerMessage) -> Result<(), HandlerError>
+where
+    S: SinkExt<tungstenite::Message, Error = tungstenite::Error> + Unpin,
+{
+    let json = serde_json::to_string(msg).map_err(HandlerError::Serialize)?;
+    sender
+        .send(tungstenite::Message::Text(json))
+        .await
+        .map_err(HandlerError::Send)
+}
+
+/// Read the next binary frame from the WebSocket stream, skipping pings/pongs.
+///
+/// Returns the binary data, or an error if a text/close frame is received
+/// instead.
+async fn read_binary_frame<S>(receiver: &mut S) -> Result<Vec<u8>, HandlerError>
+where
+    S: StreamExt<Item = Result<tungstenite::Message, tungstenite::Error>> + Unpin,
+{
+    loop {
+        let msg = receiver
+            .next()
+            .await
+            .ok_or(HandlerError::ConnectionClosed)?
+            .map_err(HandlerError::Receive)?;
+
+        match msg {
+            tungstenite::Message::Binary(data) => return Ok(data),
+            tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_) => continue,
+            tungstenite::Message::Close(_) => return Err(HandlerError::ConnectionClosed),
+            other => {
+                tracing::warn!(
+                    ?other,
+                    "expected binary frame for component tarball, got non-binary"
+                );
+                return Err(HandlerError::UnexpectedFrame);
             }
         }
     }
@@ -218,6 +513,7 @@ pub enum HandlerError {
     Receive(tungstenite::Error),
     ConnectionClosed,
     ServerError(String),
+    UnexpectedFrame,
 }
 
 impl std::fmt::Display for HandlerError {
@@ -229,6 +525,7 @@ impl std::fmt::Display for HandlerError {
             Self::Receive(err) => write!(f, "receive error: {err}"),
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::ServerError(reason) => write!(f, "server error: {reason}"),
+            Self::UnexpectedFrame => write!(f, "unexpected frame type"),
         }
     }
 }
