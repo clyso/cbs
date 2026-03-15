@@ -17,6 +17,7 @@ mod config;
 mod db;
 mod queue;
 mod routes;
+mod ws;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

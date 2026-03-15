@@ -12,10 +12,32 @@
 
 //! In-memory build queue with three priority lanes.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use cbsd_proto::{BuildDescriptor, BuildId, Priority};
+use cbsd_proto::{Arch, BuildDescriptor, BuildId, Priority};
+use serde::Serialize;
+
+use crate::ws::liveness::{ConnectionId, WorkerState};
+
+/// A build that has been dispatched to a worker and is currently active.
+pub struct ActiveBuild {
+    pub build_id: i64,
+    pub connection_id: ConnectionId,
+    pub dispatched_at: tokio::time::Instant,
+    pub trace_id: String,
+    pub descriptor: BuildDescriptor,
+}
+
+/// Summary information about a connected worker (returned by `GET /workers`).
+#[derive(Debug, Serialize)]
+pub struct WorkerInfo {
+    pub connection_id: ConnectionId,
+    pub worker_id: String,
+    pub arch: Arch,
+    pub state_name: String,
+    pub current_build_id: Option<i64>,
+}
 
 /// A build waiting in the queue.
 #[allow(dead_code)]
@@ -29,11 +51,15 @@ pub struct QueuedBuild {
 
 /// Three-lane priority build queue: high > normal > low.
 ///
-/// The `active` map and `workers` registry are added in Phase 4 Commit 7.
+/// Also tracks active builds and connected workers.
 pub struct BuildQueue {
     high: VecDeque<QueuedBuild>,
     normal: VecDeque<QueuedBuild>,
     low: VecDeque<QueuedBuild>,
+    /// Builds currently dispatched to workers, keyed by build ID.
+    pub active: HashMap<i64, ActiveBuild>,
+    /// Connected workers, keyed by server-assigned connection UUID.
+    pub workers: HashMap<ConnectionId, WorkerState>,
 }
 
 /// Thread-safe handle to the build queue.
@@ -46,6 +72,8 @@ impl BuildQueue {
             high: VecDeque::new(),
             normal: VecDeque::new(),
             low: VecDeque::new(),
+            active: HashMap::new(),
+            workers: HashMap::new(),
         }
     }
 
@@ -102,6 +130,55 @@ impl BuildQueue {
             Priority::Normal => &mut self.normal,
             Priority::Low => &mut self.low,
         }
+    }
+
+    // -- Worker management --
+
+    /// Register a worker with the given connection ID and state.
+    pub fn register_worker(&mut self, connection_id: ConnectionId, state: WorkerState) {
+        self.workers.insert(connection_id, state);
+    }
+
+    /// Remove a worker by connection ID. Returns the previous state if present.
+    #[allow(dead_code)]
+    pub fn remove_worker(&mut self, connection_id: &str) -> Option<WorkerState> {
+        self.workers.remove(connection_id)
+    }
+
+    /// Look up a worker by connection ID.
+    pub fn get_worker(&self, connection_id: &str) -> Option<&WorkerState> {
+        self.workers.get(connection_id)
+    }
+
+    /// Replace the state of an existing worker.
+    pub fn set_worker_state(&mut self, connection_id: &str, state: WorkerState) {
+        if let Some(entry) = self.workers.get_mut(connection_id) {
+            *entry = state;
+        }
+    }
+
+    /// Return summary information for all workers (for `GET /api/workers`).
+    pub fn connected_workers(&self) -> Vec<WorkerInfo> {
+        self.workers
+            .iter()
+            .filter_map(|(cid, state)| {
+                let worker_id = state.worker_id()?.to_string();
+                let arch = state.arch()?;
+                // Look up whether this worker has an active build
+                let current_build_id = self
+                    .active
+                    .values()
+                    .find(|ab| ab.connection_id == *cid)
+                    .map(|ab| ab.build_id);
+                Some(WorkerInfo {
+                    connection_id: cid.clone(),
+                    worker_id,
+                    arch,
+                    state_name: state.state_name().to_string(),
+                    current_build_id,
+                })
+            })
+            .collect()
     }
 }
 

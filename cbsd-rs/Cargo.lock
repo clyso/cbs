@@ -285,6 +285,7 @@ dependencies = [
  "cbsd-proto",
  "chrono",
  "clap",
+ "futures-util",
  "hkdf",
  "lru",
  "pasetors",
