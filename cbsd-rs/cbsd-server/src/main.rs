@@ -131,6 +131,8 @@ async fn main() {
     let worker_senders = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let log_watchers = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
+    let sweep_handle = Arc::new(tokio::sync::Mutex::new(None));
+
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
@@ -140,7 +142,17 @@ async fn main() {
         components: loaded_components,
         worker_senders,
         log_watchers,
+        sweep_handle: sweep_handle.clone(),
     };
+
+    // Start the periodic re-dispatch sweep.
+    let handle = ws::dispatch::start_periodic_sweep(&state);
+    {
+        let mut guard = sweep_handle.lock().await;
+        *guard = Some(handle);
+    }
+    tracing::info!("periodic dispatch sweep started (30s interval)");
+
     let router = app::build_router(state.clone(), session_layer);
 
     // Start server

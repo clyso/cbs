@@ -52,6 +52,8 @@ pub struct AppState {
     pub worker_senders: WorkerSenders,
     /// Build log file change watchers (notifies SSE/follow endpoints).
     pub log_watchers: LogWatchers,
+    /// Handle for the periodic re-dispatch sweep task.
+    pub sweep_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Build the axum router.

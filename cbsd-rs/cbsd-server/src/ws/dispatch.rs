@@ -474,6 +474,165 @@ pub async fn handle_build_rejected(
     }
 }
 
+/// Send a `BuildRevoke` message to the worker running a build, transition the
+/// build to "revoking" in the DB, and spawn a timeout task that will mark the
+/// build REVOKED unilaterally if the worker does not acknowledge in time.
+pub async fn send_build_revoke(state: &AppState, build_id: i64) -> Result<(), DispatchError> {
+    // Find the connection that owns this build.
+    let connection_id = {
+        let queue = state.queue.lock().await;
+        queue
+            .active
+            .get(&build_id)
+            .map(|ab| ab.connection_id.clone())
+    };
+
+    let connection_id = connection_id.ok_or_else(|| {
+        DispatchError::Send(format!("build {build_id} not in active map"))
+    })?;
+
+    // Transition DB to revoking.
+    if let Err(e) = db::builds::set_build_revoking(&state.pool, build_id).await {
+        tracing::error!(
+            build_id = build_id,
+            "failed to set build state to revoking: {e}"
+        );
+        return Err(DispatchError::Database(e));
+    }
+
+    // Send BuildRevoke to the worker.
+    let msg = ServerMessage::BuildRevoke {
+        build_id: BuildId(build_id),
+    };
+    let json_text = serde_json::to_string(&msg).expect("ServerMessage serialization cannot fail");
+
+    {
+        let senders = state.worker_senders.lock().await;
+        if let Some(tx) = senders.get(&connection_id) {
+            if let Err(e) = tx.send(Message::Text(json_text.into())) {
+                tracing::warn!(
+                    build_id = build_id,
+                    connection_id = %connection_id,
+                    "failed to send build_revoke to worker: {e}"
+                );
+            }
+        } else {
+            tracing::warn!(
+                build_id = build_id,
+                connection_id = %connection_id,
+                "no sender for worker — revoke timeout will handle it"
+            );
+        }
+    }
+
+    tracing::info!(
+        build_id = build_id,
+        connection_id = %connection_id,
+        "build_revoke sent — starting ack timeout"
+    );
+
+    // Spawn revoke ack timeout.
+    let timeout_secs = state.config.timeouts.revoke_ack_timeout_secs;
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(timeout_secs)).await;
+        handle_revoke_timeout(&state_clone, build_id).await;
+    });
+
+    Ok(())
+}
+
+/// Called when the revoke ack timeout fires. If the build is still in
+/// "revoking" state, marks it REVOKED unilaterally.
+pub async fn handle_revoke_timeout(state: &AppState, build_id: i64) {
+    // Check current DB state.
+    let build = match db::builds::get_build(&state.pool, build_id).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(build_id = build_id, "revoke timeout DB lookup failed: {e}");
+            return;
+        }
+    };
+
+    if build.state != "revoking" {
+        // Already finished (worker acked in time, or something else happened).
+        return;
+    }
+
+    tracing::warn!(
+        build_id = build_id,
+        "revoke ack timeout — marking REVOKED unilaterally"
+    );
+
+    // Mark finished as revoked.
+    if let Err(e) =
+        db::builds::set_build_finished(&state.pool, build_id, "revoked", Some("revoke ack timeout"))
+            .await
+    {
+        tracing::error!(build_id = build_id, "failed to mark build revoked: {e}");
+    }
+
+    // Mark log as finished.
+    if let Err(e) = db::builds::set_build_log_finished(&state.pool, build_id).await {
+        tracing::error!(
+            build_id = build_id,
+            "failed to mark build log finished: {e}"
+        );
+    }
+
+    // Remove from active builds and log watchers.
+    {
+        let mut queue = state.queue.lock().await;
+        queue.active.remove(&build_id);
+    }
+    {
+        let mut watchers = state.log_watchers.lock().await;
+        watchers.remove(&build_id);
+    }
+}
+
+/// Start the periodic re-dispatch sweep. Returns a `JoinHandle` that can be
+/// stored for clean shutdown.
+///
+/// Every 30 seconds, if there are pending builds and idle workers, calls
+/// `try_dispatch` until either runs out.
+pub fn start_periodic_sweep(state: &AppState) -> tokio::task::JoinHandle<()> {
+    let state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+        // First tick fires immediately; skip it.
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            // Check if there is work to do before attempting dispatch.
+            let should_dispatch = {
+                let queue = state.queue.lock().await;
+                queue.has_pending() && queue.has_idle_workers()
+            };
+
+            if should_dispatch {
+                tracing::debug!("periodic sweep: pending builds + idle workers — dispatching");
+                loop {
+                    match try_dispatch(&state).await {
+                        Ok(()) => {
+                            // Dispatched one; try again.
+                            continue;
+                        }
+                        Err(DispatchError::NothingToDispatch) => break,
+                        Err(e) => {
+                            tracing::warn!("periodic sweep dispatch error: {e}");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// Collected info from the queue lock needed for tarball packing and sending.
 struct DispatchInfo {
     build_id: BuildId,
