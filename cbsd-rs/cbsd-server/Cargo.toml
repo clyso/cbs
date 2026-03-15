@@ -8,7 +8,7 @@ description = "CBS build service daemon — server binary"
 
 [dependencies]
 cbsd-proto = { path = "../cbsd-proto" }
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
 axum = { version = "0.7", features = ["ws"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }

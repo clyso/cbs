@@ -19,6 +19,7 @@ use axum::{Json, RequestPartsExt};
 use axum_extra::TypedHeader;
 use axum_extra::headers::Authorization;
 use axum_extra::headers::authorization::Bearer;
+use sqlx::SqlitePool;
 
 use crate::app::AppState;
 use crate::auth::paseto;
@@ -27,8 +28,6 @@ use crate::db;
 /// Authenticated user extracted from the `Authorization: Bearer` header.
 ///
 /// Distinguishes PASETO tokens from API keys by the `cbsk_` prefix.
-/// For now, only PASETO tokens are supported. API key support is added
-/// in the next commit.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub email: String,
@@ -50,6 +49,27 @@ pub fn auth_error(status: StatusCode, msg: &str) -> AuthError {
             detail: msg.to_string(),
         }),
     )
+}
+
+/// Load an authenticated user from the database. Shared by both PASETO and
+/// API key auth paths to avoid logic duplication.
+async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, AuthError> {
+    let user = db::users::get_user(pool, email)
+        .await
+        .map_err(|_| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to load user"))?
+        .ok_or_else(|| auth_error(StatusCode::UNAUTHORIZED, "user not found"))?;
+
+    if !user.active {
+        return Err(auth_error(
+            StatusCode::UNAUTHORIZED,
+            "user account deactivated",
+        ));
+    }
+
+    Ok(AuthUser {
+        email: user.email,
+        name: user.name,
+    })
 }
 
 #[axum::async_trait]
@@ -75,10 +95,15 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // Distinguish API keys (cbsk_ prefix) from PASETO tokens
         if token_str.starts_with("cbsk_") {
-            return Err(auth_error(
-                StatusCode::UNAUTHORIZED,
-                "API key authentication not yet implemented",
-            ));
+            let cached = crate::auth::api_keys::verify_api_key(
+                &state.pool,
+                &state.api_key_cache,
+                token_str,
+            )
+            .await
+            .map_err(|e| auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}")))?;
+
+            return load_authed_user(&state.pool, &cached.owner_email).await;
         }
 
         // PASETO token path
@@ -100,27 +125,6 @@ impl FromRequestParts<AppState> for AuthUser {
             return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
         }
 
-        // Load user record and check active status
-        let user = db::users::get_user(&state.pool, &payload.user)
-            .await
-            .map_err(|_| {
-                auth_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to load user",
-                )
-            })?
-            .ok_or_else(|| auth_error(StatusCode::UNAUTHORIZED, "user not found"))?;
-
-        if !user.active {
-            return Err(auth_error(
-                StatusCode::UNAUTHORIZED,
-                "user account deactivated",
-            ));
-        }
-
-        Ok(AuthUser {
-            email: user.email,
-            name: user.name,
-        })
+        load_authed_user(&state.pool, &payload.user).await
     }
 }

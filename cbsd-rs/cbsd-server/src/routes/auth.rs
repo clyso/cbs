@@ -10,23 +10,24 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-//! Auth route handlers: OAuth login and callback.
+//! Auth route handlers: OAuth login/callback, token management, API keys.
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
 use tower_sessions::Session;
 
 use crate::app::AppState;
-use crate::auth::extractors::{auth_error, ErrorDetail};
+use crate::auth::api_keys;
+use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail};
 use crate::auth::oauth;
 use crate::auth::paseto;
 use crate::db;
@@ -49,10 +50,21 @@ pub fn router() -> Router<AppState> {
     };
 
     // Rate-limited OAuth routes
-    Router::new()
+    let oauth_routes = Router::new()
         .route("/login", get(login))
         .route("/callback", get(callback))
-        .layer(governor_layer)
+        .layer(governor_layer);
+
+    // Non-rate-limited authenticated routes
+    let auth_routes = Router::new()
+        .route("/whoami", get(whoami))
+        .route("/token/revoke", post(revoke_token))
+        .route("/tokens/revoke-all", post(revoke_all_tokens))
+        .route("/api-keys", post(create_api_key_handler))
+        .route("/api-keys", get(list_api_keys_handler))
+        .route("/api-keys/{prefix}", delete(revoke_api_key_handler));
+
+    oauth_routes.merge(auth_routes)
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +88,38 @@ fn default_client() -> String {
 pub struct CallbackQuery {
     code: String,
     state: String,
+}
+
+#[derive(Serialize)]
+struct WhoamiResponse {
+    email: String,
+    name: String,
+    roles: Vec<String>,
+    effective_caps: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RevokeAllBody {
+    user_email: String,
+}
+
+#[derive(Deserialize)]
+struct CreateApiKeyBody {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct CreateApiKeyResponse {
+    key: String,
+    prefix: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ApiKeyItem {
+    prefix: String,
+    name: String,
+    created_at: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -267,4 +311,197 @@ async fn callback(
         let redirect_url = format!("/#token={token_b64}");
         Ok(Redirect::temporary(&redirect_url).into_response())
     }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/auth/whoami
+// ---------------------------------------------------------------------------
+
+async fn whoami(user: AuthUser) -> Json<WhoamiResponse> {
+    Json(WhoamiResponse {
+        email: user.email,
+        name: user.name,
+        // Roles and capabilities populated in Commit 5
+        roles: Vec::new(),
+        effective_caps: Vec::new(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/token/revoke
+// ---------------------------------------------------------------------------
+
+/// Self-revoke: revokes the bearer token used in the current request.
+async fn revoke_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    // Re-extract the raw bearer token from Authorization header
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| auth_error(StatusCode::UNAUTHORIZED, "missing bearer token"))?;
+
+    // Only PASETO tokens can be self-revoked via this endpoint
+    if auth_header.starts_with("cbsk_") {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "use DELETE /api/auth/api-keys/:prefix to revoke API keys",
+        ));
+    }
+
+    let hash = paseto::token_hash(auth_header);
+    db::tokens::revoke_token(&state.pool, &hash)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to revoke token for {}: {e}", user.email);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to revoke token")
+        })?;
+
+    tracing::info!("user {} revoked their token", user.email);
+    Ok(Json(serde_json::json!({"detail": "token revoked"})))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/tokens/revoke-all
+// ---------------------------------------------------------------------------
+
+/// Revoke all tokens for a user. Requires the target user to exist.
+/// Full permission check (permissions:manage) is added in Commit 5.
+async fn revoke_all_tokens(
+    State(state): State<AppState>,
+    _user: AuthUser,
+    Json(body): Json<RevokeAllBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    // Verify target user exists
+    let target = db::users::get_user(&state.pool, &body.user_email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to look up user: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
+
+    if target.is_none() {
+        return Err(auth_error(StatusCode::NOT_FOUND, "user not found"));
+    }
+
+    let count = db::tokens::revoke_all_for_user(&state.pool, &body.user_email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to revoke tokens: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to revoke tokens",
+            )
+        })?;
+
+    tracing::info!(
+        "revoked {count} tokens for user {}",
+        body.user_email
+    );
+    Ok(Json(
+        serde_json::json!({"detail": format!("revoked {count} tokens")}),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/api-keys
+// ---------------------------------------------------------------------------
+
+async fn create_api_key_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<CreateApiKeyBody>,
+) -> Result<(StatusCode, Json<CreateApiKeyResponse>), (StatusCode, Json<ErrorDetail>)> {
+    let (key, prefix) = api_keys::create_api_key(&state.pool, &body.name, &user.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to create API key for {}: {e}", user.email);
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to create API key",
+            )
+        })?;
+
+    tracing::info!(
+        "created API key '{}' (prefix={}) for {}",
+        body.name,
+        prefix,
+        user.email
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiKeyResponse {
+            key,
+            prefix,
+            name: body.name,
+        }),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/auth/api-keys
+// ---------------------------------------------------------------------------
+
+async fn list_api_keys_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Vec<ApiKeyItem>>, (StatusCode, Json<ErrorDetail>)> {
+    let keys = db::api_keys::list_api_keys_for_user(&state.pool, &user.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to list API keys for {}: {e}", user.email);
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to list API keys",
+            )
+        })?;
+
+    Ok(Json(
+        keys.into_iter()
+            .map(|k| ApiKeyItem {
+                prefix: k.key_prefix,
+                name: k.name,
+                created_at: k.created_at,
+            })
+            .collect(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/auth/api-keys/:prefix
+// ---------------------------------------------------------------------------
+
+async fn revoke_api_key_handler(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(prefix): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    let revoked = db::api_keys::revoke_api_key_by_prefix(&state.pool, &user.email, &prefix)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to revoke API key: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to revoke API key",
+            )
+        })?;
+
+    if !revoked {
+        return Err(auth_error(StatusCode::NOT_FOUND, "API key not found"));
+    }
+
+    // Purge from cache
+    let mut cache = state.api_key_cache.lock().await;
+    cache.remove_by_prefix(&prefix);
+
+    tracing::info!(
+        "revoked API key (prefix={}) for {}",
+        prefix,
+        user.email
+    );
+    Ok(Json(serde_json::json!({"detail": "API key revoked"})))
 }
