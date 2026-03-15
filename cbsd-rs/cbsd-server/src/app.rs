@@ -40,7 +40,9 @@ pub fn build_router(
 ) -> Router {
     let api = Router::new()
         .route("/health", get(health))
-        .nest("/auth", routes::auth::router());
+        .nest("/auth", routes::auth::router())
+        .nest("/permissions", routes::permissions::router())
+        .nest("/admin", routes::admin::router());
 
     Router::new()
         .nest("/api", api)
