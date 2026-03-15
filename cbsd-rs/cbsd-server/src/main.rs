@@ -73,6 +73,12 @@ async fn main() {
         .await
         .expect("failed to initialize session store");
 
+    // First-startup seed: create builtin roles, admin user, worker API keys
+    // (only runs if roles table is empty).
+    db::seed::run_first_startup_seed(&pool, &config)
+        .await
+        .expect("first-startup seed failed");
+
     // Derive session signing key from token_secret_key via HKDF-SHA256
     // (deterministic across restarts, domain-separated from PASETO key)
     let token_key_bytes = config
@@ -133,7 +139,15 @@ async fn main() {
     let log_watchers = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let log_writer = Arc::new(tokio::sync::Mutex::new(logs::writer::LogWriterState::new()));
 
+    // Startup recovery: reconcile in-flight builds from prior instance.
+    // Must run after migrations and before accepting connections.
+    queue::recovery::run_startup_recovery(&pool, &build_queue, &log_watchers)
+        .await
+        .expect("startup recovery failed — aborting");
+
     let sweep_handle = Arc::new(tokio::sync::Mutex::new(None));
+
+    let gc_handle = Arc::new(tokio::sync::Mutex::new(None));
 
     let state = app::AppState {
         pool: pool.clone(),

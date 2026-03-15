@@ -1,0 +1,99 @@
+# Phase 6 — Integration: Startup Recovery, Bootstrapping, Shutdown, GC
+
+## Progress
+
+| Item | Status |
+|------|--------|
+| Commit 12: Startup recovery and first-startup bootstrapping | Done |
+| Commit 13: Graceful shutdown modes (`--drain` flag) and log GC | Done |
+
+## Goal
+
+Production-ready system with crash recovery, first-run bootstrapping, graceful
+rolling-deploy support, and log retention management.
+
+## Depends on
+
+Phases 4 and 5 (all subsystems must exist to integrate).
+
+## Commit 12: Startup recovery and first-startup bootstrapping
+
+**queue/recovery.rs** (wired into `app.rs` lifespan — called after migrations
+complete, before accepting HTTP connections or WebSocket upgrades):
+- On startup, after migrations:
+  1. Query all builds in state `dispatched` or `started` → mark `failure`
+     with `error = "server restarted"`, set `finished_at = now()`.
+  2. Query all builds in state `queued`, ordered by `queued_at` within each
+     priority level → insert into in-memory priority lanes.
+  3. Builds in `revoking` → mark `revoked` **and set
+     `build_logs.finished = 1`** (prevents SSE handler from hanging on a
+     watch sender that was dropped during recovery).
+  4. Drop any stale watch senders in `AppState.log_watchers` (from prior
+     server instance — these don't survive restart, but the map must be
+     clean).
+  5. Note: QUEUED builds have no `build_logs` entry — one is created when
+     dispatched (Commit 8a).
+  6. On any DB failure → abort startup (partial state is dangerous).
+
+**First-startup seeding** (single atomic transaction, only if DB empty):
+1. Create builtin roles (`admin`, `builder`, `viewer`) with predefined caps.
+2. Create user record for `seed_admin` email (name="Admin" placeholder —
+   updated on first OAuth login).
+3. Assign `admin` role to seed admin user.
+4. For each `seed_worker_api_keys` entry: create API key owned by seed admin,
+   store argon2 hash.
+5. **Commit transaction first**, then print plaintext API keys to stdout.
+   This prevents orphaned printed keys if the transaction rolls back.
+
+**Testable:** Kill server mid-build, restart → QUEUED builds reappear in
+queue, DISPATCHED/STARTED marked FAILURE, REVOKING marked REVOKED. First boot
+with empty DB creates roles, admin user, worker API keys (printed to stdout
+only after successful commit).
+
+## Commit 13: Graceful shutdown modes (`--drain` flag) and log GC
+
+**Server shutdown modes** (signal handling in main.rs + clap `--drain` flag):
+
+**SIGTERM (graceful restart — default for rolling deploys):**
+1. Stop accepting new HTTP connections and build submissions.
+2. Do NOT send `build_revoke`. Workers will reconnect to new instance.
+3. Flush log data to disk.
+4. Close all WebSocket connections.
+5. Shut down.
+
+Workers detect the drop, enter reconnect loop, and the new server instance's
+reconnection table handles reconciliation.
+
+**SIGQUIT or `--drain` flag (intentional decommission):**
+1. Stop accepting new connections.
+2. Send `build_revoke` to all workers with active builds.
+3. Wait up to drain timeout (default 30s) for `build_finished` acks.
+   Workers send `build_output` and `build_finished` during this window —
+   the log writer continues processing these asynchronously.
+4. Unacknowledged builds → mark `failure` with
+   `error = "server decommissioned"`.
+5a. **Drain log writer** — continue receiving WS messages during the drain
+    timeout window, process all pending `build_output` writes to disk.
+    Invariant: no build output is dropped.
+5b. Close WebSocket connections (after drain, not before — closing before
+    drain loses buffered WS receive queue messages).
+5c. Flush `build_logs.log_size`/`finished` metadata to SQLite.
+5d. Await GC task `JoinHandle` and sweep task `JoinHandle` from `AppState`.
+5e. Shut down.
+
+**logs/gc.rs:**
+- Daily GC task (via `tokio::time::interval`, not cron — sufficient for v1).
+  **GC task `JoinHandle` stored in `AppState`** and awaited during shutdown
+  (not a detached `tokio::spawn`). **First tick delayed** — does not fire
+  immediately on startup (prevents double-GC on quick restart).
+  - Query `builds` joined with `build_logs` where `finished_at` is older than
+    `log_retention_days` (default 30) and state is terminal.
+  - Delete log files from disk.
+  - Delete `build_logs` rows.
+  - Build rows retained (historical record).
+- GC + SSE race already mitigated by FD-lifetime constraint (Phase 4) and
+  synthetic `event: done` for missing files.
+
+**Testable:** SIGTERM → workers reconnect and resume builds on new server.
+`--drain` / SIGQUIT → active builds revoked, server exits clean. Old log
+files cleaned up after retention period.

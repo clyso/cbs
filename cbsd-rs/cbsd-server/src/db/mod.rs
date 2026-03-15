@@ -13,6 +13,7 @@
 pub mod api_keys;
 pub mod builds;
 pub mod roles;
+pub mod seed;
 pub mod tokens;
 pub mod users;
 
