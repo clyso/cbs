@@ -1,0 +1,149 @@
+# CBS build service daemon (cbsd-rs) — podman-compose
+#
+# Copyright (C) 2026  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Usage:
+#   Production:   podman-compose -f podman-compose.cbsd-rs.yaml --profile prod up
+#   Development:  podman-compose -f podman-compose.cbsd-rs.yaml --profile dev  up
+#
+# Config layout expected under ./_local/cbsd-rs/:
+#   config/server/server.yaml    — server configuration (see cbsd-rs/config/server.yaml.example)
+#   config/worker/worker.yaml    — worker configuration (see cbsd-rs/config/worker.yaml.example)
+#
+# Worker server_url must use the compose service name as the hostname:
+#   server_url: "ws://server:8080/api/ws/worker"
+#
+# Note on network_mode for workers: both server and worker run on the
+# default compose bridge network. If builds require access to VPN routes
+# that are only visible on the host network, override network_mode for the
+# worker service via a local compose override file.
+#
+# Dev auto-reload: the dev images use cargo-watch. The cbsd-rs/ source
+# tree is bind-mounted at /cbs/src. Any change to Rust source files on the
+# host triggers an incremental rebuild and restart inside the container.
+# Prerequisites for dev:
+#   1. Run 'cargo sqlx prepare --workspace' inside cbsd-rs/ first to
+#      populate the .sqlx/ offline query cache (required by cargo build).
+
+services:
+
+  # ==========================================================================
+  # Production services
+  # ==========================================================================
+
+  server:
+    profiles: [prod]
+    build:
+      context: .
+      dockerfile: container/ContainerFile.cbsd-rs
+      target: cbsd-rs-server
+    container_name: cbsd-rs-server
+    ports:
+      - "8080:8080"
+    restart: "no"
+    volumes:
+      - ./_local/cbsd-rs/config/server:/cbs/config:ro
+      - ./_local/cbsd-rs/data:/cbs/data:Z
+      - ./_local/cbsd-rs/logs:/cbs/logs:Z
+      - ./components:/cbs/components:ro
+    security_opt:
+      - label=disable
+    environment:
+      RUST_LOG: info
+
+  worker:
+    profiles: [prod]
+    build:
+      context: .
+      dockerfile: container/ContainerFile.cbsd-rs
+      target: cbsd-rs-worker
+    container_name: cbsd-rs-worker
+    privileged: true
+    volumes:
+      - ./_local/cbsd-rs/config/worker:/cbs/config:ro
+      - ./_local/cbsd-rs/scratch:/cbs/scratch:Z
+      - ./_local/cbsd-rs/scratch/containers:/var/lib/containers:Z
+      - ./_local/cbsd-rs/scratch/ccache:/cbs/ccache:Z
+      - ./components:/cbs/components:ro
+      - /dev/fuse:/dev/fuse:rw
+    cap_add:
+      - MKNOD
+      - SYS_ADMIN
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      RUST_LOG: info
+    depends_on:
+      - server
+
+  # ==========================================================================
+  # Development services  (cargo-watch, source bind-mounted)
+  # ==========================================================================
+
+  server-dev:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: container/ContainerFile.cbsd-rs
+      target: cbsd-rs-dev-server
+    container_name: cbsd-rs-server-dev
+    ports:
+      - "8080:8080"
+    restart: "no"
+    volumes:
+      - ./_local/cbsd-rs/config/server:/cbs/config:ro
+      - ./_local/cbsd-rs/data:/cbs/data:Z
+      - ./_local/cbsd-rs/logs:/cbs/logs:Z
+      - ./components:/cbs/components:ro
+      # Rust workspace source — changes here trigger cargo-watch rebuild
+      - ./cbsd-rs:/cbs/src:Z
+      # Named volumes for the Cargo registry and git cache to avoid
+      # re-downloading crates on every container restart
+      - cbsd-rs-cargo-registry:/usr/local/cargo/registry
+      - cbsd-rs-cargo-git:/usr/local/cargo/git
+    security_opt:
+      - label=disable
+    environment:
+      RUST_LOG: debug
+
+  worker-dev:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: container/ContainerFile.cbsd-rs
+      target: cbsd-rs-dev-worker
+    container_name: cbsd-rs-worker-dev
+    privileged: true
+    volumes:
+      - ./_local/cbsd-rs/config/worker:/cbs/config:ro
+      - ./_local/cbsd-rs/scratch:/cbs/scratch:Z
+      - ./_local/cbsd-rs/scratch/containers:/var/lib/containers:Z
+      - ./_local/cbsd-rs/scratch/ccache:/cbs/ccache:Z
+      - ./components:/cbs/components:ro
+      - /dev/fuse:/dev/fuse:rw
+      # Rust workspace source — changes here trigger cargo-watch rebuild
+      - ./cbsd-rs:/cbs/src:Z
+      - cbsd-rs-cargo-registry:/usr/local/cargo/registry
+      - cbsd-rs-cargo-git:/usr/local/cargo/git
+    cap_add:
+      - MKNOD
+      - SYS_ADMIN
+    security_opt:
+      - label=disable
+      - seccomp=unconfined
+    environment:
+      RUST_LOG: debug
+    depends_on:
+      - server-dev
+
+volumes:
+  # Persistent Cargo registry and git caches shared across dev containers.
+  # Avoids re-downloading crates on every container restart.
+  cbsd-rs-cargo-registry:
+  cbsd-rs-cargo-git:
