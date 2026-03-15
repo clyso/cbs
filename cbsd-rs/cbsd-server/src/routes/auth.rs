@@ -317,14 +317,28 @@ async fn callback(
 // GET /api/auth/whoami
 // ---------------------------------------------------------------------------
 
-async fn whoami(user: AuthUser) -> Json<WhoamiResponse> {
-    Json(WhoamiResponse {
+async fn whoami(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<WhoamiResponse>, (StatusCode, Json<ErrorDetail>)> {
+    let user_roles = db::roles::get_user_roles(&state.pool, &user.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get roles for whoami: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to load user roles",
+            )
+        })?;
+
+    let roles: Vec<String> = user_roles.into_iter().map(|ur| ur.role_name).collect();
+
+    Ok(Json(WhoamiResponse {
+        effective_caps: user.caps.clone(),
         email: user.email,
         name: user.name,
-        // Roles and capabilities populated in Commit 5
-        roles: Vec::new(),
-        effective_caps: Vec::new(),
-    })
+        roles,
+    }))
 }
 
 // ---------------------------------------------------------------------------
