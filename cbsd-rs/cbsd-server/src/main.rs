@@ -15,6 +15,7 @@ mod auth;
 mod components;
 mod config;
 mod db;
+mod logs;
 mod queue;
 mod routes;
 mod ws;
@@ -130,6 +131,7 @@ async fn main() {
     // Build app state and router
     let worker_senders = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
     let log_watchers = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+    let log_writer = Arc::new(tokio::sync::Mutex::new(logs::writer::LogWriterState::new()));
 
     let sweep_handle = Arc::new(tokio::sync::Mutex::new(None));
 
@@ -142,6 +144,7 @@ async fn main() {
         components: loaded_components,
         worker_senders,
         log_watchers,
+        log_writer,
         sweep_handle: sweep_handle.clone(),
     };
 

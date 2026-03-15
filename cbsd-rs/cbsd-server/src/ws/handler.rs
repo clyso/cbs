@@ -369,6 +369,22 @@ async fn handle_worker_message(
                 line_count = lines.len(),
                 "build output"
             );
+            if let Err(e) = crate::logs::writer::write_build_output(
+                &state.log_writer,
+                &state.log_watchers,
+                &state.config.log_dir,
+                &state.pool,
+                build_id.0,
+                start_seq,
+                lines,
+            )
+            .await
+            {
+                tracing::error!(
+                    build_id = %build_id,
+                    "failed to write build output: {e}"
+                );
+            }
         }
         WorkerMessage::BuildFinished {
             build_id,
