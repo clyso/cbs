@@ -1,0 +1,116 @@
+# Phase 5 — Worker: WS Client, Build Executor, Subprocess Bridge
+
+## Progress
+
+| Item | Status |
+|------|--------|
+| Commit 10: Worker WS client — config, connection, reconnection, signal handling | Done |
+| Commit 11: Build executor — subprocess, output batching, component unpacking | Done |
+
+## Goal
+
+A fully functional worker binary that connects to the server, receives builds,
+executes cbscore as a subprocess, streams output back, and handles shutdown
+gracefully.
+
+## Depends on
+
+Phase 4 (server-side WS handler must exist for integration testing).
+
+**Parallelism note:** Commit 10 (config, connection, reconnection, signal
+handling) can be developed in parallel with Phase 4 using proto types from
+Phase 1 — it only needs a server to connect to for integration tests, not
+for compilation. Commit 11 (build executor) requires Phase 4 to be complete
+because it depends on the server's dispatch and log-writing behavior.
+
+## Commit 10: Worker WS client — config, connection, reconnection, signal handling
+
+The worker binary's core infrastructure.
+
+**config.rs:**
+- `WorkerConfig`: server_url, api_key, worker_id, arch, tls_ca_bundle_path,
+  cbscore_config_path, build_timeout_secs, component_temp_dir.
+
+**ws/connection.rs:**
+- Connect to `wss://<server>/api/ws/worker` with `Authorization: Bearer`
+  header (never query string). Custom rustls `ClientConfig` with optional CA
+  bundle from `tls_ca_bundle_path`.
+- Reconnection loop: 1s initial, 2x multiplier, ±20% jitter, 30s ceiling.
+  Ceiling validated against `grace_period_secs` from `welcome` message — if
+  ceiling >= grace period, log a warning and clamp ceiling to
+  `grace_period_secs - 10s`.
+
+**ws/handler.rs:**
+- Sends `hello` on connect (protocol_version, worker_id, arch, cores_total,
+  ram_total_mb).
+- Sends `worker_status` on reconnect if mid-build.
+- Dispatches incoming messages: `build_new` → start build executor,
+  `build_revoke` → cancel running build (including pre-accept revoke),
+  `welcome` → store connection_id.
+
+**signal.rs:**
+- SIGTERM handler: send `worker_stopping`, wait for current build to finish
+  (up to configurable drain timeout), then close WS. If drain timeout expires,
+  kill build subprocess and send `build_finished(revoked)`.
+
+**main.rs:**
+- CLI args (config path), tokio runtime, config loading, connection loop.
+
+**Backoff asymmetry note:** The worker clamps its ceiling silently
+(self-corrects); the server panics on misconfigured ceiling (operator error).
+This asymmetry is intentional — document in code comments.
+
+**Testable:** Worker connects to running server, completes hello/welcome
+(including validating `grace_period_secs`). Reconnects after server restart
+with proper backoff (integration test requires Phase 4 server). SIGTERM
+causes graceful shutdown with `worker_stopping` sent.
+
+## Commit 11: Build executor — subprocess, output batching, component unpacking
+
+The actual build execution pipeline.
+
+**Create `cbsd-rs/scripts/cbscore-wrapper.py`** — the Python wrapper script
+that the executor spawns. Committed to the repo and baked into the worker
+container image.
+
+**build/component.rs:**
+- Receives binary frame after `build_new`. Validates SHA-256 against
+  `component_sha256`. On integrity failure → `build_rejected` with reason,
+  do not start build.
+- Unpacks tar.gz to temp directory (via `flate2` + `tar`).
+
+**build/executor.rs:**
+- Spawns the cbscore Python wrapper (`cbsd-rs/scripts/cbscore-wrapper.py`,
+  committed to the repo and baked into the worker container image) as a
+  subprocess via `tokio::process::Command`.
+- `pre_exec` with `setsid()` for process group isolation (unsafe block).
+  **Only async-signal-safe functions allowed** in `pre_exec` — no logging,
+  no allocations, only `setsid()`.
+- Passes JSON via stdin: `{descriptor, component_path, trace_id}`.
+- Sets `CBS_TRACE_ID` env var for cross-boundary log correlation.
+- On `build_revoke`: SIGTERM to process group (`kill(-pgid, SIGTERM)`).
+  SIGKILL escalation after `sigkill_escalation_timeout_secs` (default 15s).
+- Exit code classification: 0→success, 1→failure, 2→failure (infra),
+  137→revoked (SIGKILL), 143→revoked (SIGTERM).
+- Structured result line: prefix-based detection
+  (`line.starts_with(r#"{"type":"result""#)`) before full JSON parse — don't
+  parse every output line. Extracts `error` field. Fallback: exit code +
+  stderr.
+
+**build/output.rs:**
+- Reads subprocess stdout/stderr line by line.
+- Tracks running line count for `start_seq` assignment.
+- Batches output: flush every 200ms or 50 lines (whichever first).
+- Sends `build_output` messages with `{build_id, start_seq, lines[]}`.
+- Sends `build_finished` on subprocess exit with classified status.
+- UTF-8 enforcement: non-UTF-8 bytes replaced with U+FFFD. ANSI escape codes
+  pass through. Newlines stripped.
+
+**Post-build cleanup:**
+- Remove temp component directory.
+
+**Testable:** End-to-end: submit build via API → server dispatches to
+worker → worker unpacks component, spawns cbscore, streams output → server
+receives output, writes log → build completes → state transitions to
+SUCCESS/FAILURE. Revocation kills subprocess. Component integrity failure
+rejects build.
