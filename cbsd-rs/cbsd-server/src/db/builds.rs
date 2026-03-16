@@ -133,13 +133,11 @@ pub async fn insert_build_log_row(
     build_id: i64,
     log_path: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO build_logs (build_id, log_path) VALUES (?, ?)",
-    )
-    .bind(build_id)
-    .bind(log_path)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO build_logs (build_id, log_path) VALUES (?, ?)")
+        .bind(build_id)
+        .bind(log_path)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -214,12 +212,10 @@ pub async fn set_build_revoking(pool: &SqlitePool, id: i64) -> Result<bool, sqlx
 
 /// Mark a build log as finished (`build_logs.finished = 1`).
 pub async fn set_build_log_finished(pool: &SqlitePool, build_id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
-    )
-    .bind(build_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?")
+        .bind(build_id)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

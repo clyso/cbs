@@ -24,7 +24,7 @@ use pasetors::claims::{Claims, ClaimsValidationRules};
 use pasetors::keys::SymmetricKey;
 use pasetors::token::UntrustedToken;
 use pasetors::version4::V4;
-use pasetors::{local, Local};
+use pasetors::{Local, local};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -98,8 +98,8 @@ pub fn token_decode(
     let sym_key =
         SymmetricKey::<V4>::from(key_bytes.as_slice()).map_err(|_| TokenError::InvalidKey)?;
 
-    let untrusted = UntrustedToken::<Local, V4>::try_from(raw_token)
-        .map_err(|_| TokenError::InvalidToken)?;
+    let untrusted =
+        UntrustedToken::<Local, V4>::try_from(raw_token).map_err(|_| TokenError::InvalidToken)?;
 
     let validation_rules = ClaimsValidationRules::new();
     let trusted = local::decrypt(&sym_key, &untrusted, &validation_rules, None, None)
@@ -112,9 +112,7 @@ pub fn token_decode(
         .ok_or(TokenError::InvalidToken)?;
 
     // The payload claim is a JSON string containing our canonical JSON
-    let payload_str = payload_str
-        .as_str()
-        .ok_or(TokenError::InvalidToken)?;
+    let payload_str = payload_str.as_str().ok_or(TokenError::InvalidToken)?;
 
     let payload: CbsdTokenPayloadV1 =
         serde_json::from_str(payload_str).map_err(|_| TokenError::InvalidToken)?;
@@ -162,14 +160,11 @@ impl std::error::Error for TokenError {}
 /// using a minimal implementation).
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .fold(String::new(), |mut s, b| {
-                use std::fmt::Write;
-                let _ = write!(s, "{b:02x}");
-                s
-            })
+        bytes.as_ref().iter().fold(String::new(), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        })
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
@@ -213,7 +208,10 @@ mod tests {
     fn expired_token_rejected() {
         let past = chrono::Utc::now().timestamp() - 3600;
         let (token, _) = token_create("bob@clyso.com", Some(past), None, TEST_KEY).unwrap();
-        assert!(matches!(token_decode(&token, TEST_KEY), Err(TokenError::Expired)));
+        assert!(matches!(
+            token_decode(&token, TEST_KEY),
+            Err(TokenError::Expired)
+        ));
     }
 
     #[test]

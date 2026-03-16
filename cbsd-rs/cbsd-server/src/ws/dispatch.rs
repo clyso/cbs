@@ -84,9 +84,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
             .map(|(cid, ws)| {
                 (
                     cid.clone(),
-                    ws.registered_worker_id()
-                        .unwrap_or("unknown")
-                        .to_string(),
+                    ws.registered_worker_id().unwrap_or("unknown").to_string(),
                 )
             });
 
@@ -113,10 +111,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
         .map_err(DispatchError::Database)?;
 
         // Insert build log row.
-        let log_path = format!(
-            "builds/{}/build.log",
-            build.build_id.0
-        );
+        let log_path = format!("builds/{}/build.log", build.build_id.0);
         db::builds::insert_build_log_row(&state.pool, build.build_id.0, &log_path)
             .await
             .map_err(DispatchError::Database)?;
@@ -172,8 +167,8 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
         .unwrap_or("unknown");
 
     let component_dir = state.config.components_dir.join(component_name);
-    let (tar_gz_bytes, sha256_hex) = tarball::pack_component(&component_dir, component_name)
-        .map_err(DispatchError::Tarball)?;
+    let (tar_gz_bytes, sha256_hex) =
+        tarball::pack_component(&component_dir, component_name).map_err(DispatchError::Tarball)?;
 
     tracing::debug!(
         build_id = dispatch_info.build_id.0,
@@ -290,11 +285,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
 /// Handle a `BuildAccepted` message from a worker.
 ///
 /// Cancels the dispatch ack timeout.
-pub async fn handle_build_accepted(
-    state: &AppState,
-    connection_id: &str,
-    build_id: i64,
-) {
+pub async fn handle_build_accepted(state: &AppState, connection_id: &str, build_id: i64) {
     let queue = state.queue.lock().await;
     if let Some(active) = queue.active.get(&build_id) {
         active.ack_cancel.cancel();
@@ -350,11 +341,7 @@ pub async fn handle_build_finished(
     // Update DB.
     match db::builds::set_build_finished(&state.pool, build_id, status, error).await {
         Ok(true) => {
-            tracing::info!(
-                build_id = build_id,
-                status = status,
-                "build finished"
-            );
+            tracing::info!(build_id = build_id, status = status, "build finished");
         }
         Ok(false) => {
             tracing::warn!(
@@ -462,8 +449,7 @@ pub async fn handle_build_rejected(
         }
 
         // Revert DB state to queued.
-        if let Err(e) =
-            db::builds::update_build_state(&state.pool, build_id, "queued", None).await
+        if let Err(e) = db::builds::update_build_state(&state.pool, build_id, "queued", None).await
         {
             tracing::error!(
                 build_id = build_id,
@@ -497,9 +483,8 @@ pub async fn send_build_revoke(state: &AppState, build_id: i64) -> Result<(), Di
             .map(|ab| ab.connection_id.clone())
     };
 
-    let connection_id = connection_id.ok_or_else(|| {
-        DispatchError::Send(format!("build {build_id} not in active map"))
-    })?;
+    let connection_id = connection_id
+        .ok_or_else(|| DispatchError::Send(format!("build {build_id} not in active map")))?;
 
     // Transition DB to revoking.
     if let Err(e) = db::builds::set_build_revoking(&state.pool, build_id).await {

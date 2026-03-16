@@ -33,9 +33,7 @@ pub async fn create_or_update_user(
     .execute(pool)
     .await?;
 
-    get_user(pool, email)
-        .await?
-        .ok_or(sqlx::Error::RowNotFound)
+    get_user(pool, email).await?.ok_or(sqlx::Error::RowNotFound)
 }
 
 /// Get a user by email.

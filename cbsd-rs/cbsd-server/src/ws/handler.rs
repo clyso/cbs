@@ -12,13 +12,13 @@
 
 //! Per-connection WebSocket handler for worker connections.
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
-use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage, WorkerReportedState};
 use cbsd_proto::BuildId;
+use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage, WorkerReportedState};
 
 use crate::app::AppState;
 use crate::db;
@@ -85,9 +85,7 @@ pub async fn ws_upgrade(
         "ws upgrade accepted"
     );
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_connection(socket, state, connection_id, worker_row)
-    }))
+    Ok(ws.on_upgrade(move |socket| handle_connection(socket, state, connection_id, worker_row)))
 }
 
 /// Main per-connection loop. Runs until the WebSocket closes.
@@ -130,9 +128,8 @@ async fn handle_connection(
             ram_total_mb,
         } => {
             if protocol_version != 2 {
-                let reason = format!(
-                    "unsupported protocol version {protocol_version}; server supports 2"
-                );
+                let reason =
+                    format!("unsupported protocol version {protocol_version}; server supports 2");
                 tracing::warn!(
                     connection_id = %connection_id,
                     worker_name = %worker_row.name,
@@ -325,7 +322,14 @@ async fn handle_connection(
             connection_id = %connection_id,
             "failed to send welcome: {e}"
         );
-        cleanup_worker(&state, &connection_id, &worker_name, &registered_worker_id, false).await;
+        cleanup_worker(
+            &state,
+            &connection_id,
+            &worker_name,
+            &registered_worker_id,
+            false,
+        )
+        .await;
         return;
     }
 
@@ -427,7 +431,14 @@ async fn handle_connection(
             Some(WorkerState::Stopping { .. })
         )
     };
-    cleanup_worker(&state, &connection_id, &worker_name, &registered_worker_id, is_stopping).await;
+    cleanup_worker(
+        &state,
+        &connection_id,
+        &worker_name,
+        &registered_worker_id,
+        is_stopping,
+    )
+    .await;
 }
 
 /// Wait for the first text frame and parse it as a `WorkerMessage`.
@@ -535,9 +546,7 @@ async fn handle_worker_message(
             .await;
 
             // Update last_seen on build_finished (proof-of-life).
-            if let Err(e) =
-                db::workers::update_last_seen(&state.pool, registered_worker_id).await
-            {
+            if let Err(e) = db::workers::update_last_seen(&state.pool, registered_worker_id).await {
                 tracing::warn!(
                     worker_id = %registered_worker_id,
                     "failed to update last_seen on build_finished: {e}"
@@ -550,7 +559,10 @@ async fn handle_worker_message(
         } => {
             dispatch::handle_build_rejected(state, connection_id, build_id.0, reason).await;
         }
-        WorkerMessage::WorkerStatus { state: ws, build_id } => {
+        WorkerMessage::WorkerStatus {
+            state: ws,
+            build_id,
+        } => {
             handle_worker_status(state, connection_id, worker_name, ws, build_id).await;
         }
         WorkerMessage::WorkerStopping { ref reason } => {
@@ -594,10 +606,7 @@ async fn handle_worker_status(
                 Ok(Some(b)) => b.state,
                 Ok(None) => "not_found".to_string(),
                 Err(e) => {
-                    tracing::error!(
-                        build_id = build_id.0,
-                        "reconnect: DB lookup failed: {e}"
-                    );
+                    tracing::error!(build_id = build_id.0, "reconnect: DB lookup failed: {e}");
                     return;
                 }
             };
@@ -678,14 +687,9 @@ async fn handle_worker_status(
                     .values()
                     .filter(|ab| {
                         ab.connection_id != connection_id
-                            && queue
-                                .get_worker(&ab.connection_id)
-                                .map_or(true, |ws| {
-                                    matches!(
-                                        ws,
-                                        WorkerState::Disconnected { .. } | WorkerState::Dead
-                                    )
-                                })
+                            && queue.get_worker(&ab.connection_id).map_or(true, |ws| {
+                                matches!(ws, WorkerState::Disconnected { .. } | WorkerState::Dead)
+                            })
                     })
                     .map(|ab| (ab.build_id, ab.connection_id.clone()))
                     .collect()

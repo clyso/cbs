@@ -15,8 +15,8 @@
 use std::io;
 use std::path::Path;
 
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
 /// Pack the component directory into a gzip-compressed tar archive.

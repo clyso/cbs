@@ -43,10 +43,9 @@ async fn connect(config: &ResolvedWorkerConfig) -> Result<WsStream, ConnectionEr
         .headers_mut()
         .insert(http::header::AUTHORIZATION, header_value);
 
-    let (stream, _response) =
-        tokio_tungstenite::connect_async(request)
-            .await
-            .map_err(ConnectionError::WebSocket)?;
+    let (stream, _response) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(ConnectionError::WebSocket)?;
 
     Ok(stream)
 }
@@ -75,8 +74,7 @@ pub async fn reconnect_loop(config: &ResolvedWorkerConfig, state: Arc<ShutdownSt
                 backoff.reset();
                 tracing::info!("connected to server");
 
-                if let Err(err) =
-                    handler::run_connection(stream, config, Arc::clone(&state)).await
+                if let Err(err) = handler::run_connection(stream, config, Arc::clone(&state)).await
                 {
                     tracing::warn!(%err, "connection closed");
                 }
@@ -92,7 +90,10 @@ pub async fn reconnect_loop(config: &ResolvedWorkerConfig, state: Arc<ShutdownSt
         }
 
         let delay = backoff.next_delay();
-        tracing::info!(delay_secs = format!("{delay:.1}"), "reconnecting after backoff");
+        tracing::info!(
+            delay_secs = format!("{delay:.1}"),
+            "reconnecting after backoff"
+        );
 
         // Wait for either the backoff delay or a shutdown notification.
         tokio::select! {
@@ -217,6 +218,9 @@ mod tests {
         b.next_delay(); // 4
         b.reset();
         let d = b.next_delay();
-        assert!((d - 1.0).abs() < 0.01, "after reset, delay should be 1.0, got {d}");
+        assert!(
+            (d - 1.0).abs() < 0.01,
+            "after reset, delay should be 1.0, got {d}"
+        );
     }
 }

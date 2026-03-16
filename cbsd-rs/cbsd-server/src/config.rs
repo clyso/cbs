@@ -227,8 +227,7 @@ impl ServerConfig {
             );
         }
 
-        if self.timeouts.reconnect_backoff_ceiling_secs
-            >= self.timeouts.liveness_grace_period_secs
+        if self.timeouts.reconnect_backoff_ceiling_secs >= self.timeouts.liveness_grace_period_secs
         {
             panic!(
                 "config error: reconnect_backoff_ceiling_secs ({}) must be less than \
