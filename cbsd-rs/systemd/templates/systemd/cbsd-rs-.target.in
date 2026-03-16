@@ -1,0 +1,18 @@
+# CBS build service daemon (cbsd-rs) — per-deployment target template
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This template is instantiated by install.sh.
+# Placeholder: {{deployment}}
+
+[Unit]
+Description=Clyso Build System RS service for '{{deployment}}' deployment
+PartOf=cbsd-rs.target
+Before=cbsd-rs.target
+
+[Install]
+WantedBy=multi-user.target cbsd-rs.target
