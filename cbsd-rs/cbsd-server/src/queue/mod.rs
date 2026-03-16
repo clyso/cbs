@@ -41,6 +41,7 @@ pub struct ActiveBuild {
 pub struct WorkerInfo {
     pub connection_id: ConnectionId,
     pub worker_id: String,
+    pub worker_name: String,
     pub arch: Arch,
     pub state_name: String,
     pub current_build_id: Option<i64>,
@@ -190,9 +191,9 @@ impl BuildQueue {
         self.workers
             .iter()
             .filter_map(|(cid, state)| {
-                let worker_id = state.worker_id()?.to_string();
+                let worker_id = state.registered_worker_id()?.to_string();
+                let worker_name = state.worker_name()?.to_string();
                 let arch = state.arch()?;
-                // Look up whether this worker has an active build
                 let current_build_id = self
                     .active
                     .values()
@@ -201,6 +202,7 @@ impl BuildQueue {
                 Some(WorkerInfo {
                     connection_id: cid.clone(),
                     worker_id,
+                    worker_name,
                     arch,
                     state_name: state.state_name().to_string(),
                     current_build_id,

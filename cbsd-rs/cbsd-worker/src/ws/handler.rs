@@ -26,7 +26,7 @@ use crate::signal::ShutdownState;
 use crate::ws::connection::WsStream;
 
 /// Current protocol version.
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 2;
 
 /// Channel capacity for the output message sender.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -53,10 +53,9 @@ pub async fn run_connection(
     // --- Send Hello ---
     let hello = WorkerMessage::Hello {
         protocol_version: PROTOCOL_VERSION,
-        worker_id: config.worker_id.clone(),
         arch: config.parsed_arch(),
-        cores_total: 0,   // TODO: populate from sysinfo
-        ram_total_mb: 0,   // TODO: populate from sysinfo
+        cores_total: 0,  // TODO: populate from sysinfo
+        ram_total_mb: 0, // TODO: populate from sysinfo
     };
     let hello_json = serde_json::to_string(&hello).map_err(HandlerError::Serialize)?;
     sender
@@ -438,7 +437,6 @@ pub async fn run_connection(
                 // Shutdown requested while in message loop.
                 tracing::info!("shutdown requested, sending WorkerStopping");
                 let stopping = WorkerMessage::WorkerStopping {
-                    worker_id: config.worker_id.clone(),
                     reason: "SIGTERM received".to_string(),
                 };
                 if let Ok(json) = serde_json::to_string(&stopping) {

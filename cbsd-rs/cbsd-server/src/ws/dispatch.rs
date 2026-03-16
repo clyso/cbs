@@ -81,9 +81,16 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
                     && ws.arch() == Some(build_arch)
                     && !queue.active.values().any(|ab| ab.connection_id == **cid)
             })
-            .map(|(cid, ws)| (cid.clone(), ws.worker_id().unwrap_or("unknown").to_string()));
+            .map(|(cid, ws)| {
+                (
+                    cid.clone(),
+                    ws.registered_worker_id()
+                        .unwrap_or("unknown")
+                        .to_string(),
+                )
+            });
 
-        let (connection_id, worker_id) = match worker {
+        let (connection_id, registered_worker_id) = match worker {
             Some(w) => w,
             None => {
                 // No matching worker — push build back to front of its lane.
@@ -100,7 +107,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
             &state.pool,
             build.build_id.0,
             &trace_id,
-            &worker_id,
+            &registered_worker_id,
         )
         .await
         .map_err(DispatchError::Database)?;
@@ -139,7 +146,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
         tracing::info!(
             build_id = build.build_id.0,
             connection_id = %connection_id,
-            worker_id = %worker_id,
+            worker_id = %registered_worker_id,
             trace_id = %trace_id,
             arch = %build_arch,
             "build dispatched to worker"
