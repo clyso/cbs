@@ -1,0 +1,8 @@
+# cbsd-rs server instance configuration
+# Sourced by cbsd-rs-ctr.sh at container start time.
+# Uncomment and adjust the values you need to override.
+
+# SERVER_BIND_ADDR="127.0.0.1"
+# SERVER_BIND_PORT="8080"
+# RUST_LOG="info"
+# IMAGE="harbor.clyso.com/cbs/cbsd-rs-server:latest"

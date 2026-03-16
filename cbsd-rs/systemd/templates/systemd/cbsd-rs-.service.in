@@ -1,0 +1,28 @@
+# CBS build service daemon (cbsd-rs) — per-service systemd unit template
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This template is instantiated by install.sh.
+# Placeholders: {{deployment}}, {{cbsd_rs_data}}, {{cbsd_rs_config}}
+
+[Unit]
+Description=CBSD-RS Init Container Services for %i on deployment '{{deployment}}'
+After=network.target local-fs.target cbsd-rs-network@{{deployment}}
+Wants=network-online.target local-fs.target cbsd-rs-network@{{deployment}}
+PartOf=cbsd-rs-{{deployment}}.target
+Before=cbsd-rs-{{deployment}}.target
+
+
+[Service]
+ExecStart=/bin/bash {{cbsd_rs_data}}/cbsd-rs-ctr.sh start %p %i -c {{cbsd_rs_config}} -d {{cbsd_rs_data}}
+ExecStop=/bin/bash {{cbsd_rs_data}}/cbsd-rs-ctr.sh stop %p %i -c {{cbsd_rs_config}} -d {{cbsd_rs_data}}
+Restart=on-failure
+RestartSec=10s
+Type=forking
+
+[Install]
+WantedBy=cbsd-rs-{{deployment}}.target

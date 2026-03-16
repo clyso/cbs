@@ -1,0 +1,10 @@
+# CBS build service daemon (cbsd-rs) — top-level systemd target
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+[Unit]
+Description=Clyso Build System RS
