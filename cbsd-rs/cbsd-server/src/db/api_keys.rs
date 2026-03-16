@@ -141,3 +141,52 @@ pub async fn revoke_all_api_keys_for_user(
 
     Ok(result.rows_affected())
 }
+
+/// Revoke an API key by its row ID. No owner filter — used by worker
+/// deregistration and token regeneration where the calling admin may not
+/// be the original key creator. Returns true if a key was revoked.
+#[allow(dead_code)]
+pub async fn revoke_api_key_by_id(pool: &SqlitePool, api_key_id: i64) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0")
+        .bind(api_key_id)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Insert an API key inside an existing transaction. Returns the row ID
+/// via `last_insert_rowid()`.
+pub async fn insert_api_key_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    name: &str,
+    owner_email: &str,
+    key_hash: &str,
+    key_prefix: &str,
+) -> Result<i64, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO api_keys (name, key_hash, key_prefix, owner_email) VALUES (?, ?, ?, ?)",
+    )
+    .bind(name)
+    .bind(key_hash)
+    .bind(key_prefix)
+    .bind(owner_email)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(result.last_insert_rowid())
+}
+
+/// Get the key prefix for an API key by its row ID. Used to purge the
+/// LRU cache after revocation when only the row ID is known.
+pub async fn get_key_prefix_by_id(
+    pool: &SqlitePool,
+    api_key_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query("SELECT key_prefix FROM api_keys WHERE id = ?")
+        .bind(api_key_id)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.map(|r| r.get("key_prefix")))
+}

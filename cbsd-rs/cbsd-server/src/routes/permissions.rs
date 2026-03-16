@@ -19,7 +19,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
-use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
 
 /// Known capabilities (validated at the API layer).
@@ -35,6 +35,7 @@ const KNOWN_CAPS: &[&str] = &[
     "apikeys:create:own",
     "components:manage",
     "workers:view",
+    "workers:manage",
     "*",
 ];
 
@@ -160,9 +161,7 @@ fn role_is_scope_dependent(caps: &[String]) -> bool {
 
 /// Check whether removing something would leave zero active wildcard holders.
 /// Returns `Err(409)` if the guard fires.
-async fn last_admin_guard(
-    pool: &sqlx::SqlitePool,
-) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+async fn last_admin_guard(pool: &sqlx::SqlitePool) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
     let count = db::roles::count_active_wildcard_holders(pool)
         .await
         .map_err(|_| {
@@ -181,10 +180,7 @@ async fn last_admin_guard(
     Ok(())
 }
 
-fn require_cap(
-    user: &AuthUser,
-    cap: &str,
-) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+fn require_cap(user: &AuthUser, cap: &str) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
     if !user.has_cap(cap) {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -264,7 +260,12 @@ async fn create_role(
             tracing::error!("failed to get role '{}': {e}", body.name);
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to get role")
         })?
-        .ok_or_else(|| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "role not found after create"))?;
+        .ok_or_else(|| {
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "role not found after create",
+            )
+        })?;
 
     tracing::info!("user {} created role '{}'", user.email, body.name);
 
@@ -332,10 +333,13 @@ async fn update_role_caps(
     validate_caps(&body.caps)?;
 
     // Check builtin
-    if db::roles::is_role_builtin(&state.pool, &name).await.map_err(|e| {
-        tracing::error!("failed to check builtin for role '{name}': {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-    })? {
+    if db::roles::is_role_builtin(&state.pool, &name)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to check builtin for role '{name}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+    {
         return Err(auth_error(
             StatusCode::CONFLICT,
             "cannot modify a builtin role",
@@ -406,10 +410,13 @@ async fn delete_role(
     require_cap(&user, "permissions:manage")?;
 
     // Check builtin
-    if db::roles::is_role_builtin(&state.pool, &name).await.map_err(|e| {
-        tracing::error!("failed to check builtin for role '{name}': {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-    })? {
+    if db::roles::is_role_builtin(&state.pool, &name)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to check builtin for role '{name}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+    {
         return Err(auth_error(
             StatusCode::CONFLICT,
             "cannot delete a builtin role",
@@ -468,7 +475,9 @@ async fn delete_role(
     }
 
     tracing::info!("user {} deleted role '{}'", user.email, name);
-    Ok(Json(serde_json::json!({"detail": format!("role '{name}' deleted")})))
+    Ok(Json(
+        serde_json::json!({"detail": format!("role '{name}' deleted")}),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -717,14 +726,8 @@ async fn add_user_role(
     db::roles::add_user_role(&state.pool, &email, &body.role)
         .await
         .map_err(|e| {
-            tracing::error!(
-                "failed to add role '{}' to user '{email}': {e}",
-                body.role
-            );
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to add user role",
-            )
+            tracing::error!("failed to add role '{}' to user '{email}': {e}", body.role);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to add user role")
         })?;
 
     // Insert scopes for this assignment
@@ -741,10 +744,7 @@ async fn add_user_role(
         .await
         .map_err(|e| {
             tracing::error!("failed to insert scope for assignment: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to add scope",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to add scope")
         })?;
     }
 
@@ -784,10 +784,7 @@ async fn remove_user_role(
     let removed = db::roles::remove_user_role(&state.pool, &email, &role)
         .await
         .map_err(|e| {
-            tracing::error!(
-                "failed to remove role '{}' from user '{email}': {e}",
-                role
-            );
+            tracing::error!("failed to remove role '{}' from user '{email}': {e}", role);
             auth_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to remove user role",

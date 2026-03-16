@@ -21,13 +21,13 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-use tower_governor::governor::GovernorConfigBuilder;
 use tower_governor::GovernorLayer;
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_sessions::Session;
 
 use crate::app::AppState;
 use crate::auth::api_keys;
-use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::auth::oauth;
 use crate::auth::paseto;
 use crate::db;
@@ -134,10 +134,13 @@ async fn login(
     let oauth_nonce = uuid::Uuid::new_v4().to_string();
 
     // Store state + client info in session
-    session.insert("oauth_state", &oauth_nonce).await.map_err(|e| {
-        tracing::error!("session insert failed: {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
-    })?;
+    session
+        .insert("oauth_state", &oauth_nonce)
+        .await
+        .map_err(|e| {
+            tracing::error!("session insert failed: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
+        })?;
     session
         .insert("client_type", &params.client)
         .await
@@ -179,7 +182,10 @@ async fn callback(
     })?;
 
     let Some(stored_state) = stored_state else {
-        return Err(auth_error(StatusCode::BAD_REQUEST, "missing OAuth state in session"));
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "missing OAuth state in session",
+        ));
     };
 
     if stored_state != params.state {
@@ -206,7 +212,10 @@ async fn callback(
         .await
         .map_err(|e| {
             tracing::error!("OAuth code exchange failed: {e}");
-            auth_error(StatusCode::BAD_GATEWAY, "failed to authenticate with Google")
+            auth_error(
+                StatusCode::BAD_GATEWAY,
+                "failed to authenticate with Google",
+            )
         })?;
 
     // Check domain restriction
@@ -402,16 +411,10 @@ async fn revoke_all_tokens(
         .await
         .map_err(|e| {
             tracing::error!("failed to revoke tokens: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to revoke tokens",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to revoke tokens")
         })?;
 
-    tracing::info!(
-        "revoked {count} tokens for user {}",
-        body.user_email
-    );
+    tracing::info!("revoked {count} tokens for user {}", body.user_email);
     Ok(Json(
         serde_json::json!({"detail": format!("revoked {count} tokens")}),
     ))
@@ -426,6 +429,14 @@ async fn create_api_key_handler(
     user: AuthUser,
     Json(body): Json<CreateApiKeyBody>,
 ) -> Result<(StatusCode, Json<CreateApiKeyResponse>), (StatusCode, Json<ErrorDetail>)> {
+    // Reject reserved prefix — worker keys are managed via /api/admin/workers
+    if body.name.starts_with("worker:") {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "key names starting with 'worker:' are reserved for worker registration",
+        ));
+    }
+
     let (key, prefix) = api_keys::create_api_key(&state.pool, &body.name, &user.email)
         .await
         .map_err(|e| {
@@ -465,14 +476,13 @@ async fn list_api_keys_handler(
         .await
         .map_err(|e| {
             tracing::error!("failed to list API keys for {}: {e}", user.email);
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to list API keys",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list API keys")
         })?;
 
     Ok(Json(
         keys.into_iter()
+            // Filter out worker-bound keys — managed via /api/admin/workers
+            .filter(|k| !k.name.starts_with("worker:"))
             .map(|k| ApiKeyItem {
                 prefix: k.key_prefix,
                 name: k.name,
@@ -509,10 +519,6 @@ async fn revoke_api_key_handler(
     let mut cache = state.api_key_cache.lock().await;
     cache.remove_by_prefix(&prefix);
 
-    tracing::info!(
-        "revoked API key (prefix={}) for {}",
-        prefix,
-        user.email
-    );
+    tracing::info!("revoked API key (prefix={}) for {}", prefix, user.email);
     Ok(Json(serde_json::json!({"detail": "API key revoked"})))
 }
