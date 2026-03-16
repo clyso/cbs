@@ -10,12 +10,14 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-//! First-startup database seeding: builtin roles, admin user, worker API keys.
+//! First-startup database seeding: builtin roles, admin user, dev workers.
 
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHasher};
 use sqlx::{Row, SqlitePool};
 
-use crate::auth::api_keys;
 use crate::config::ServerConfig;
+use crate::db;
 
 /// Seed the database on first startup if the roles table is empty.
 ///
@@ -23,12 +25,11 @@ use crate::config::ServerConfig;
 /// 1. Create builtin roles (admin, builder, viewer) with predefined caps.
 /// 2. If `seed_admin` is configured, create the admin user and assign the
 ///    admin role.
-/// 3. For each `seed_worker_api_keys` entry, generate an API key owned by
-///    the seed admin.
-///
-/// Plaintext API keys are printed to stdout AFTER the transaction commits.
-pub async fn run_first_startup_seed(pool: &SqlitePool, config: &ServerConfig) -> Result<(), SeedError> {
-    // Check if the roles table already has data.
+/// 3. If `dev.enabled`, seed workers with pre-configured API keys.
+pub async fn run_first_startup_seed(
+    pool: &SqlitePool,
+    config: &ServerConfig,
+) -> Result<(), SeedError> {
     let count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM roles")
         .fetch_one(pool)
         .await
@@ -42,19 +43,54 @@ pub async fn run_first_startup_seed(pool: &SqlitePool, config: &ServerConfig) ->
 
     tracing::info!("roles table is empty — running first-startup seed");
 
-    // Collect API key plaintexts to print AFTER commit.
-    let mut api_key_plaintexts: Vec<(String, String)> = Vec::new();
+    if config.dev.enabled {
+        tracing::warn!(
+            "DEVELOPMENT MODE — seeding workers with pre-configured API keys. \
+             Do not use dev mode in production."
+        );
+    }
+
+    // Pre-hash dev worker API keys BEFORE opening the transaction (argon2 is
+    // CPU-bound and must not hold a pool connection).
+    struct PreparedWorker {
+        name: String,
+        arch: String,
+        worker_uuid: String,
+        key_prefix: String,
+        key_hash: String,
+    }
+
+    let mut prepared_workers = Vec::new();
+    if config.dev.enabled {
+        for worker_cfg in &config.dev.seed_workers {
+            let key_clone = worker_cfg.api_key.clone();
+            let hash = tokio::task::spawn_blocking(move || {
+                let salt = SaltString::generate(&mut rand::thread_rng());
+                let argon2 = Argon2::default();
+                argon2
+                    .hash_password(key_clone.as_bytes(), &salt)
+                    .map(|h| h.to_string())
+                    .map_err(|e| SeedError::Hash(e.to_string()))
+            })
+            .await
+            .map_err(|e| SeedError::Hash(e.to_string()))??;
+
+            let prefix = worker_cfg.api_key[5..17].to_string();
+
+            prepared_workers.push(PreparedWorker {
+                name: worker_cfg.name.clone(),
+                arch: worker_cfg.arch.to_string(),
+                worker_uuid: uuid::Uuid::new_v4().to_string(),
+                key_prefix: prefix,
+                key_hash: hash,
+            });
+        }
+    }
 
     let mut tx = pool.begin().await.map_err(SeedError::Db)?;
 
     // 1. Create builtin roles.
-    create_builtin_role(
-        &mut tx,
-        "admin",
-        "Full administrative access",
-        &["*"],
-    )
-    .await?;
+    create_builtin_role(&mut tx, "admin", "Full administrative access", &["*"]).await?;
 
     create_builtin_role(
         &mut tx,
@@ -66,6 +102,7 @@ pub async fn run_first_startup_seed(pool: &SqlitePool, config: &ServerConfig) ->
             "builds:list:own",
             "builds:list:any",
             "apikeys:create:own",
+            "workers:view",
         ],
     )
     .await?;
@@ -82,54 +119,58 @@ pub async fn run_first_startup_seed(pool: &SqlitePool, config: &ServerConfig) ->
 
     // 2. Create seed admin user if configured.
     if let Some(admin_email) = &config.seed.seed_admin {
-        sqlx::query(
-            "INSERT INTO users (email, name) VALUES (?, 'Admin')",
-        )
-        .bind(admin_email)
-        .execute(&mut *tx)
-        .await
-        .map_err(SeedError::Db)?;
+        sqlx::query("INSERT INTO users (email, name) VALUES (?, 'Admin')")
+            .bind(admin_email)
+            .execute(&mut *tx)
+            .await
+            .map_err(SeedError::Db)?;
 
-        sqlx::query(
-            "INSERT INTO user_roles (user_email, role_name) VALUES (?, 'admin')",
-        )
-        .bind(admin_email)
-        .execute(&mut *tx)
-        .await
-        .map_err(SeedError::Db)?;
+        sqlx::query("INSERT INTO user_roles (user_email, role_name) VALUES (?, 'admin')")
+            .bind(admin_email)
+            .execute(&mut *tx)
+            .await
+            .map_err(SeedError::Db)?;
 
         tracing::info!(email = %admin_email, "created seed admin user with admin role");
 
-        // 3. Create worker API keys owned by the seed admin.
-        for key_cfg in &config.seed.seed_worker_api_keys {
-            let (plaintext, prefix) =
-                generate_api_key_in_tx(&mut tx, &key_cfg.name, admin_email).await?;
+        // 3. Seed dev workers with pre-configured API keys.
+        for pw in &prepared_workers {
+            let api_key_name = format!("worker:{}", pw.name);
+            let api_key_id = db::api_keys::insert_api_key_in_tx(
+                &mut tx,
+                &api_key_name,
+                admin_email,
+                &pw.key_hash,
+                &pw.key_prefix,
+            )
+            .await
+            .map_err(SeedError::Db)?;
+
+            db::workers::insert_worker(
+                &mut tx,
+                &pw.worker_uuid,
+                &pw.name,
+                &pw.arch,
+                api_key_id,
+                admin_email,
+            )
+            .await
+            .map_err(SeedError::Db)?;
 
             tracing::info!(
-                name = %key_cfg.name,
-                prefix = %prefix,
-                "created seed worker API key"
+                name = %pw.name,
+                worker_id = %pw.worker_uuid,
+                arch = %pw.arch,
+                "seeded dev worker (pre-configured API key)"
             );
-
-            api_key_plaintexts.push((key_cfg.name.clone(), plaintext));
         }
-    } else if !config.seed.seed_worker_api_keys.is_empty() {
+    } else if !prepared_workers.is_empty() {
         tracing::warn!(
-            "seed_worker_api_keys configured but no seed_admin — \
-             skipping worker API key creation"
+            "dev.seed_workers configured but no seed_admin — skipping worker creation"
         );
     }
 
-    // Commit the transaction.
     tx.commit().await.map_err(SeedError::Db)?;
-
-    // Print plaintext API keys to stdout AFTER successful commit.
-    for (name, plaintext) in &api_key_plaintexts {
-        // Use println! (not tracing) — this is intentional: the plaintext
-        // must be captured by the operator from stdout and never appears in
-        // structured logs.
-        println!("Worker API key for {name}: {plaintext}");
-    }
 
     Ok(())
 }
@@ -141,75 +182,23 @@ async fn create_builtin_role(
     description: &str,
     caps: &[&str],
 ) -> Result<(), SeedError> {
-    sqlx::query(
-        "INSERT INTO roles (name, description, builtin) VALUES (?, ?, 1)",
-    )
-    .bind(name)
-    .bind(description)
-    .execute(&mut **tx)
-    .await
-    .map_err(SeedError::Db)?;
-
-    for cap in caps {
-        sqlx::query(
-            "INSERT INTO role_caps (role_name, cap) VALUES (?, ?)",
-        )
+    sqlx::query("INSERT INTO roles (name, description, builtin) VALUES (?, ?, 1)")
         .bind(name)
-        .bind(*cap)
+        .bind(description)
         .execute(&mut **tx)
         .await
         .map_err(SeedError::Db)?;
+
+    for cap in caps {
+        sqlx::query("INSERT INTO role_caps (role_name, cap) VALUES (?, ?)")
+            .bind(name)
+            .bind(*cap)
+            .execute(&mut **tx)
+            .await
+            .map_err(SeedError::Db)?;
     }
 
     Ok(())
-}
-
-/// Generate an API key inside a transaction. Returns `(plaintext, prefix)`.
-///
-/// Uses the same key format as `auth::api_keys::create_api_key` but operates
-/// within the seed transaction rather than the pool directly.
-async fn generate_api_key_in_tx(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    name: &str,
-    owner_email: &str,
-) -> Result<(String, String), SeedError> {
-    use argon2::password_hash::SaltString;
-    use argon2::{Argon2, PasswordHasher};
-    use rand::Rng;
-
-    // Generate 32 random bytes -> 64 hex chars.
-    let random_bytes: [u8; 32] = rand::thread_rng().r#gen();
-    let hex_part = api_keys::hex_encode_bytes(&random_bytes);
-    let raw_key = format!("cbsk_{hex_part}");
-
-    // Prefix = first 12 hex chars (chars 5..17 of the raw key).
-    let prefix = raw_key[5..17].to_string();
-
-    // Argon2 hash (expensive — run in blocking thread).
-    let key_clone = raw_key.clone();
-    let hash = tokio::task::spawn_blocking(move || {
-        let salt = SaltString::generate(&mut rand::thread_rng());
-        let argon2 = Argon2::default();
-        argon2
-            .hash_password(key_clone.as_bytes(), &salt)
-            .map(|h| h.to_string())
-            .map_err(|e| SeedError::Hash(e.to_string()))
-    })
-    .await
-    .map_err(|e| SeedError::Hash(e.to_string()))??;
-
-    sqlx::query(
-        "INSERT INTO api_keys (name, key_hash, key_prefix, owner_email) VALUES (?, ?, ?, ?)",
-    )
-    .bind(name)
-    .bind(&hash)
-    .bind(&prefix)
-    .bind(owner_email)
-    .execute(&mut **tx)
-    .await
-    .map_err(SeedError::Db)?;
-
-    Ok((raw_key, prefix))
 }
 
 /// Errors that can occur during first-startup seeding.

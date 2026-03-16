@@ -1,0 +1,106 @@
+# Phase 7.5: Dev Mode Worker Seeding
+
+**Parent:** Phase 7 (Worker Registration)
+
+## Problem
+
+Phase 7 introduced worker registration with server-generated tokens, but
+the bootstrap experience for `podman-compose` dev deployments is painful:
+the worker token must be captured from server stdout and injected into the
+worker container. Both containers start simultaneously, creating a chicken-
+and-egg problem.
+
+Production deployments use the REST API (`POST /api/admin/workers`) after
+an admin authenticates via OAuth — this is the correct production path.
+Dev environments need a simpler alternative.
+
+## Solution
+
+Add a `dev` section to the server config with explicit dev-mode gating:
+
+```yaml
+dev:
+  enabled: true
+  seed_workers:
+    - name: dev-worker-x86
+      arch: x86_64
+      api_key: "cbsk_<64 hex chars>"
+```
+
+The `api_key` is **pre-configured** — both server and worker configs
+reference the same key. No token capture, no log scraping. The compose
+file is self-contained.
+
+Remove `seed.seed_workers` entirely. Worker seeding only happens in dev
+mode. Production environments register workers through the authenticated
+REST API.
+
+## Changes
+
+### `config.rs`
+
+- Remove `SeedConfig.seed_workers` and `SeedWorker`.
+- Add `DevConfig`:
+  ```rust
+  pub struct DevConfig {
+      pub enabled: bool,          // default false
+      pub seed_workers: Vec<DevSeedWorker>,
+  }
+
+  pub struct DevSeedWorker {
+      pub name: String,
+      pub arch: Arch,
+      pub api_key: String,        // cbsk_<64 hex chars>
+  }
+  ```
+- Add `dev: DevConfig` to `ServerConfig` (serde default).
+- In `ServerConfig::validate()`:
+  - Reject if `dev.seed_workers` non-empty but `dev.enabled` is false.
+  - Validate each `dev.seed_workers[].api_key`: must be `cbsk_` + 64 hex
+    chars (total 69 chars). Fail fast on bad keys.
+
+### `seed.rs`
+
+- Replace the `seed_workers` iteration with `dev.seed_workers`.
+- For each entry: argon2-hash the **pre-defined** `api_key` (before tx),
+  insert API key row + worker row in the seed transaction.
+- No token printing — the key is already known to the operator.
+- Log `WARN` at startup when `dev.enabled: true`:
+  ```
+  DEVELOPMENT MODE — seeding workers with pre-configured API keys.
+  Do not use dev mode in production.
+  ```
+- `builder` role still gets `workers:view` (from Phase 7).
+
+### Example configs
+
+- `server.yaml.example`: Remove `seed.seed_workers`. Add `dev` section
+  (commented out, `enabled: false` by default).
+- `worker.yaml.example`: Update comments to reference dev mode as the
+  primary dev path.
+
+## Progress
+
+| # | Change | Strategy |
+|---|--------|----------|
+| 1 | config.rs + seed.rs + example configs | Fixup against `f815768` (Commit 4) |
+
+**Fixup rationale:** All four files were introduced/modified exclusively in
+Commit 4. No other Phase 7 commit depends on `SeedWorker` or
+`seed_workers`. The fmt commit (Commit 6) reconciles naturally. This is a
+redesign of Commit 4's purpose — from "random-key seed with token printing"
+to "dev-mode seed with pre-configured keys."
+
+After the fixup, Commit 4's message should be amended to:
+
+```
+cbsd-rs/server: add dev mode with pre-configured worker seeding
+
+New dev config section: dev.enabled (default false) gates dev-mode
+features. dev.seed_workers accepts pre-configured API keys (name, arch,
+api_key) for zero-touch compose deployments. Replaces seed.seed_workers
+(removed). Server validates dev key format at startup and refuses to
+start if dev workers are configured without dev.enabled. Logs a
+prominent warning when running in dev mode. Adds workers:view to
+builder role.
+```
