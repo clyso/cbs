@@ -37,6 +37,7 @@ pub struct ActiveBuild {
 }
 
 /// Summary information about a connected worker (returned by `GET /workers`).
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct WorkerInfo {
     pub connection_id: ConnectionId,
@@ -187,6 +188,7 @@ impl BuildQueue {
     }
 
     /// Return summary information for all workers (for `GET /api/workers`).
+    #[allow(dead_code)]
     pub fn connected_workers(&self) -> Vec<WorkerInfo> {
         self.workers
             .iter()
