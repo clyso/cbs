@@ -58,6 +58,10 @@ pub struct ServerConfig {
     #[serde(default)]
     pub seed: SeedConfig,
 
+    /// Development mode configuration.
+    #[serde(default)]
+    pub dev: DevConfig,
+
     /// Tracing / logging configuration.
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -138,15 +142,34 @@ impl Default for LogRetentionConfig {
 pub struct SeedConfig {
     /// Admin email for first-startup seeding.
     pub seed_admin: Option<String>,
-
-    /// Worker API keys to provision on first startup.
-    #[serde(default)]
-    pub seed_worker_api_keys: Vec<SeedWorkerKey>,
 }
 
+/// Development mode configuration. Gated by `dev.enabled` (default false).
+///
+/// When enabled, the server seeds workers with pre-configured API keys at
+/// first startup, allowing zero-touch `podman-compose` deployments where
+/// both server and worker configs reference the same key.
+#[derive(Debug, Default, Deserialize)]
+pub struct DevConfig {
+    /// Enable development mode. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Workers to seed with pre-configured API keys on first startup.
+    /// Only effective when `enabled` is true.
+    #[serde(default)]
+    pub seed_workers: Vec<DevSeedWorker>,
+}
+
+/// A worker to seed in dev mode, with a pre-configured API key.
 #[derive(Debug, Deserialize)]
-pub struct SeedWorkerKey {
+pub struct DevSeedWorker {
     pub name: String,
+    /// Typed as `Arch` — serde validates at parse time.
+    pub arch: cbsd_proto::Arch,
+    /// Pre-configured API key. Must match `cbsk_` + 64 hex chars (69 total).
+    /// The same key is configured in the worker's YAML config.
+    pub api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,6 +236,31 @@ impl ServerConfig {
                 self.timeouts.reconnect_backoff_ceiling_secs,
                 self.timeouts.liveness_grace_period_secs,
             );
+        }
+
+        // Dev mode validation.
+        if !self.dev.seed_workers.is_empty() && !self.dev.enabled {
+            panic!(
+                "config error: dev.seed_workers is configured but dev.enabled is false — \
+                 set dev.enabled: true or remove dev.seed_workers"
+            );
+        }
+
+        for (i, w) in self.dev.seed_workers.iter().enumerate() {
+            if w.api_key.len() != 69 || !w.api_key.starts_with("cbsk_") {
+                panic!(
+                    "config error: dev.seed_workers[{i}].api_key must be 'cbsk_' + 64 hex chars \
+                     (69 characters total), got {} characters",
+                    w.api_key.len()
+                );
+            }
+            let hex_part = &w.api_key[5..];
+            if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+                panic!(
+                    "config error: dev.seed_workers[{i}].api_key contains non-hex characters \
+                     after 'cbsk_' prefix"
+                );
+            }
         }
     }
 }

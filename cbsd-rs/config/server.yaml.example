@@ -78,13 +78,24 @@ seed:
   # The admin user is assigned the built-in 'admin' role.
   seed_admin: "admin@example.com"
 
-  # Worker API keys to provision at first startup.
-  # The plaintext key (format: cbsk_<hex>) is printed to stdout immediately
-  # after the transaction commits — capture it from the startup log.
-  # It cannot be recovered after that point.
-  seed_worker_api_keys:
-    - name: worker-x86-01
-    # - name: worker-arm-01
+# --------------------------------------------------------------------------
+# Development mode
+#
+# For local development and podman-compose deployments only.
+# Do NOT enable in production — use the REST API to register workers.
+# --------------------------------------------------------------------------
+
+# dev:
+#   enabled: true
+#   seed_workers:
+#     - name: dev-worker-x86
+#       arch: x86_64
+#       # Pre-configured API key — use the same value in the worker's config.
+#       # Generate with: python3 -c "import secrets; print('cbsk_' + secrets.token_hex(32))"
+#       api_key: "cbsk_0000000000000000000000000000000000000000000000000000000000000000"
+#     # - name: dev-worker-arm
+#     #   arch: aarch64
+#     #   api_key: "cbsk_..."
 
 # --------------------------------------------------------------------------
 # Timeouts  (all values in seconds — defaults shown)
