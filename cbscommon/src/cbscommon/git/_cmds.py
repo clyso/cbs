@@ -29,7 +29,7 @@ from cbscommon.git._exceptions import (
 )
 from cbscommon.git._types import SHA
 
-logger = logging.getLogger("cbscommon.git")
+logger = logging.getLogger(__name__)
 
 
 def git_check_patches_diff(
