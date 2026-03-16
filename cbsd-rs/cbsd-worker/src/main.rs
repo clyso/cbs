@@ -22,7 +22,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::WorkerConfig;
-use crate::signal::{ShutdownState, install_signal_handler};
+use crate::signal::{install_signal_handler, ShutdownState};
 use crate::ws::connection::reconnect_loop;
 
 /// CBS build worker — connects to the CBS server via WebSocket and executes
@@ -39,8 +39,8 @@ struct Cli {
 async fn main() {
     let cli = Cli::parse();
 
-    // Load configuration.
-    let config = match WorkerConfig::load(&cli.config) {
+    // Load and resolve configuration (token or legacy fields).
+    let raw_config = match WorkerConfig::load(&cli.config) {
         Ok(c) => c,
         Err(err) => {
             eprintln!("error: {err}");
@@ -48,15 +48,23 @@ async fn main() {
         }
     };
 
-    // Initialize tracing (respects RUST_LOG env var, defaults to info).
+    // Initialize tracing before resolve() so token warnings are visible.
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
+    let config = match raw_config.resolve() {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::error!("{err}");
+            std::process::exit(1);
+        }
+    };
+
     tracing::info!(
-        worker_id = %config.worker_id,
+        worker_name = %config.worker_name,
         arch = %config.arch,
         server = %config.server_url,
         "starting cbsd-worker"

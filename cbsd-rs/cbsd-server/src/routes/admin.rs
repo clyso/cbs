@@ -253,22 +253,14 @@ struct RegisterWorkerResponse {
     worker_token: String,
 }
 
-#[derive(Serialize)]
-struct WorkerTokenPayload {
-    worker_id: String,
-    worker_name: String,
-    api_key: String,
-    arch: String,
-}
-
 fn build_worker_token(worker_id: &str, name: &str, api_key: &str, arch: &str) -> String {
-    let payload = WorkerTokenPayload {
+    let payload = cbsd_proto::WorkerToken {
         worker_id: worker_id.to_string(),
         worker_name: name.to_string(),
         api_key: api_key.to_string(),
         arch: arch.to_string(),
     };
-    let json = serde_json::to_string(&payload).expect("WorkerTokenPayload is always serializable");
+    let json = serde_json::to_string(&payload).expect("WorkerToken is always serializable");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json.as_bytes())
 }
 

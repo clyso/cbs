@@ -12,22 +12,31 @@
 
 use std::path::PathBuf;
 
+use base64::Engine;
 use serde::Deserialize;
 
 /// Worker configuration loaded from a YAML file.
+///
+/// Identity fields (`api_key`, `arch`) can be provided individually or
+/// via a `worker_token` (base64url-encoded JSON from the registration API).
+/// The `CBSD_WORKER_TOKEN` env var takes highest precedence.
 #[derive(Debug, Deserialize)]
 pub struct WorkerConfig {
     /// WebSocket endpoint, e.g. `wss://cbsd.clyso.com:8080/api/ws/worker`.
     pub server_url: String,
 
-    /// API key for authentication (`cbsk_<hex>`).
-    pub api_key: String,
+    /// Base64url-encoded worker token from `POST /api/admin/workers`.
+    /// Overrides `api_key` and `arch` when present.
+    #[serde(default)]
+    pub worker_token: Option<String>,
 
-    /// Human-readable display label for this worker.
-    pub worker_id: String,
+    /// API key for authentication (`cbsk_<hex>`). Used when no token.
+    #[serde(default)]
+    pub api_key: Option<String>,
 
-    /// Build architecture: `x86_64` or `aarch64`.
-    pub arch: String,
+    /// Build architecture: `x86_64` or `aarch64`. Used when no token.
+    #[serde(default)]
+    pub arch: Option<String>,
 
     /// Optional path to a custom TLS CA bundle (future enhancement).
     #[serde(default)]
@@ -58,6 +67,32 @@ pub struct WorkerConfig {
     pub reconnect_backoff_ceiling_secs: Option<u64>,
 }
 
+/// Resolved worker configuration with all identity fields guaranteed present.
+pub struct ResolvedWorkerConfig {
+    pub server_url: String,
+    pub api_key: String,
+    /// For local logging only — not sent over the wire.
+    pub worker_name: String,
+    pub arch: cbsd_proto::Arch,
+
+    // Operational fields
+    #[allow(dead_code)]
+    pub tls_ca_bundle_path: Option<PathBuf>,
+    pub cbscore_wrapper_path: Option<PathBuf>,
+    pub cbscore_config_path: Option<PathBuf>,
+    pub build_timeout_secs: Option<u64>,
+    pub component_temp_dir: Option<PathBuf>,
+    pub sigkill_escalation_timeout_secs: Option<u64>,
+    pub reconnect_backoff_ceiling_secs: Option<u64>,
+}
+
+impl ResolvedWorkerConfig {
+    /// Backoff ceiling in seconds, defaulting to 30.
+    pub fn backoff_ceiling_secs(&self) -> u64 {
+        self.reconnect_backoff_ceiling_secs.unwrap_or(30)
+    }
+}
+
 impl WorkerConfig {
     /// Load configuration from a YAML file.
     pub fn load(path: &std::path::Path) -> Result<Self, ConfigError> {
@@ -65,50 +100,105 @@ impl WorkerConfig {
             .map_err(|e| ConfigError::Read(path.to_path_buf(), e))?;
         let config: WorkerConfig =
             serde_yml::from_str(&contents).map_err(ConfigError::Parse)?;
-        config.validate()?;
         Ok(config)
     }
 
-    /// Validate required fields and value constraints.
-    fn validate(&self) -> Result<(), ConfigError> {
+    /// Resolve identity fields from token or individual fields.
+    ///
+    /// Priority: `CBSD_WORKER_TOKEN` env var > `worker_token` config field >
+    /// individual `api_key` + `arch` fields.
+    pub fn resolve(self) -> Result<ResolvedWorkerConfig, ConfigError> {
         if self.server_url.is_empty() {
             return Err(ConfigError::Validation(
                 "server_url must not be empty".to_string(),
             ));
         }
-        if self.api_key.is_empty() {
+
+        // Try env var first
+        let token_str = std::env::var("CBSD_WORKER_TOKEN").ok();
+
+        if token_str.is_some() && self.worker_token.is_some() {
+            tracing::warn!(
+                "both CBSD_WORKER_TOKEN env var and worker_token config are set — \
+                 env var takes precedence"
+            );
+        }
+
+        let token_b64 = token_str.or(self.worker_token);
+
+        if let Some(b64) = token_b64 {
+            let json_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(b64.as_bytes())
+                .map_err(|e| {
+                    ConfigError::Validation(format!("invalid worker token base64: {e}"))
+                })?;
+            let token: cbsd_proto::WorkerToken =
+                serde_json::from_slice(&json_bytes).map_err(|e| {
+                    ConfigError::Validation(format!("invalid worker token JSON: {e}"))
+                })?;
+
+            let arch = parse_arch(&token.arch)?;
+
+            return Ok(ResolvedWorkerConfig {
+                server_url: self.server_url,
+                api_key: token.api_key,
+                worker_name: token.worker_name,
+                arch,
+                tls_ca_bundle_path: self.tls_ca_bundle_path,
+                cbscore_wrapper_path: self.cbscore_wrapper_path,
+                cbscore_config_path: self.cbscore_config_path,
+                build_timeout_secs: self.build_timeout_secs,
+                component_temp_dir: self.component_temp_dir,
+                sigkill_escalation_timeout_secs: self.sigkill_escalation_timeout_secs,
+                reconnect_backoff_ceiling_secs: self.reconnect_backoff_ceiling_secs,
+            });
+        }
+
+        // Legacy mode: individual fields
+        let api_key = self.api_key.ok_or_else(|| {
+            ConfigError::Validation(
+                "api_key is required when no worker_token is provided".to_string(),
+            )
+        })?;
+        if api_key.is_empty() {
             return Err(ConfigError::Validation(
                 "api_key must not be empty".to_string(),
             ));
         }
-        if self.worker_id.is_empty() {
-            return Err(ConfigError::Validation(
-                "worker_id must not be empty".to_string(),
-            ));
-        }
-        match self.arch.as_str() {
-            "x86_64" | "aarch64" => {}
-            other => {
-                return Err(ConfigError::Validation(format!(
-                    "unsupported arch '{other}'; expected 'x86_64' or 'aarch64'"
-                )));
-            }
-        }
-        Ok(())
-    }
 
-    /// Backoff ceiling in seconds, defaulting to 30.
-    pub fn backoff_ceiling_secs(&self) -> u64 {
-        self.reconnect_backoff_ceiling_secs.unwrap_or(30)
-    }
+        let arch_str = self.arch.ok_or_else(|| {
+            ConfigError::Validation(
+                "arch is required when no worker_token is provided".to_string(),
+            )
+        })?;
+        let arch = parse_arch(&arch_str)?;
 
-    /// Parse the arch string into a `cbsd_proto::Arch`.
-    pub fn parsed_arch(&self) -> cbsd_proto::Arch {
-        match self.arch.as_str() {
-            "aarch64" => cbsd_proto::Arch::Aarch64,
-            // Validated in `validate()`, so this is safe.
-            _ => cbsd_proto::Arch::X86_64,
-        }
+        // In legacy mode, worker_name is for local logging only.
+        let worker_name = "legacy-worker".to_string();
+
+        Ok(ResolvedWorkerConfig {
+            server_url: self.server_url,
+            api_key,
+            worker_name,
+            arch,
+            tls_ca_bundle_path: self.tls_ca_bundle_path,
+            cbscore_wrapper_path: self.cbscore_wrapper_path,
+            cbscore_config_path: self.cbscore_config_path,
+            build_timeout_secs: self.build_timeout_secs,
+            component_temp_dir: self.component_temp_dir,
+            sigkill_escalation_timeout_secs: self.sigkill_escalation_timeout_secs,
+            reconnect_backoff_ceiling_secs: self.reconnect_backoff_ceiling_secs,
+        })
+    }
+}
+
+fn parse_arch(s: &str) -> Result<cbsd_proto::Arch, ConfigError> {
+    match s {
+        "x86_64" => Ok(cbsd_proto::Arch::X86_64),
+        "aarch64" | "arm64" => Ok(cbsd_proto::Arch::Aarch64),
+        other => Err(ConfigError::Validation(format!(
+            "unsupported arch '{other}'; expected 'x86_64' or 'aarch64'"
+        ))),
     }
 }
 

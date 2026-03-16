@@ -24,7 +24,7 @@ use cbsd_proto::ws::BuildFinishedStatus;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 
-use crate::config::WorkerConfig;
+use crate::config::ResolvedWorkerConfig;
 
 /// Default SIGTERM → SIGKILL escalation timeout in seconds.
 const DEFAULT_SIGKILL_TIMEOUT_SECS: u64 = 15;
@@ -82,7 +82,7 @@ impl std::error::Error for ExecutorError {
 }
 
 /// Resolve the wrapper script path from config or default.
-fn resolve_wrapper_path(config: &WorkerConfig) -> PathBuf {
+fn resolve_wrapper_path(config: &ResolvedWorkerConfig) -> PathBuf {
     if let Some(ref path) = config.cbscore_wrapper_path {
         path.clone()
     } else {
@@ -101,7 +101,7 @@ fn resolve_wrapper_path(config: &WorkerConfig) -> PathBuf {
 /// to its stdin as JSON. The process is placed in its own process group via
 /// `setsid()` for clean signal delivery.
 pub async fn spawn_build(
-    config: &WorkerConfig,
+    config: &ResolvedWorkerConfig,
     build_id: BuildId,
     descriptor: &BuildDescriptor,
     component_path: &Path,

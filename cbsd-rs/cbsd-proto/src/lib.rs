@@ -19,3 +19,14 @@ pub use build::{
     BuildComponent, BuildDescriptor, BuildDestImage, BuildId, BuildSignedOffBy, BuildState,
     BuildTarget, Priority, VersionType,
 };
+
+/// Worker token payload — the base64url-encoded JSON blob returned by the
+/// server at worker registration. Contains everything the worker needs to
+/// connect. Serialized by the server, deserialized by the worker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WorkerToken {
+    pub worker_id: String,
+    pub worker_name: String,
+    pub api_key: String,
+    pub arch: String,
+}
