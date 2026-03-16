@@ -18,11 +18,13 @@ use cbsd_proto::Arch;
 pub type ConnectionId = String;
 
 /// Tracks the lifecycle state of a connected worker.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum WorkerState {
     /// Worker is connected and ready to accept builds.
     Connected {
-        worker_id: String,
+        registered_worker_id: String,
+        worker_name: String,
         arch: Arch,
         cores_total: u32,
         ram_total_mb: u64,
@@ -30,11 +32,15 @@ pub enum WorkerState {
     /// Worker disconnected; within the grace period for reconnection.
     Disconnected {
         since: tokio::time::Instant,
-        worker_id: String,
+        registered_worker_id: String,
+        worker_name: String,
         arch: Arch,
     },
     /// Worker announced graceful shutdown.
-    Stopping { worker_id: String },
+    Stopping {
+        registered_worker_id: String,
+        worker_name: String,
+    },
     /// Worker is dead (grace period expired or unrecoverable).
     Dead,
 }
@@ -46,12 +52,32 @@ impl WorkerState {
         matches!(self, Self::Connected { .. })
     }
 
-    /// Human-readable display label, if available.
-    pub fn worker_id(&self) -> Option<&str> {
+    /// Registered worker UUID, if available.
+    pub fn registered_worker_id(&self) -> Option<&str> {
         match self {
-            Self::Connected { worker_id, .. }
-            | Self::Disconnected { worker_id, .. }
-            | Self::Stopping { worker_id } => Some(worker_id),
+            Self::Connected {
+                registered_worker_id,
+                ..
+            }
+            | Self::Disconnected {
+                registered_worker_id,
+                ..
+            }
+            | Self::Stopping {
+                registered_worker_id,
+                ..
+            } => Some(registered_worker_id),
+            Self::Dead => None,
+        }
+    }
+
+    /// Human-readable display name, if available.
+    #[allow(dead_code)]
+    pub fn worker_name(&self) -> Option<&str> {
+        match self {
+            Self::Connected { worker_name, .. }
+            | Self::Disconnected { worker_name, .. }
+            | Self::Stopping { worker_name, .. } => Some(worker_name),
             Self::Dead => None,
         }
     }
@@ -65,6 +91,7 @@ impl WorkerState {
     }
 
     /// Short name for the current state (used in API responses).
+    #[allow(dead_code)]
     pub fn state_name(&self) -> &'static str {
         match self {
             Self::Connected { .. } => "connected",
@@ -99,7 +126,7 @@ pub fn start_grace_period_monitor(
         };
 
         if !still_disconnected {
-            // Worker reconnected or was already marked dead.
+            // Worker reconnected, was deregistered, or was already marked dead.
             return;
         }
 

@@ -21,6 +21,8 @@ use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage, WorkerRe
 use cbsd_proto::BuildId;
 
 use crate::app::AppState;
+use crate::db;
+use crate::db::workers::WorkerRow;
 use crate::ws::dispatch;
 use crate::ws::liveness::WorkerState;
 
@@ -28,6 +30,9 @@ use crate::ws::liveness::WorkerState;
 ///
 /// Auth is performed manually from the upgrade request headers because the
 /// `AuthUser` extractor targets REST endpoints, not WebSocket upgrades.
+///
+/// After API key verification, looks up the registered worker bound to that
+/// key. Unregistered API keys are rejected with 403.
 pub async fn ws_upgrade(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -49,22 +54,49 @@ pub async fn ws_upgrade(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token)
+    let cached = crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token)
         .await
         .map_err(|e| {
             tracing::warn!("ws upgrade rejected: {e}");
             StatusCode::UNAUTHORIZED
         })?;
 
+    // Look up the registered worker bound to this API key
+    let worker_row = db::workers::get_worker_by_api_key_id(&state.pool, cached.api_key_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("ws upgrade: DB error looking up worker: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or_else(|| {
+            tracing::warn!(
+                api_key_id = cached.api_key_id,
+                "ws upgrade rejected: API key is not bound to a registered worker"
+            );
+            StatusCode::FORBIDDEN
+        })?;
+
     // Generate a server-assigned connection UUID
     let connection_id = uuid::Uuid::new_v4().to_string();
-    tracing::info!(connection_id = %connection_id, "ws upgrade accepted");
+    tracing::info!(
+        connection_id = %connection_id,
+        worker_id = %worker_row.id,
+        worker_name = %worker_row.name,
+        "ws upgrade accepted"
+    );
 
-    Ok(ws.on_upgrade(move |socket| handle_connection(socket, state, connection_id)))
+    Ok(ws.on_upgrade(move |socket| {
+        handle_connection(socket, state, connection_id, worker_row)
+    }))
 }
 
 /// Main per-connection loop. Runs until the WebSocket closes.
-async fn handle_connection(socket: WebSocket, state: AppState, connection_id: String) {
+async fn handle_connection(
+    socket: WebSocket,
+    state: AppState,
+    connection_id: String,
+    worker_row: WorkerRow,
+) {
     let (mut sender, mut receiver) = socket.split();
 
     // Step 1: Wait for the hello message (first text frame).
@@ -73,14 +105,15 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
         Err(reason) => {
             tracing::warn!(
                 connection_id = %connection_id,
+                worker_name = %worker_row.name,
                 "ws handshake failed: {reason}"
             );
             let _ = send_json(
                 &mut sender,
                 &ServerMessage::Error {
                     reason,
-                    min_version: Some(1),
-                    max_version: Some(1),
+                    min_version: Some(2),
+                    max_version: Some(2),
                 },
             )
             .await;
@@ -88,36 +121,89 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
         }
     };
 
-    // Step 2: Validate protocol version.
-    let (worker_id, arch, cores_total, ram_total_mb) = match hello {
+    // Step 2: Validate protocol version and arch.
+    let (arch, cores_total, ram_total_mb) = match hello {
         WorkerMessage::Hello {
             protocol_version,
-            worker_id,
             arch,
             cores_total,
             ram_total_mb,
         } => {
-            if protocol_version != 1 {
+            if protocol_version != 2 {
                 let reason = format!(
-                    "unsupported protocol version {protocol_version}; server supports 1"
+                    "unsupported protocol version {protocol_version}; server supports 2"
                 );
                 tracing::warn!(
                     connection_id = %connection_id,
-                    worker_id = %worker_id,
+                    worker_name = %worker_row.name,
                     "{reason}"
                 );
                 let _ = send_json(
                     &mut sender,
                     &ServerMessage::Error {
                         reason,
-                        min_version: Some(1),
-                        max_version: Some(1),
+                        min_version: Some(2),
+                        max_version: Some(2),
                     },
                 )
                 .await;
                 return;
             }
-            (worker_id, arch, cores_total, ram_total_mb)
+
+            // Validate arch against registered value. If the DB contains an
+            // unrecognizable arch string (corruption), reject rather than
+            // silently falling back.
+            let Ok(registered_arch) = serde_json::from_value::<cbsd_proto::Arch>(
+                serde_json::Value::String(worker_row.arch.clone()),
+            ) else {
+                let reason = format!(
+                    "worker '{}' has invalid arch '{}' in database — cannot validate",
+                    worker_row.name, worker_row.arch
+                );
+                tracing::error!(
+                    connection_id = %connection_id,
+                    worker_name = %worker_row.name,
+                    db_arch = %worker_row.arch,
+                    "{reason}"
+                );
+                let _ = send_json(
+                    &mut sender,
+                    &ServerMessage::Error {
+                        reason,
+                        min_version: None,
+                        max_version: None,
+                    },
+                )
+                .await;
+                return;
+            };
+
+            if arch != registered_arch {
+                let reason = format!(
+                    "arch mismatch: worker '{}' registered as {} but reported {} \
+                     — re-register with correct arch or fix the worker token",
+                    worker_row.name, worker_row.arch, arch
+                );
+                tracing::error!(
+                    connection_id = %connection_id,
+                    worker_name = %worker_row.name,
+                    registered_arch = %worker_row.arch,
+                    reported_arch = %arch,
+                    "arch mismatch — disconnecting"
+                );
+                let _ = send_json(
+                    &mut sender,
+                    &ServerMessage::Error {
+                        reason,
+                        min_version: None,
+                        max_version: None,
+                    },
+                )
+                .await;
+                return;
+            }
+
+            (arch, cores_total, ram_total_mb)
         }
         other => {
             let reason = format!("expected hello, got {:?}", message_type_name(&other));
@@ -138,32 +224,85 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
         }
     };
 
+    let worker_name = worker_row.name.clone();
+    let registered_worker_id = worker_row.id.clone();
+
     tracing::info!(
         connection_id = %connection_id,
-        worker_id = %worker_id,
+        worker_id = %registered_worker_id,
+        worker_name = %worker_name,
         arch = %arch,
         cores = cores_total,
         ram_mb = ram_total_mb,
         "worker connected"
     );
 
-    // Step 3: Register worker in the build queue.
-    {
+    // Step 2b: Update last_seen.
+    if let Err(e) = db::workers::update_last_seen(&state.pool, &registered_worker_id).await {
+        tracing::warn!(worker_id = %registered_worker_id, "failed to update last_seen: {e}");
+    }
+
+    // Step 3: Connection migration — check for existing entry with same
+    // registered_worker_id (reconnection or stale double-connect).
+    let old_connection_to_cleanup: Option<(String, bool)> = {
         let mut queue = state.queue.lock().await;
+        let old = queue.workers.iter().find_map(|(cid, ws)| {
+            if ws.registered_worker_id() == Some(&registered_worker_id) && *cid != connection_id {
+                Some((cid.clone(), matches!(ws, WorkerState::Connected { .. })))
+            } else {
+                None
+            }
+        });
+
+        if let Some((old_cid, was_connected)) = &old {
+            // Migrate active build references from old to new connection
+            for ab in queue.active.values_mut() {
+                if ab.connection_id == *old_cid {
+                    ab.connection_id = connection_id.clone();
+                }
+            }
+            // Remove old entry
+            queue.workers.remove(old_cid.as_str());
+
+            tracing::info!(
+                old_connection = %old_cid,
+                new_connection = %connection_id,
+                was_connected = was_connected,
+                "migrated worker '{}' to new connection",
+                worker_name,
+            );
+        }
+
+        // Register new connection
         queue.register_worker(
             connection_id.clone(),
             WorkerState::Connected {
-                worker_id: worker_id.clone(),
+                registered_worker_id: registered_worker_id.clone(),
+                worker_name: worker_name.clone(),
                 arch,
                 cores_total,
                 ram_total_mb,
             },
         );
+
+        old.map(|(cid, was_connected)| (cid, was_connected))
+    };
+    // Queue lock released here.
+
+    // Clean up old connection's sender (after releasing queue lock to avoid
+    // lock inversion — cleanup_worker acquires worker_senders first, then queue).
+    if let Some((old_cid, was_connected)) = old_connection_to_cleanup {
+        {
+            let mut senders = state.worker_senders.lock().await;
+            senders.remove(&old_cid);
+        }
+        if was_connected {
+            // Stale double-connect: re-queue any orphaned build from old connection.
+            handle_worker_dead(&state, &old_cid).await;
+        }
     }
 
     // Step 3b: Register an outbound message channel for this worker.
-    // The dispatch engine sends messages via this channel; the forwarding
-    // task below reads from it and writes to the actual WebSocket.
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
     {
         let mut senders = state.worker_senders.lock().await;
@@ -175,7 +314,7 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
     if let Err(e) = send_json(
         &mut sender,
         &ServerMessage::Welcome {
-            protocol_version: 1,
+            protocol_version: 2,
             connection_id: connection_id.clone(),
             grace_period_secs,
         },
@@ -186,7 +325,7 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
             connection_id = %connection_id,
             "failed to send welcome: {e}"
         );
-        cleanup_worker(&state, &connection_id, &worker_id, false).await;
+        cleanup_worker(&state, &connection_id, &worker_name, &registered_worker_id, false).await;
         return;
     }
 
@@ -205,12 +344,6 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
     }
 
     // Step 5: Message loop.
-    //
-    // We run two concurrent tasks:
-    // - Forwarding: reads from outbound_rx and writes to the WebSocket sender.
-    // - Receiving: reads from the WebSocket receiver and dispatches messages.
-    //
-    // When either task ends, we cancel the other.
     use futures_util::{SinkExt, StreamExt};
 
     let forward_task = async {
@@ -228,7 +361,7 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
                 Err(e) => {
                     tracing::warn!(
                         connection_id = %connection_id,
-                        worker_id = %worker_id,
+                        worker_name = %worker_name,
                         "ws receive error: {e}"
                     );
                     break;
@@ -243,7 +376,8 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
                             handle_worker_message(
                                 &state,
                                 &connection_id,
-                                &worker_id,
+                                &worker_name,
+                                &registered_worker_id,
                                 worker_msg,
                             )
                             .await;
@@ -251,7 +385,7 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
                         Err(e) => {
                             tracing::warn!(
                                 connection_id = %connection_id,
-                                worker_id = %worker_id,
+                                worker_name = %worker_name,
                                 "failed to parse worker message: {e}"
                             );
                         }
@@ -260,18 +394,16 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
                 Message::Close(_) => {
                     tracing::info!(
                         connection_id = %connection_id,
-                        worker_id = %worker_id,
+                        worker_name = %worker_name,
                         "ws close frame received"
                     );
                     break;
                 }
-                // Ping/Pong handled automatically by axum; binary frames ignored.
                 _ => {}
             }
         }
     };
 
-    // Run both tasks concurrently; when one finishes the other is dropped.
     tokio::select! {
         () = forward_task => {
             tracing::debug!(
@@ -295,7 +427,7 @@ async fn handle_connection(socket: WebSocket, state: AppState, connection_id: St
             Some(WorkerState::Stopping { .. })
         )
     };
-    cleanup_worker(&state, &connection_id, &worker_id, is_stopping).await;
+    cleanup_worker(&state, &connection_id, &worker_name, &registered_worker_id, is_stopping).await;
 }
 
 /// Wait for the first text frame and parse it as a `WorkerMessage`.
@@ -304,7 +436,6 @@ async fn wait_for_hello(
 ) -> Result<WorkerMessage, String> {
     use futures_util::StreamExt;
 
-    // Give the worker 10 seconds to send hello.
     let timeout = tokio::time::Duration::from_secs(10);
     let result = tokio::time::timeout(timeout, async {
         while let Some(msg_result) = receiver.next().await {
@@ -316,10 +447,7 @@ async fn wait_for_hello(
                 Ok(Message::Close(_)) => {
                     return Err("connection closed before hello".to_string());
                 }
-                Ok(_) => {
-                    // Skip ping/pong/binary
-                    continue;
-                }
+                Ok(_) => continue,
                 Err(e) => {
                     return Err(format!("receive error: {e}"));
                 }
@@ -339,14 +467,15 @@ async fn wait_for_hello(
 async fn handle_worker_message(
     state: &AppState,
     connection_id: &str,
-    worker_id: &str,
+    worker_name: &str,
+    registered_worker_id: &str,
     msg: WorkerMessage,
 ) {
     match msg {
         WorkerMessage::Hello { .. } => {
             tracing::warn!(
                 connection_id = %connection_id,
-                worker_id = %worker_id,
+                worker_name = %worker_name,
                 "duplicate hello message — ignoring"
             );
         }
@@ -363,7 +492,7 @@ async fn handle_worker_message(
         } => {
             tracing::debug!(
                 connection_id = %connection_id,
-                worker_id = %worker_id,
+                worker_name = %worker_name,
                 build_id = %build_id,
                 start_seq = start_seq,
                 line_count = lines.len(),
@@ -404,6 +533,16 @@ async fn handle_worker_message(
                 error.as_deref(),
             )
             .await;
+
+            // Update last_seen on build_finished (proof-of-life).
+            if let Err(e) =
+                db::workers::update_last_seen(&state.pool, registered_worker_id).await
+            {
+                tracing::warn!(
+                    worker_id = %registered_worker_id,
+                    "failed to update last_seen on build_finished: {e}"
+                );
+            }
         }
         WorkerMessage::BuildRejected {
             build_id,
@@ -412,15 +551,12 @@ async fn handle_worker_message(
             dispatch::handle_build_rejected(state, connection_id, build_id.0, reason).await;
         }
         WorkerMessage::WorkerStatus { state: ws, build_id } => {
-            handle_worker_status(state, connection_id, worker_id, ws, build_id).await;
+            handle_worker_status(state, connection_id, worker_name, ws, build_id).await;
         }
-        WorkerMessage::WorkerStopping {
-            worker_id: ref wid,
-            ref reason,
-        } => {
+        WorkerMessage::WorkerStopping { ref reason } => {
             tracing::info!(
                 connection_id = %connection_id,
-                worker_id = %wid,
+                worker_name = %worker_name,
                 reason = %reason,
                 "worker stopping"
             );
@@ -428,32 +564,31 @@ async fn handle_worker_message(
             queue.set_worker_state(
                 connection_id,
                 WorkerState::Stopping {
-                    worker_id: wid.clone(),
+                    registered_worker_id: registered_worker_id.to_string(),
+                    worker_name: worker_name.to_string(),
                 },
             );
         }
     }
 }
 
-/// Reconnection decision table. Called when a worker sends `WorkerStatus`
-/// after reconnecting. Implements the 10-row matrix from the design doc.
+/// Reconnection decision table.
 async fn handle_worker_status(
     state: &AppState,
     connection_id: &str,
-    worker_id: &str,
+    worker_name: &str,
     reported_state: WorkerReportedState,
     reported_build_id: Option<BuildId>,
 ) {
     tracing::info!(
         connection_id = %connection_id,
-        worker_id = %worker_id,
+        worker_name = %worker_name,
         reported_state = ?reported_state,
         reported_build_id = ?reported_build_id,
         "processing worker status"
     );
 
     match (reported_state, reported_build_id) {
-        // Worker reports it is building something.
         (WorkerReportedState::Building, Some(build_id)) => {
             let db_state = match crate::db::builds::get_build(&state.pool, build_id.0).await {
                 Ok(Some(b)) => b.state,
@@ -469,8 +604,6 @@ async fn handle_worker_status(
 
             match db_state.as_str() {
                 "queued" => {
-                    // Server thinks queued but worker is building — stale dispatch from
-                    // a previous connection. Send revoke.
                     tracing::warn!(
                         build_id = build_id.0,
                         "reconnect: DB=queued but worker building — sending revoke"
@@ -478,21 +611,18 @@ async fn handle_worker_status(
                     let _ = dispatch::send_build_revoke(state, build_id.0).await;
                 }
                 "dispatched" => {
-                    // Implicit accept — transition to started and resume.
                     tracing::info!(
                         build_id = build_id.0,
                         "reconnect: DB=dispatched, worker building — implicit accept → started"
                     );
                     dispatch::handle_build_started(state, build_id.0).await;
 
-                    // Ensure active map has this build assigned to the new connection.
                     let mut queue = state.queue.lock().await;
                     if let Some(ab) = queue.active.get_mut(&build_id.0) {
                         ab.connection_id = connection_id.to_string();
                     }
                 }
                 "started" => {
-                    // Resume — just reassign the connection in the active map.
                     tracing::info!(
                         build_id = build_id.0,
                         "reconnect: DB=started, worker building — resume"
@@ -503,7 +633,6 @@ async fn handle_worker_status(
                     }
                 }
                 "revoking" => {
-                    // Re-send revoke.
                     tracing::info!(
                         build_id = build_id.0,
                         "reconnect: DB=revoking, worker building — re-sending revoke"
@@ -511,7 +640,6 @@ async fn handle_worker_status(
                     let _ = dispatch::send_build_revoke(state, build_id.0).await;
                 }
                 "failure" | "success" | "revoked" => {
-                    // Terminal state but worker still building — send revoke.
                     tracing::warn!(
                         build_id = build_id.0,
                         db_state = %db_state,
@@ -520,12 +648,10 @@ async fn handle_worker_status(
                     let _ = dispatch::send_build_revoke(state, build_id.0).await;
                 }
                 "not_found" => {
-                    // Build not in DB at all — send revoke to stop the worker.
                     tracing::warn!(
                         build_id = build_id.0,
                         "reconnect: build not found in DB — sending revoke"
                     );
-                    // Can't use send_build_revoke (no active entry), send directly.
                     let msg = ServerMessage::BuildRevoke { build_id };
                     let json = serde_json::to_string(&msg)
                         .expect("ServerMessage serialization cannot fail");
@@ -544,27 +670,13 @@ async fn handle_worker_status(
             }
         }
 
-        // Worker reports idle (no build, or explicitly idle).
         (WorkerReportedState::Idle, _) => {
-            // Check if we have active builds assigned to any previous connection
-            // for the same worker_id. We look for active builds where the
-            // connection is this worker's previous (now-dead) connection.
-            //
-            // The queue's active map is keyed by build_id, so we scan for builds
-            // that were dispatched to a connection that is now dead/disconnected.
-            // However, since this is a *new* connection and the worker is idle,
-            // we need to handle any builds the *old* connection had.
-            //
-            // For now, check if any build in the active map was assigned to a
-            // disconnected/dead connection with this worker_id.
             let stale_builds: Vec<(i64, String)> = {
                 let queue = state.queue.lock().await;
                 queue
                     .active
                     .values()
                     .filter(|ab| {
-                        // Check if the connection this build is assigned to is
-                        // disconnected or dead (not the current connection).
                         ab.connection_id != connection_id
                             && queue
                                 .get_worker(&ab.connection_id)
@@ -587,7 +699,6 @@ async fn handle_worker_status(
 
                 match db_state.as_str() {
                     "dispatched" => {
-                        // Worker never started the build — re-queue at front.
                         tracing::warn!(
                             build_id = build_id,
                             old_connection = %old_cid,
@@ -596,7 +707,6 @@ async fn handle_worker_status(
                         requeue_active_build(state, *build_id).await;
                     }
                     "started" => {
-                        // Worker lost the build while building.
                         tracing::error!(
                             build_id = build_id,
                             old_connection = %old_cid,
@@ -608,7 +718,6 @@ async fn handle_worker_status(
                 }
             }
 
-            // Worker is idle — try dispatch.
             if let Err(dispatch::DispatchError::NothingToDispatch) =
                 dispatch::try_dispatch(state).await
             {
@@ -619,11 +728,10 @@ async fn handle_worker_status(
             }
         }
 
-        // Worker reports Building but with no build_id — treat as protocol error.
         (WorkerReportedState::Building, None) => {
             tracing::warn!(
                 connection_id = %connection_id,
-                worker_id = %worker_id,
+                worker_name = %worker_name,
                 "worker reports building but no build_id — ignoring"
             );
         }
@@ -649,11 +757,19 @@ pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
         };
 
         match db_state.as_str() {
-            "dispatched" | "started" => {
+            "dispatched" => {
+                // Re-queue with original priority (not hardcoded Normal).
+                tracing::warn!(
+                    build_id = build_id,
+                    connection_id = %connection_id,
+                    "worker dead — re-queuing dispatched build"
+                );
+                requeue_active_build(state, build_id).await;
+            }
+            "started" => {
                 tracing::error!(
                     build_id = build_id,
                     connection_id = %connection_id,
-                    db_state = %db_state,
                     "worker dead — marking FAILURE(worker lost)"
                 );
                 fail_build(state, build_id, "worker lost").await;
@@ -689,7 +805,6 @@ pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
                 }
             }
             _ => {
-                // Terminal state — just clean up active map.
                 let mut queue = state.queue.lock().await;
                 queue.active.remove(&build_id);
             }
@@ -718,6 +833,7 @@ async fn fail_build(state: &AppState, build_id: i64, reason: &str) {
 }
 
 /// Re-queue an active build at the front of its priority lane.
+/// Uses `ab.priority` — not hardcoded `Priority::Normal`.
 async fn requeue_active_build(state: &AppState, build_id: i64) {
     let active_build = {
         let mut queue = state.queue.lock().await;
@@ -734,20 +850,18 @@ async fn requeue_active_build(state: &AppState, build_id: i64) {
         let mut queue = state.queue.lock().await;
         queue.enqueue_front(crate::queue::QueuedBuild {
             build_id: BuildId(build_id),
-            priority: cbsd_proto::Priority::Normal,
+            priority: ab.priority,
             descriptor: ab.descriptor,
             user_email: String::new(),
             queued_at: 0,
         });
     }
 
-    // Remove watch sender (will be re-created on next dispatch).
     {
         let mut watchers = state.log_watchers.lock().await;
         watchers.remove(&build_id);
     }
 
-    // Try to dispatch to another worker.
     if let Err(dispatch::DispatchError::NothingToDispatch) = dispatch::try_dispatch(state).await {
         tracing::debug!("no workers available after re-queue of build {build_id}");
     }
@@ -757,7 +871,8 @@ async fn requeue_active_build(state: &AppState, build_id: i64) {
 async fn cleanup_worker(
     state: &AppState,
     connection_id: &str,
-    worker_id: &str,
+    worker_name: &str,
+    registered_worker_id: &str,
     is_stopping: bool,
 ) {
     // Remove the outbound sender channel.
@@ -767,11 +882,9 @@ async fn cleanup_worker(
     }
 
     if is_stopping {
-        // Worker announced graceful shutdown — skip grace period, go straight
-        // to Dead. Re-queue any DISPATCHED builds (worker never started them).
         tracing::info!(
             connection_id = %connection_id,
-            worker_id = %worker_id,
+            worker_name = %worker_name,
             "worker stopped — marking dead (immediate)"
         );
 
@@ -780,10 +893,8 @@ async fn cleanup_worker(
             queue.set_worker_state(connection_id, WorkerState::Dead);
         }
 
-        // Handle active builds: re-queue dispatched, fail started.
         handle_worker_dead(state, connection_id).await;
     } else {
-        // Worker dropped unexpectedly — enter grace period.
         let arch = {
             let queue = state.queue.lock().await;
             queue.get_worker(connection_id).and_then(|w| w.arch())
@@ -792,7 +903,7 @@ async fn cleanup_worker(
         if let Some(arch) = arch {
             tracing::warn!(
                 connection_id = %connection_id,
-                worker_id = %worker_id,
+                worker_name = %worker_name,
                 "worker disconnected — entering grace period"
             );
 
@@ -802,23 +913,19 @@ async fn cleanup_worker(
                     connection_id,
                     WorkerState::Disconnected {
                         since: tokio::time::Instant::now(),
-                        worker_id: worker_id.to_string(),
+                        registered_worker_id: registered_worker_id.to_string(),
+                        worker_name: worker_name.to_string(),
                         arch,
                     },
                 );
             }
 
-            // Start grace period monitor.
             let grace_secs = state.config.timeouts.liveness_grace_period_secs;
-            crate::ws::liveness::start_grace_period_monitor(
-                state,
-                connection_id,
-                grace_secs,
-            );
+            crate::ws::liveness::start_grace_period_monitor(state, connection_id, grace_secs);
         } else {
             tracing::warn!(
                 connection_id = %connection_id,
-                worker_id = %worker_id,
+                worker_name = %worker_name,
                 "worker disconnected with unknown arch — marking dead"
             );
 

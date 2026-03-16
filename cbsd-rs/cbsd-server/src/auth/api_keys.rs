@@ -35,6 +35,7 @@ use crate::db;
 /// Cached API key entry (stored after successful verification).
 #[derive(Debug, Clone)]
 pub struct CachedApiKey {
+    pub api_key_id: i64,
     pub owner_email: String,
     pub key_prefix: String,
     pub expires_at: Option<i64>,
@@ -250,6 +251,7 @@ pub async fn verify_api_key(
         for row in &rows {
             if argon2_verify(&raw_key_owned, &row.key_hash) {
                 return Some(CachedApiKey {
+                    api_key_id: row.id,
                     owner_email: row.owner_email.clone(),
                     key_prefix: row.key_prefix.clone(),
                     expires_at: row.expires_at,

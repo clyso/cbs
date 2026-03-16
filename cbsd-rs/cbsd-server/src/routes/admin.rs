@@ -386,11 +386,9 @@ async fn register_worker(
 // DELETE /api/admin/workers/{id}
 // ---------------------------------------------------------------------------
 
-/// Deregister a worker: revoke its API key, purge cache, delete DB row.
-///
-/// Force-disconnect of the live WebSocket connection is deferred to Commit 2
-/// (requires `registered_worker_id` on `WorkerState`). After this commit,
-/// the worker stays connected until its next auth check fails naturally.
+/// Deregister a worker: revoke its API key, purge cache, delete DB row,
+/// and force-disconnect the live WebSocket connection (re-queuing any
+/// in-flight build via the dead-worker resolution mechanism).
 async fn deregister_worker(
     State(state): State<AppState>,
     user: AuthUser,
@@ -453,6 +451,11 @@ async fn deregister_worker(
         cache.remove_by_prefix(&prefix);
     }
 
+    // Force-disconnect: find connection by registered_worker_id, remove from
+    // queue map, then (after releasing queue lock) remove sender and re-queue
+    // any in-flight build.
+    force_disconnect_worker(&state, &id).await;
+
     tracing::info!(
         "user {} deregistered worker '{}' (id={})",
         user.email,
@@ -472,8 +475,7 @@ async fn deregister_worker(
 
 /// Rotate a worker's API key: revoke old key, create new one, return new
 /// worker token. Crash-safe: insert new → update FK → revoke old → commit.
-///
-/// Force-disconnect of the live WebSocket connection is deferred to Commit 2.
+/// Force-disconnects the worker so it must reconnect with the new key.
 async fn regenerate_worker_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -553,6 +555,9 @@ async fn regenerate_worker_token(
         cache.remove_by_prefix(&old_prefix);
     }
 
+    // Force-disconnect so the worker must reconnect with the new key.
+    force_disconnect_worker(&state, &id).await;
+
     let token = build_worker_token(&id, &worker.name, &plaintext_key, &worker.arch);
 
     tracing::info!(
@@ -568,6 +573,48 @@ async fn regenerate_worker_token(
         arch: worker.arch,
         worker_token: token,
     }))
+}
+
+/// Force-disconnect a worker by its registered UUID.
+///
+/// Sequence (avoids deadlock — `handle_worker_dead` re-acquires queue mutex):
+/// 1. Lock queue → scan for connection by `registered_worker_id` → extract
+///    connection_id → remove entry → release lock.
+/// 2. Remove from `worker_senders` (drops sender, closes socket).
+/// 3. Call `handle_worker_dead` to re-queue any in-flight build.
+async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
+    let connection_id = {
+        let mut queue = state.queue.lock().await;
+        let found = queue
+            .workers
+            .iter()
+            .find(|(_, ws)| ws.registered_worker_id() == Some(registered_worker_id))
+            .map(|(cid, _)| cid.clone());
+
+        if let Some(cid) = &found {
+            queue.workers.remove(cid.as_str());
+        }
+        found
+    };
+    // Queue lock released.
+
+    if let Some(cid) = connection_id {
+        // Drop the sender — closes the socket, triggers cleanup_worker which
+        // finds no queue entry and bails.
+        {
+            let mut senders = state.worker_senders.lock().await;
+            senders.remove(&cid);
+        }
+
+        // Re-queue any in-flight build.
+        crate::ws::handler::handle_worker_dead(state, &cid).await;
+
+        tracing::info!(
+            connection_id = %cid,
+            registered_worker_id = %registered_worker_id,
+            "force-disconnected worker"
+        );
+    }
 }
 
 /// Check if a sqlx error is a UNIQUE constraint violation.

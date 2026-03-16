@@ -63,14 +63,11 @@ pub enum ServerMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WorkerMessage {
-    /// First message after WebSocket connect. Auth is validated at HTTP
-    /// upgrade, not in this message. Combines protocol negotiation and
-    /// capability registration.
+    /// First message after WebSocket connect (protocol v2). Auth is validated
+    /// at HTTP upgrade, not in this message. The server derives worker identity
+    /// from the API key used at upgrade — `worker_id` is no longer sent.
     Hello {
         protocol_version: u32,
-        /// Human-readable display label. NOT the identity key — the server
-        /// keys its worker map by a server-assigned connection UUID.
-        worker_id: String,
         arch: crate::arch::Arch,
         cores_total: u32,
         ram_total_mb: u64,
@@ -116,11 +113,9 @@ pub enum WorkerMessage {
         error: Option<String>,
     },
 
-    /// Worker is shutting down gracefully. `worker_id` is for logging only.
-    WorkerStopping {
-        worker_id: String,
-        reason: String,
-    },
+    /// Worker is shutting down gracefully (protocol v2). The server identifies
+    /// the worker from the connection map — `worker_id` is no longer sent.
+    WorkerStopping { reason: String },
 }
 
 /// State reported by a worker on reconnect.
@@ -213,8 +208,7 @@ mod tests {
     #[test]
     fn worker_message_hello_round_trip() {
         let msg = WorkerMessage::Hello {
-            protocol_version: 1,
-            worker_id: "worker-arm64-01".to_string(),
+            protocol_version: 2,
             arch: Arch::Aarch64,
             cores_total: 16,
             ram_total_mb: 65536,
@@ -222,6 +216,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"hello""#));
         assert!(json.contains(r#""arch":"aarch64""#));
+        assert!(!json.contains("worker_id"));
         let parsed: WorkerMessage = serde_json::from_str(&json).unwrap();
         if let WorkerMessage::Hello { arch, .. } = parsed {
             assert_eq!(arch, Arch::Aarch64);
@@ -232,7 +227,7 @@ mod tests {
 
     #[test]
     fn worker_message_hello_arm64_alias() {
-        let json = r#"{"type":"hello","protocol_version":1,"worker_id":"w1","arch":"arm64","cores_total":8,"ram_total_mb":32768}"#;
+        let json = r#"{"type":"hello","protocol_version":2,"arch":"arm64","cores_total":8,"ram_total_mb":32768}"#;
         let parsed: WorkerMessage = serde_json::from_str(json).unwrap();
         if let WorkerMessage::Hello { arch, .. } = parsed {
             assert_eq!(arch, Arch::Aarch64);
