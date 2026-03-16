@@ -21,7 +21,7 @@ use cbsd_proto::build::BuildId;
 use cbsd_proto::ws::{BuildFinishedStatus, ServerMessage, WorkerMessage, WorkerReportedState};
 
 use crate::build::{component, executor, output};
-use crate::config::WorkerConfig;
+use crate::config::ResolvedWorkerConfig;
 use crate::signal::ShutdownState;
 use crate::ws::connection::WsStream;
 
@@ -45,7 +45,7 @@ struct ActiveBuild {
 /// caller). Returns `Ok(())` only on graceful shutdown.
 pub async fn run_connection(
     stream: WsStream,
-    config: &WorkerConfig,
+    config: &ResolvedWorkerConfig,
     state: Arc<ShutdownState>,
 ) -> Result<(), HandlerError> {
     let (mut sender, mut receiver) = stream.split();
@@ -53,7 +53,7 @@ pub async fn run_connection(
     // --- Send Hello ---
     let hello = WorkerMessage::Hello {
         protocol_version: PROTOCOL_VERSION,
-        arch: config.parsed_arch(),
+        arch: config.arch,
         cores_total: 0,  // TODO: populate from sysinfo
         ram_total_mb: 0, // TODO: populate from sysinfo
     };

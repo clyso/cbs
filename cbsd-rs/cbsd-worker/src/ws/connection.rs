@@ -16,7 +16,7 @@ use rand::Rng;
 use tokio_tungstenite::tungstenite;
 use tungstenite::client::IntoClientRequest;
 
-use crate::config::WorkerConfig;
+use crate::config::ResolvedWorkerConfig;
 use crate::signal::ShutdownState;
 use crate::ws::handler;
 
@@ -30,7 +30,7 @@ pub type WsStream =
 
 /// Establish a WebSocket connection to the server with the `Authorization`
 /// header set from `config.api_key`.
-async fn connect(config: &WorkerConfig) -> Result<WsStream, ConnectionError> {
+async fn connect(config: &ResolvedWorkerConfig) -> Result<WsStream, ConnectionError> {
     let mut request = config
         .server_url
         .as_str()
@@ -57,7 +57,7 @@ async fn connect(config: &WorkerConfig) -> Result<WsStream, ConnectionError> {
 
 /// Run the worker's main reconnect loop. Returns only when SIGTERM is
 /// received (via `state.is_stopping()`).
-pub async fn reconnect_loop(config: &WorkerConfig, state: Arc<ShutdownState>) {
+pub async fn reconnect_loop(config: &ResolvedWorkerConfig, state: Arc<ShutdownState>) {
     let ceiling = config.backoff_ceiling_secs() as f64;
     let mut backoff = Backoff::new(ceiling);
 
