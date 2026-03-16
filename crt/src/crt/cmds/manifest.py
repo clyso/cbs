@@ -25,10 +25,10 @@ import click
 import rich.box
 from cbscommon.git import (
     GitError,
-    git_get_remote_ref,
     git_prepare_remote,
     git_push,
-    git_remote,
+    git_remote_exists,
+    git_remote_ref_exists,
     git_tag_exists_in_remote,
 )  # Git exceptions and functions are now imported from cbscommon.git
 from cbscore.versions.utils import parse_version
@@ -1149,8 +1149,8 @@ def _prepare_release_repo(
         release_tag_name = release_branch_name.replace("/", "-")
         remote_name = manifest.dst_repo
         if (
-            git_remote(ceph_repo_path, remote_name)
-            and git_get_remote_ref(ceph_repo_path, release_branch_name, remote_name)
+            git_remote_exists(ceph_repo_path, remote_name)
+            and git_remote_ref_exists(ceph_repo_path, release_branch_name, remote_name)
             and git_tag_exists_in_remote(ceph_repo_path, remote_name, release_tag_name)
         ):
             pinfo("release repo already prepared")

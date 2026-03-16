@@ -168,7 +168,7 @@ def cmd_patch_add(
     if not ctx.run_locally:
         # update remote repo, maybe patches are not yet in the current repo state
         try:
-            _ = git_prepare_remote(
+            git_prepare_remote(
                 src_ceph_repo_path,
                 f"github.com/{src_gh_repo}",
                 src_gh_repo,

@@ -25,6 +25,7 @@ from cbscommon.git import (
     git_branch_delete,
     git_branch_from,
     git_check_patches_diff,
+    git_fetch_ref,
     git_format_patch,
     git_prepare_remote,
 )  # Git exceptions and functions are now imported from cbscommon.git
@@ -263,13 +264,11 @@ def patchset_fetch_gh_patches(
         return
 
     # obtain patches
-    remote = git_prepare_remote(
-        ceph_repo_path, f"github.com/{repo_path}", repo_path, token
-    )
+    git_prepare_remote(ceph_repo_path, f"github.com/{repo_path}", repo_path, token)
     src_ref = f"pull/{pr_id}/head"
     dst_ref = f"patchset/gh/{repo_path}/{pr_id}"
     try:
-        _ = remote.fetch(f"{src_ref}:{dst_ref}")
+        _ = git_fetch_ref(ceph_repo_path, src_ref, dst_ref, repo_path)
     except Exception as e:
         msg = f"error fetching patchset '{pr_id}' from '{repo_path}': {e}"
         logger.error(msg)
@@ -393,10 +392,10 @@ def fetch_custom_patchset_patches(
                 raise PatchSetError(msg=msg) from None
         else:
             try:
-                remote = git_prepare_remote(
+                git_prepare_remote(
                     ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
                 )
-                _ = remote.fetch(refspec=f"{meta.branch}:{dst_branch}")
+                _ = git_fetch_ref(ceph_repo_path, meta.branch, dst_branch, meta.repo)
             except Exception as e:
                 msg = (
                     f"error fetching patchset branch '{meta.branch}' "

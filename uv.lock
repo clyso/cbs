@@ -371,6 +371,12 @@ dev = [{ name = "pyinstaller", specifier = ">=6.18.0" }]
 name = "cbscommon"
 version = "0.1.0"
 source = { editable = "cbscommon" }
+dependencies = [
+    { name = "gitpython" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "gitpython", specifier = ">=3.1.44" }]
 
 [[package]]
 name = "cbscore"
@@ -706,7 +712,6 @@ dependencies = [
     { name = "boto3" },
     { name = "cbscommon" },
     { name = "click" },
-    { name = "gitpython" },
     { name = "httpx" },
     { name = "pydantic" },
     { name = "rich" },
@@ -718,7 +723,6 @@ requires-dist = [
     { name = "boto3", specifier = "==1.35.81" },
     { name = "cbscommon", editable = "cbscommon" },
     { name = "click", specifier = ">=8.1.8" },
-    { name = "gitpython", specifier = ">=3.1.44" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "rich", specifier = ">=14.0.0" },

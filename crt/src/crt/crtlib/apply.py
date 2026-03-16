@@ -23,9 +23,10 @@ from cbscommon.git import (
     GitAMApplyError,
     git_am_abort,
     git_am_apply,
+    git_checkout_from_local_ref,
     git_cleanup_repo,
-    git_get_local_head,
     git_prepare_remote,
+    git_update_submodules,
 )  # Git types, exceptions and functions are now imported from cbscommon.git
 
 from crt.crtlib.logger import logger as parent_logger
@@ -56,52 +57,6 @@ class ApplyConflictError(ApplyError):
         super().__init__(msg=f"{len(files)} file conflicts on sha '{sha}'")
         self.sha = sha
         self.conflict_files = files
-
-
-def _update_submodules(repo_path: Path) -> None:
-    logger.debug("update submodules")
-    repo = git.Repo(repo_path)
-    try:
-        repo.git.execute(  # pyright: ignore[reportCallIssue]
-            ["git", "submodule", "update", "--init", "--recursive"],
-            as_process=False,
-            with_stdout=True,
-        )
-    except Exception as e:
-        msg = f"unable to update repository's submodules: {e}"
-        logger.error(msg)
-        raise ApplyError(msg=msg) from None
-
-
-def _checkout_ref(repo_path: Path, from_ref: str, branch_name: str) -> git.Head:
-    logger.debug(f"checkout ref '{from_ref}' to '{branch_name}'")
-    repo = git.Repo(repo_path)
-    if head := git_get_local_head(repo_path, branch_name):
-        logger.debug(f"branch '{branch_name}' already exists, simply checkout")
-        repo.head.reference = head
-        _ = repo.head.reset(index=True, working_tree=True)
-        return head
-
-    assert branch_name not in repo.heads
-    try:
-        new_head = repo.create_head(branch_name, from_ref)
-    except Exception:
-        msg = f"unable to create new head '{branch_name}' " + f"from '{from_ref}'"
-        logger.exception(msg)
-        raise ApplyError(msg=msg) from None
-
-    repo.head.reference = new_head
-    _ = repo.head.reset(index=True, working_tree=True)
-
-    try:
-        git_cleanup_repo(repo_path)
-        _update_submodules(repo_path)
-    except Exception as e:
-        msg = f"unable to clean up repo state after checkout: {e}"
-        logger.error(msg)
-        raise ApplyError(msg=msg) from None
-
-    return new_head
 
 
 def _prepare_repo(repo_path: Path):
@@ -135,7 +90,7 @@ def _prepare_repo(repo_path: Path):
     # propagate exceptions
     _check_repo()
     _cleanup_repo()
-    _update_submodules(repo_path)
+    git_update_submodules(repo_path)
 
 
 def apply_manifest(
@@ -193,7 +148,7 @@ def apply_manifest(
         _prepare_repo(ceph_repo_path)
         repo_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
         if not run_locally:
-            _ = git_prepare_remote(
+            git_prepare_remote(
                 ceph_repo_path, f"github.com/{repo_name}", repo_name, token
             )
     except ApplyError as e:
@@ -201,7 +156,9 @@ def apply_manifest(
         raise e from None
 
     try:
-        _branch = _checkout_ref(ceph_repo_path, manifest.base_ref, target_branch)
+        _branch = git_checkout_from_local_ref(
+            ceph_repo_path, manifest.base_ref, target_branch
+        )
     except ApplyError as e:
         msg = f"unable to apply manifest patchsets: {e}"
         logger.error(msg)

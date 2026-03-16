@@ -28,6 +28,7 @@ from cbscommon.git import (
     GitError,
     git_branch_delete,
     git_branch_from,
+    git_fetch_ref,
     git_get_patch_sha_title,
     git_patches_in_interval,
     git_prepare_remote,
@@ -557,7 +558,7 @@ def cmd_patchset_add(
         # obtain the right shas
         progress.new_task("prepare remote")
         try:
-            remote = git_prepare_remote(
+            git_prepare_remote(
                 ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
             )
         except Exception as e:
@@ -570,7 +571,7 @@ def cmd_patchset_add(
         progress.new_task("fetch patches")
 
         try:
-            _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
+            _ = git_fetch_ref(ceph_repo_path, patches_branch, dst_branch, gh_repo)
         except Exception as e:
             progress.stop_error()
             perror(f"unable to fetch branch '{patches_branch}': {e}")

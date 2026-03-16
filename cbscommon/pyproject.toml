@@ -8,7 +8,9 @@ authors = [
 ]
 license = "GPL-3.0-or-later"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "gitpython>=3.1.44",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.2,<0.11.0"]

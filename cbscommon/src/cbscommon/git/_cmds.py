@@ -5,7 +5,7 @@
 import logging
 import re
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import cast
 
@@ -240,7 +240,7 @@ def git_cleanup_repo(repo_path: Path) -> None:
 
 def git_prepare_remote(
     repo_path: Path, remote_uri: str, remote_name: str, token: str
-) -> git.Remote:
+) -> None:
     logger.info(f"prepare remote '{remote_name}' uri '{remote_uri}'")
 
     repo = git.Repo(repo_path)
@@ -259,19 +259,12 @@ def git_prepare_remote(
         logger.error(e.stderr)
         raise GitError(msg=f"unable to update remote '{remote_name}'") from None
 
-    return remote
 
-
-def git_remote(repo_path: Path, remote_name: str) -> git.Remote | None:
-    logger.info(f"get remote '{remote_name}'")
+def git_remote_exists(repo_path: Path, remote_name: str) -> bool:
+    logger.info(f"does remote '{remote_name}' exist.")
 
     repo = git.Repo(repo_path)
-    try:
-        return repo.remote(remote_name)
-    except ValueError:
-        logger.debug(f"remote '{remote_name}' doesn't exist")
-
-    return None
+    return remote_name in repo.remotes
 
 
 def _get_remote_ref_name(
@@ -287,9 +280,7 @@ def _get_remote_ref_name(
     return None
 
 
-def git_get_remote_ref(
-    repo_path: Path, ref_name: str, remote_name: str
-) -> git.RemoteReference | None:
+def git_remote_ref_exists(repo_path: Path, ref_name: str, remote_name: str) -> bool:
     repo = git.Repo(repo_path)
 
     try:
@@ -300,9 +291,9 @@ def git_get_remote_ref(
 
     for ref in remote.refs:
         if _get_remote_ref_name(remote_name, ref.name, ref_name=ref_name):
-            return ref
+            return True
 
-    return None
+    return False
 
 
 def _git_pull_ref(
@@ -312,7 +303,7 @@ def _git_pull_ref(
     if repo.active_branch.name != to_ref:
         return False
 
-    if not git_get_remote_ref(repo_path, from_ref, remote_name):
+    if not git_remote_ref_exists(repo_path, from_ref, remote_name):
         logger.warning(f"ref '{from_ref}' not found in remote '{remote_name}'")
         return False
 
@@ -336,19 +327,16 @@ def _get_tag(repo_path: Path, tag_name: str) -> git.TagReference | None:
     return None
 
 
-def git_get_local_head(repo_path: Path, name: str) -> git.Head | None:
+def _git_get_local_head(repo_path: Path, name: str) -> git.Head | None:
     repo = git.Repo(repo_path)
-    for head in repo.heads:
-        if head.name == name:
-            return head
-    return None
+    return repo.heads[name] if git_local_head_exists(repo_path, name) else None
 
 
 def git_reset_head(repo_path: Path, new_head: str) -> None:
     """Reset current checked out head to `new_head`."""
     repo = git.Repo(repo_path)
 
-    head = git_get_local_head(repo_path, new_head)
+    head = _git_get_local_head(repo_path, new_head)
     if not head:
         msg = f"unexpected missing local head '{new_head}'"
         logger.error(msg)
@@ -365,7 +353,7 @@ def git_branch_from(repo_path: Path, src_ref: str, dst_branch: str) -> None:
     repo = git.Repo(repo_path)
     logger.debug(f"repo active branch: {repo.active_branch}")
 
-    if git_get_local_head(repo_path, dst_branch):
+    if git_local_head_exists(repo_path, dst_branch):
         msg = f"unable to create branch '{dst_branch}', already exists"
         logger.error(msg)
         raise GitCreateHeadExistsError(dst_branch)
@@ -410,7 +398,7 @@ def git_fetch_ref(
         raise GitIsTagError(from_ref)
 
     # check whether 'from_ref' is a remote head
-    if not git_get_remote_ref(repo_path, from_ref, remote_name):
+    if not git_remote_ref_exists(repo_path, from_ref, remote_name):
         logger.warning(f"unable to find ref '{from_ref}' in remote '{remote_name}'")
         raise GitFetchHeadNotFoundError(remote_name, from_ref)
 
@@ -482,10 +470,9 @@ def git_checkout_ref(
 
         if target_branch and head.name != target_branch:
             # checkout 'head' to a new branch
-            if git_get_local_head(repo_path, target_branch):
+            if git_local_head_exists(repo_path, target_branch):
                 raise GitCreateHeadExistsError(target_branch)
             head = repo.create_head(target_branch, head)
-
         # should we update from remote first?
         if update_from_remote and remote_name:
             _update_from_remote(head, remote_name)
@@ -497,7 +484,7 @@ def git_checkout_ref(
     target_branch = to_branch if to_branch else ref
 
     # check if 'ref' exists as a branch locally
-    if head := git_get_local_head(repo_path, target_branch):
+    if head := _git_get_local_head(repo_path, target_branch):
         _checkout_head(head, target_branch=target_branch)
         return
 
@@ -563,7 +550,7 @@ def git_push(
     if _get_tag(repo_path, ref):
         ref = f"refs/tags/{ref}"
         dst_ref = f"refs/tags/{dst_ref}"
-    elif not git_get_local_head(repo_path, ref):
+    elif not git_local_head_exists(repo_path, ref):
         # ref is neither a local branch nor tag
         logger.error(f"unable to find ref '{ref}' to push")
         raise GitHeadNotFoundError(ref)
@@ -703,3 +690,74 @@ def git_tag_exists_in_remote(repo_path: Path, remote_name: str, tag_name: str) -
         msg = f"unable to execute git ls-remote --tags {remote_name} refs/tags/{tag_name}: {e}"
         logger.error(msg)
         raise GitError(msg) from None
+
+
+def git_remote_ref_names(repo_path: Path, remote_name: str) -> Generator[str]:
+    try:
+        repo = git.Repo(repo_path)
+        remote = repo.remotes[remote_name]
+        for ref in remote.refs:
+            yield ref.name
+    except git.NoSuchPathError:
+        msg = f"path '{repo_path}' doesn't exist"
+        logger.error(msg)
+        raise GitError(msg) from None
+    except git.InvalidGitRepositoryError:
+        msg = f"path '{repo_path}' isn't a valid git repository"
+        logger.error(msg)
+        raise GitError(msg) from None
+    except IndexError:
+        msg = f"repository '{repo_path}' has no remote '{remote_name}'"
+        logger.error(msg)
+        raise GitMissingRemoteError(msg) from None
+
+
+def git_checkout_from_local_ref(
+    repo_path: Path, from_ref: str, branch_name: str
+) -> None:
+    logger.debug(f"checkout ref '{from_ref}' to '{branch_name}'")
+    repo = git.Repo(repo_path)
+    if head := _git_get_local_head(repo_path, branch_name):
+        logger.debug(f"branch '{branch_name}' already exists, simply checkout")
+        repo.head.reference = head
+        _ = repo.head.reset(index=True, working_tree=True)
+        return
+
+    assert branch_name not in repo.heads
+    try:
+        new_head = repo.create_head(branch_name, from_ref)
+    except Exception:
+        msg = f"unable to create new head '{branch_name}' " + f"from '{from_ref}'"
+        logger.exception(msg)
+        raise GitError(msg=msg) from None
+
+    repo.head.reference = new_head
+    _ = repo.head.reset(index=True, working_tree=True)
+
+    try:
+        git_cleanup_repo(repo_path)
+        git_update_submodules(repo_path)
+    except Exception as e:
+        msg = f"unable to clean up repo state after checkout: {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+
+def git_update_submodules(repo_path: Path) -> None:
+    logger.debug("update submodules")
+    repo = git.Repo(repo_path)
+    try:
+        repo.git.execute(  # pyright: ignore[reportCallIssue]
+            ["git", "submodule", "update", "--init", "--recursive"],
+            as_process=False,
+            with_stdout=True,
+        )
+    except Exception as e:
+        msg = f"unable to update repository's submodules: {e}"
+        logger.error(msg)
+        raise GitError(msg=msg) from None
+
+
+def git_local_head_exists(repo_path: Path, name: str) -> bool:
+    repo = git.Repo(repo_path)
+    return name in repo.heads

@@ -25,11 +25,12 @@ from cbscommon.git import (
     git_branch_from,
     git_cleanup_repo,
     git_fetch_ref,
-    git_get_local_head,
-    git_get_remote_ref,
+    git_local_head_exists,
     git_prepare_remote,
     git_push,
-    git_remote,
+    git_remote_exists,
+    git_remote_ref_exists,
+    git_remote_ref_names,
     git_reset_head,
     git_tag,
 )  # Git exceptions and functions are now imported from cbscommon.git
@@ -85,11 +86,9 @@ def _prepare_release_repo(
         return
 
     try:
-        _ = git_prepare_remote(
-            ceph_repo_path, f"github.com/{src_repo}", src_repo, token
-        )
+        git_prepare_remote(ceph_repo_path, f"github.com/{src_repo}", src_repo, token)
         if src_repo != dst_repo:
-            _ = git_prepare_remote(
+            git_prepare_remote(
                 ceph_repo_path, f"github.com/{dst_repo}", dst_repo, token
             )
     except GitError as e:
@@ -108,11 +107,11 @@ def _prepare_release_branches(
 ) -> None:
     try:
         if run_locally:
-            if git_get_local_head(ceph_repo_path, dst_branch):
+            if git_local_head_exists(ceph_repo_path, dst_branch):
                 perror(f"destination branch '{dst_branch}' already exists locally")
                 sys.exit(errno.EEXIST)
         else:
-            if git_get_remote_ref(ceph_repo_path, dst_branch, dst_repo):
+            if git_remote_ref_exists(ceph_repo_path, dst_branch, dst_repo):
                 perror(
                     f"destination branch '{dst_branch}' already exists in '{dst_repo}'"
                 )
@@ -320,7 +319,7 @@ def cmd_release_start(
     progress.done_task()
 
     progress.new_task("prepare release branches")
-    if not ctx.run_locally and git_get_remote_ref(
+    if not ctx.run_locally and git_remote_ref_exists(
         ceph_repo_path, f"release/{release_name}", dst_repo
     ):
         progress.stop_error()
@@ -456,7 +455,7 @@ def cmd_release_list(
 
     if ctx.run_locally:
         progress.new_task("get remote")
-        if not (remote := git_remote(ceph_repo_path, dst_repo)):
+        if not git_remote_exists(ceph_repo_path, dst_repo):
             pinfo(f"remote {dst_repo} doesn't exist locally")
             console.print(Padding(table, (1, 0, 1, 0)))
             progress.done_task()
@@ -467,7 +466,7 @@ def cmd_release_list(
     else:
         progress.new_task("prepare remote")
         try:
-            remote = git_prepare_remote(
+            git_prepare_remote(
                 ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
             )
         except GitError as e:
@@ -482,8 +481,8 @@ def cmd_release_list(
     remote_base_releases: list[str] = []
     releases_meta: dict[str, Release | None] = {}
 
-    for r in remote.refs:
-        ref_name = r.name[len(dst_repo) + 1 :]
+    for r in git_remote_ref_names(ceph_repo_path, dst_repo):
+        ref_name = r[len(dst_repo) + 1 :]
         m = re.match(r"(release|release-base)/((?:ces|ccs)-.+)", ref_name)
         if not m:
             continue

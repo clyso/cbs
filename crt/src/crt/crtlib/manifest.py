@@ -90,9 +90,9 @@ def _prepare_repo(
     if not run_locally:
         try:
             base_remote_uri = f"github.com/{base_remote_name}"
-            _ = git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
+            git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
             push_remote_uri = f"github.com/{push_remote_name}"
-            _ = git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
+            git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
         except GitError as e:
             raise ManifestError(uuid=manifest_uuid, msg=str(e)) from None
 
