@@ -351,7 +351,6 @@ def cmd_patchset_create(
     release_name: str | None,
     assume_no: bool,
 ) -> None:
-    print("prompt?")
     if not patchset_title:
         patchset_title = cast(
             str | None, click.prompt("Patch set title", type=str, prompt_suffix=" > ")
