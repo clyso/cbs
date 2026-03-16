@@ -16,9 +16,10 @@ pub mod roles;
 pub mod seed;
 pub mod tokens;
 pub mod users;
+pub mod workers;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::str::FromStr;
 
 /// Create and configure the SQLite connection pool.

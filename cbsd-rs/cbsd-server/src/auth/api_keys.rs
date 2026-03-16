@@ -279,6 +279,25 @@ pub async fn verify_api_key(
     Ok(entry)
 }
 
+/// Generate random API key material: `(plaintext_key, prefix, argon2_hash)`.
+///
+/// Performs argon2 hashing in a blocking thread. The caller is responsible
+/// for inserting into the database (via pool or transaction). This
+/// separation ensures argon2 never runs while holding a DB transaction.
+pub async fn generate_api_key_material() -> Result<(String, String, String), ApiKeyError> {
+    let random_bytes: [u8; 32] = rand::thread_rng().r#gen();
+    let hex_part = hex_encode(&random_bytes);
+    let raw_key = format!("cbsk_{hex_part}");
+    let prefix = raw_key[5..17].to_string();
+
+    let key_clone = raw_key.clone();
+    let hash = tokio::task::spawn_blocking(move || argon2_hash(&key_clone))
+        .await
+        .map_err(|e| ApiKeyError::HashError(e.to_string()))??;
+
+    Ok((raw_key, prefix, hash))
+}
+
 /// Hash a raw API key with argon2id (default params).
 fn argon2_hash(raw_key: &str) -> Result<String, ApiKeyError> {
     let salt = SaltString::generate(&mut rand::thread_rng());
