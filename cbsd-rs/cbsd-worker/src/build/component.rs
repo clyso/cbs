@@ -79,7 +79,9 @@ pub fn validate_and_unpack(
     // 3. Unpack tar.gz.
     let decoder = flate2::read::GzDecoder::new(tarball_bytes);
     let mut archive = tar::Archive::new(decoder);
-    archive.unpack(&unpack_dir).map_err(ComponentError::Unpack)?;
+    archive
+        .unpack(&unpack_dir)
+        .map_err(ComponentError::Unpack)?;
 
     Ok(unpack_dir)
 }
@@ -139,7 +141,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         let result = validate_and_unpack(&tarball, "0000000000000000", tmp.path());
-        assert!(matches!(result, Err(ComponentError::IntegrityFailed { .. })));
+        assert!(matches!(
+            result,
+            Err(ComponentError::IntegrityFailed { .. })
+        ));
     }
 
     #[test]

@@ -80,15 +80,14 @@ impl AuthUser {
         pool: &SqlitePool,
         scope_checks: &[(ScopeType, &str)],
     ) -> Result<(), AuthError> {
-        let assignments =
-            db::roles::get_user_assignments_with_scopes(pool, &self.email)
-                .await
-                .map_err(|_| {
-                    auth_error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to load user assignments",
-                    )
-                })?;
+        let assignments = db::roles::get_user_assignments_with_scopes(pool, &self.email)
+            .await
+            .map_err(|_| {
+                auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to load user assignments",
+                )
+            })?;
 
         // Find at least one assignment that satisfies ALL scope checks
         let ok = assignments.iter().any(|a| {
@@ -190,13 +189,12 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // API key path
         if token_str.starts_with("cbsk_") {
-            let cached = crate::auth::api_keys::verify_api_key(
-                &state.pool,
-                &state.api_key_cache,
-                token_str,
-            )
-            .await
-            .map_err(|e| auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}")))?;
+            let cached =
+                crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token_str)
+                    .await
+                    .map_err(|e| {
+                        auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
+                    })?;
 
             return load_authed_user(&state.pool, &cached.owner_email).await;
         }

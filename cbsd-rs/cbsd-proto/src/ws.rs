@@ -35,9 +35,7 @@ pub enum ServerMessage {
     /// Cancel a build (running or not yet accepted). If the worker receives
     /// this before sending `build_accepted`, it responds with
     /// `build_finished(revoked)` immediately.
-    BuildRevoke {
-        build_id: BuildId,
-    },
+    BuildRevoke { build_id: BuildId },
 
     /// Connection accepted. Sent after validating the worker's `hello`.
     Welcome {
@@ -82,20 +80,13 @@ pub enum WorkerMessage {
     },
 
     /// Worker will run the build.
-    BuildAccepted {
-        build_id: BuildId,
-    },
+    BuildAccepted { build_id: BuildId },
 
     /// Worker cannot run the build (busy, incompatible, integrity failure).
-    BuildRejected {
-        build_id: BuildId,
-        reason: String,
-    },
+    BuildRejected { build_id: BuildId, reason: String },
 
     /// Build execution has started (container launched).
-    BuildStarted {
-        build_id: BuildId,
-    },
+    BuildStarted { build_id: BuildId },
 
     /// Build output. Batched: flushed every 200ms or 50 lines. Per-line seq:
     /// `start_seq`, `start_seq+1`, ..., `start_seq+len(lines)-1`.

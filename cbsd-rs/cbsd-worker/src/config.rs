@@ -96,10 +96,9 @@ impl ResolvedWorkerConfig {
 impl WorkerConfig {
     /// Load configuration from a YAML file.
     pub fn load(path: &std::path::Path) -> Result<Self, ConfigError> {
-        let contents = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::Read(path.to_path_buf(), e))?;
-        let config: WorkerConfig =
-            serde_yml::from_str(&contents).map_err(ConfigError::Parse)?;
+        let contents =
+            std::fs::read_to_string(path).map_err(|e| ConfigError::Read(path.to_path_buf(), e))?;
+        let config: WorkerConfig = serde_yml::from_str(&contents).map_err(ConfigError::Parse)?;
         Ok(config)
     }
 
@@ -132,10 +131,8 @@ impl WorkerConfig {
                 .map_err(|e| {
                     ConfigError::Validation(format!("invalid worker token base64: {e}"))
                 })?;
-            let token: cbsd_proto::WorkerToken =
-                serde_json::from_slice(&json_bytes).map_err(|e| {
-                    ConfigError::Validation(format!("invalid worker token JSON: {e}"))
-                })?;
+            let token: cbsd_proto::WorkerToken = serde_json::from_slice(&json_bytes)
+                .map_err(|e| ConfigError::Validation(format!("invalid worker token JSON: {e}")))?;
 
             let arch = parse_arch(&token.arch)?;
 
@@ -167,9 +164,7 @@ impl WorkerConfig {
         }
 
         let arch_str = self.arch.ok_or_else(|| {
-            ConfigError::Validation(
-                "arch is required when no worker_token is provided".to_string(),
-            )
+            ConfigError::Validation("arch is required when no worker_token is provided".to_string())
         })?;
         let arch = parse_arch(&arch_str)?;
 

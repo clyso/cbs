@@ -52,8 +52,8 @@ async fn main() {
     let config = config::load_config(&cli.config);
 
     // Set up tracing
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.logging.level));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     tracing::info!("cbsd-server starting");
@@ -81,10 +81,7 @@ async fn main() {
 
     // Derive session signing key from token_secret_key via HKDF-SHA256
     // (deterministic across restarts, domain-separated from PASETO key)
-    let token_key_bytes = config
-        .secrets
-        .token_secret_key
-        .as_bytes();
+    let token_key_bytes = config.secrets.token_secret_key.as_bytes();
     let hk = Hkdf::<Sha256>::new(None, token_key_bytes);
     let mut session_key_bytes = [0u8; 64];
     hk.expand(b"cbsd-oauth-session-v1", &mut session_key_bytes)
@@ -300,9 +297,8 @@ async fn shutdown_signal(drain: bool, mode: Arc<tokio::sync::Mutex<ShutdownMode>
 /// Drain shutdown: revoke active builds, wait for acks, mark stragglers
 /// as failures.
 async fn run_drain_shutdown(state: &app::AppState) {
-    let drain_timeout = tokio::time::Duration::from_secs(
-        state.config.timeouts.revoke_ack_timeout_secs,
-    );
+    let drain_timeout =
+        tokio::time::Duration::from_secs(state.config.timeouts.revoke_ack_timeout_secs);
 
     // Collect active build IDs and their worker connection IDs.
     let active_builds: Vec<(i64, String)> = {
@@ -319,16 +315,16 @@ async fn run_drain_shutdown(state: &app::AppState) {
         return;
     }
 
-    tracing::info!(
-        count = active_builds.len(),
-        "drain: revoking active builds"
-    );
+    tracing::info!(count = active_builds.len(), "drain: revoking active builds");
 
     // Send build_revoke to each worker and mark builds as revoking.
     for (build_id, connection_id) in &active_builds {
         // Mark build as revoking in DB.
         if let Err(e) = db::builds::set_build_revoking(&state.pool, *build_id).await {
-            tracing::error!(build_id = build_id, "drain: failed to set revoking state: {e}");
+            tracing::error!(
+                build_id = build_id,
+                "drain: failed to set revoking state: {e}"
+            );
         }
 
         // Send revoke message to worker.
@@ -361,15 +357,25 @@ async fn run_drain_shutdown(state: &app::AppState) {
             build_id = build_id,
             "drain: build did not finish in time — marking as failure"
         );
-        if let Err(e) =
-            db::builds::set_build_finished(&state.pool, *build_id, "failure", Some("server decommissioned"))
-                .await
+        if let Err(e) = db::builds::set_build_finished(
+            &state.pool,
+            *build_id,
+            "failure",
+            Some("server decommissioned"),
+        )
+        .await
         {
-            tracing::error!(build_id = build_id, "drain: failed to mark build as failure: {e}");
+            tracing::error!(
+                build_id = build_id,
+                "drain: failed to mark build as failure: {e}"
+            );
         }
         // Finalize log.
         if let Err(e) = db::builds::set_build_log_finished(&state.pool, *build_id).await {
-            tracing::error!(build_id = build_id, "drain: failed to finalize build log: {e}");
+            tracing::error!(
+                build_id = build_id,
+                "drain: failed to finalize build log: {e}"
+            );
         }
     }
 

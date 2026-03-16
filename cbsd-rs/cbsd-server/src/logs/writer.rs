@@ -115,10 +115,7 @@ pub async fn write_build_output(
     // Update log_size in DB (v1: every write; future: batched).
     let log_size = offset as i64;
     if let Err(e) = update_build_log_size(pool, build_id, log_size).await {
-        tracing::warn!(
-            build_id = build_id,
-            "failed to update build log size: {e}"
-        );
+        tracing::warn!(build_id = build_id, "failed to update build log size: {e}");
     }
 
     Ok(())
@@ -126,11 +123,7 @@ pub async fn write_build_output(
 
 /// Finalize a build's log: drop the in-memory index and mark the log
 /// as finished in the database.
-pub async fn finish_build_log(
-    log_writer: &SharedLogWriter,
-    pool: &SqlitePool,
-    build_id: i64,
-) {
+pub async fn finish_build_log(log_writer: &SharedLogWriter, pool: &SqlitePool, build_id: i64) {
     // Drop the seq-to-offset index for this build.
     {
         let mut writer = log_writer.lock().await;
@@ -150,11 +143,7 @@ pub async fn finish_build_log(
 ///
 /// Returns `None` if the build is not in the index or the sequence number
 /// has not been written yet.
-pub async fn get_seq_offset(
-    log_writer: &SharedLogWriter,
-    build_id: i64,
-    seq: u64,
-) -> Option<u64> {
+pub async fn get_seq_offset(log_writer: &SharedLogWriter, build_id: i64, seq: u64) -> Option<u64> {
     let writer = log_writer.lock().await;
     let entries = writer.seq_indices.get(&build_id)?;
 
@@ -171,13 +160,11 @@ async fn update_build_log_size(
     build_id: i64,
     log_size: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "UPDATE build_logs SET log_size = ?, updated_at = unixepoch() WHERE build_id = ?",
-    )
-    .bind(log_size)
-    .bind(build_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE build_logs SET log_size = ?, updated_at = unixepoch() WHERE build_id = ?")
+        .bind(log_size)
+        .bind(build_id)
+        .execute(pool)
+        .await?;
 
     Ok(())
 }

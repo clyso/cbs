@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::io::ReaderStream;
 
 use crate::app::AppState;
-use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail, ScopeType};
+use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
 use crate::components;
 use crate::db;
 use crate::queue::QueuedBuild;
@@ -112,10 +112,8 @@ async fn submit_build(
     }
 
     // Convert to borrowed slice for require_scopes_all
-    let scope_refs: Vec<(ScopeType, &str)> = scope_checks
-        .iter()
-        .map(|(t, v)| (*t, v.as_str()))
-        .collect();
+    let scope_refs: Vec<(ScopeType, &str)> =
+        scope_checks.iter().map(|(t, v)| (*t, v.as_str())).collect();
 
     user.require_scopes_all(&state.pool, &scope_refs).await?;
 
@@ -230,10 +228,7 @@ async fn list_builds(
         .await
         .map_err(|e| {
             tracing::error!("failed to list builds: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to list builds",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list builds")
         })?;
 
     Ok(Json(builds))
@@ -332,10 +327,12 @@ async fn revoke_build(
         }
         "dispatched" | "started" => {
             // Send revoke to worker.
-            ws::dispatch::send_build_revoke(&state, id).await.map_err(|e| {
-                tracing::error!("failed to send revoke for build {id}: {e}");
-                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to send revoke")
-            })?;
+            ws::dispatch::send_build_revoke(&state, id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("failed to send revoke for build {id}: {e}");
+                    auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to send revoke")
+                })?;
 
             tracing::info!(
                 "user {} requested revoke of {state_name} build {id}",
@@ -348,23 +345,22 @@ async fn revoke_build(
             ))
         }
         "revoking" => {
-            tracing::info!("user {} revoke of build {id} — already revoking", user.email);
+            tracing::info!(
+                "user {} revoke of build {id} — already revoking",
+                user.email
+            );
             Ok(Json(
                 serde_json::json!({"detail": format!("build {id} already revoking")}),
             ))
         }
-        "success" | "failure" | "revoked" => {
-            Err(auth_error(
-                StatusCode::CONFLICT,
-                &format!("build already in terminal state: {}", build.state),
-            ))
-        }
-        _ => {
-            Err(auth_error(
-                StatusCode::CONFLICT,
-                &format!("unexpected build state: {}", build.state),
-            ))
-        }
+        "success" | "failure" | "revoked" => Err(auth_error(
+            StatusCode::CONFLICT,
+            &format!("build already in terminal state: {}", build.state),
+        )),
+        _ => Err(auth_error(
+            StatusCode::CONFLICT,
+            &format!("unexpected build state: {}", build.state),
+        )),
     }
 }
 
@@ -470,10 +466,7 @@ async fn logs_full(
             auth_error(StatusCode::NOT_FOUND, "no logs yet")
         } else {
             tracing::error!("failed to open log file for build {id}: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to open log file",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to open log file")
         }
     })?;
 
@@ -482,10 +475,7 @@ async fn logs_full(
     let body = Body::from_stream(stream);
 
     Ok((
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/octet-stream",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
         body,
     ))
 }

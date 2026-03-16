@@ -22,7 +22,7 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::WorkerConfig;
-use crate::signal::{install_signal_handler, ShutdownState};
+use crate::signal::{ShutdownState, install_signal_handler};
 use crate::ws::connection::reconnect_loop;
 
 /// CBS build worker — connects to the CBS server via WebSocket and executes

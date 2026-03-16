@@ -344,6 +344,7 @@ dependencies = [
 name = "cbsd-worker"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "cbsd-proto",
  "clap",
  "flate2",

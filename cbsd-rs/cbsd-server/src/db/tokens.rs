@@ -19,14 +19,13 @@ pub async fn insert_token(
     token_hash: &str,
     expires_at: Option<i64>,
 ) -> Result<i64, sqlx::Error> {
-    let result = sqlx::query(
-        "INSERT INTO tokens (user_email, token_hash, expires_at) VALUES (?, ?, ?)",
-    )
-    .bind(user_email)
-    .bind(token_hash)
-    .bind(expires_at)
-    .execute(pool)
-    .await?;
+    let result =
+        sqlx::query("INSERT INTO tokens (user_email, token_hash, expires_at) VALUES (?, ?, ?)")
+            .bind(user_email)
+            .bind(token_hash)
+            .bind(expires_at)
+            .execute(pool)
+            .await?;
 
     Ok(result.last_insert_rowid())
 }
@@ -47,22 +46,20 @@ pub async fn is_token_revoked(pool: &SqlitePool, token_hash: &str) -> Result<boo
 
 /// Revoke a single token by its SHA-256 hash. Returns true if a token was revoked.
 pub async fn revoke_token(pool: &SqlitePool, token_hash: &str) -> Result<bool, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE tokens SET revoked = 1 WHERE token_hash = ? AND revoked = 0")
-            .bind(token_hash)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("UPDATE tokens SET revoked = 1 WHERE token_hash = ? AND revoked = 0")
+        .bind(token_hash)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
 
 /// Revoke all tokens for a given user. Returns number of tokens revoked.
 pub async fn revoke_all_for_user(pool: &SqlitePool, user_email: &str) -> Result<u64, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE tokens SET revoked = 1 WHERE user_email = ? AND revoked = 0")
-            .bind(user_email)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("UPDATE tokens SET revoked = 1 WHERE user_email = ? AND revoked = 0")
+        .bind(user_email)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected())
 }

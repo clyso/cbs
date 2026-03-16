@@ -68,10 +68,11 @@ pub async fn create_role(
 
 /// Get a single role by name.
 pub async fn get_role(pool: &SqlitePool, name: &str) -> Result<Option<RoleRecord>, sqlx::Error> {
-    let row = sqlx::query("SELECT name, description, builtin, created_at FROM roles WHERE name = ?")
-        .bind(name)
-        .fetch_optional(pool)
-        .await?;
+    let row =
+        sqlx::query("SELECT name, description, builtin, created_at FROM roles WHERE name = ?")
+            .bind(name)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(row.map(|r| RoleRecord {
         name: r.get("name"),
@@ -140,10 +141,7 @@ pub async fn set_role_caps(
 }
 
 /// Get all capabilities for a role.
-pub async fn get_role_caps(
-    pool: &SqlitePool,
-    role_name: &str,
-) -> Result<Vec<String>, sqlx::Error> {
+pub async fn get_role_caps(pool: &SqlitePool, role_name: &str) -> Result<Vec<String>, sqlx::Error> {
     let rows = sqlx::query("SELECT cap FROM role_caps WHERE role_name = ? ORDER BY cap")
         .bind(role_name)
         .fetch_all(pool)
@@ -158,13 +156,11 @@ pub async fn add_user_role(
     user_email: &str,
     role_name: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO user_roles (user_email, role_name) VALUES (?, ?)",
-    )
-    .bind(user_email)
-    .bind(role_name)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO user_roles (user_email, role_name) VALUES (?, ?)")
+        .bind(user_email)
+        .bind(role_name)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -174,12 +170,11 @@ pub async fn remove_user_role(
     user_email: &str,
     role_name: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result =
-        sqlx::query("DELETE FROM user_roles WHERE user_email = ? AND role_name = ?")
-            .bind(user_email)
-            .bind(role_name)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM user_roles WHERE user_email = ? AND role_name = ?")
+        .bind(user_email)
+        .bind(role_name)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -353,12 +348,10 @@ pub async fn count_active_wildcard_holders(pool: &SqlitePool) -> Result<i64, sql
 
 /// Check if any user is assigned to a given role.
 pub async fn has_assignments(pool: &SqlitePool, role_name: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT EXISTS(SELECT 1 FROM user_roles WHERE role_name = ?) as has_any",
-    )
-    .bind(role_name)
-    .fetch_one(pool)
-    .await?;
+    let row = sqlx::query("SELECT EXISTS(SELECT 1 FROM user_roles WHERE role_name = ?) as has_any")
+        .bind(role_name)
+        .fetch_one(pool)
+        .await?;
 
     Ok(row.get::<i32, _>("has_any") != 0)
 }

@@ -23,7 +23,7 @@ use serde::Serialize;
 use cbsd_proto::Arch;
 
 use crate::app::AppState;
-use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
 use crate::ws::liveness::WorkerState;
 
