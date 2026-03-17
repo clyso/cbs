@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 import errno
+import logging
 import sys
 import uuid
 from pathlib import Path
@@ -32,9 +33,8 @@ from crt.crtlib.models.manifest import ManifestStage
 from crt.crtlib.utils import get_tags
 
 from . import console, perror, pinfo, psuccess, with_patches_repo_path
-from . import logger as parent_logger
 
-logger = parent_logger.getChild("stages")
+logger = logging.getLogger(__name__)
 
 
 def _show_stage_summary(stage: ManifestStage) -> None:

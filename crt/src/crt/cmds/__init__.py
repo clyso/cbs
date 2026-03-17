@@ -13,7 +13,6 @@
 
 import enum
 import errno
-import logging
 import sys
 from collections.abc import Callable
 from functools import update_wrapper
@@ -24,10 +23,6 @@ import click
 from rich.console import Console
 from rich.highlighter import RegexHighlighter
 from rich.theme import Theme
-
-from crt.crtlib.logger import logger as parent_logger
-
-logger = parent_logger.getChild("cmds")
 
 
 class Ctx:
@@ -121,14 +116,6 @@ def pwarn(s: str) -> None:
 
 def rprint(s: str) -> None:
     console.print(s)
-
-
-def set_debug_logging() -> None:
-    parent_logger.setLevel(logging.DEBUG)
-
-
-def set_verbose_logging() -> None:
-    parent_logger.setLevel(logging.INFO)
 
 
 class Symbols(enum.StrEnum):

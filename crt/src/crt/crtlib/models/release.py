@@ -12,13 +12,12 @@
 # GNU General Public License for more details.
 
 import datetime
+import logging
 from datetime import datetime as dt
 
 import pydantic
 
-from . import logger as parent_logger
-
-logger = parent_logger.getChild("release")
+logger = logging.getLogger(__name__)
 
 
 class Release(pydantic.BaseModel):

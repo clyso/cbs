@@ -13,6 +13,7 @@
 
 
 import datetime
+import logging
 from datetime import datetime as dt
 from pathlib import Path
 from typing import override
@@ -29,12 +30,11 @@ from cbscommon.git import (
     git_update_submodules,
 )  # Git types, exceptions and functions are now imported from cbscommon.git
 
-from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
 from crt.crtlib.patch import PatchExistsError
 
-logger = parent_logger.getChild("apply")
+logger = logging.getLogger(__name__)
 
 
 class ApplyError(Exception):

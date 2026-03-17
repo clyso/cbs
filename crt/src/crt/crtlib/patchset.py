@@ -13,6 +13,7 @@
 
 
 import datetime
+import logging
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
@@ -36,7 +37,6 @@ from crt.crtlib.errors.patchset import (
     PatchSetCheckError,
     PatchSetError,
 )
-from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
@@ -49,7 +49,7 @@ from crt.crtlib.models.patchset import (
 )
 from crt.crtlib.patch import PatchError, parse_formatted_patch_info, patch_import
 
-logger = parent_logger.getChild("patchset")
+logger = logging.getLogger(__name__)
 
 
 def patchset_check_patches_diff(

@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 import errno
+import logging
 import re
 import sys
 import uuid
@@ -22,12 +23,11 @@ import httpx
 import pydantic
 
 from crt.crtlib.errors import CRTError
-from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import AuthorData
 from crt.crtlib.models.patch import Patch
 from crt.crtlib.models.patchset import GitHubPullRequest
 
-logger = parent_logger.getChild("gh")
+logger = logging.getLogger(__name__)
 
 
 class GitHubError(CRTError):

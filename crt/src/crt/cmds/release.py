@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 import errno
+import logging
 import re
 import sys
 from pathlib import Path
@@ -57,11 +58,8 @@ from . import (
     with_gh_token,
     with_patches_repo_path,
 )
-from . import (
-    logger as parent_logger,
-)
 
-logger = parent_logger.getChild("release")
+logger = logging.getLogger(__name__)
 
 _ExitError = CRTExitError
 

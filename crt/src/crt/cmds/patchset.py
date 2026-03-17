@@ -13,6 +13,7 @@
 
 import datetime
 import errno
+import logging
 import re
 import sys
 import uuid
@@ -47,7 +48,6 @@ from crt.cmds import (
     pwarn,
     with_patches_repo_path,
 )
-from crt.cmds import logger as parent_logger
 from crt.cmds._common import CRTProgress
 from crt.crtlib.errors.patchset import (
     MalformedPatchSetError,
@@ -72,7 +72,7 @@ from crt.crtlib.patchset import (
     write_patchset,
 )
 
-logger = parent_logger.getChild("patchset")
+logger = logging.getLogger(__name__)
 
 
 def _is_valid_sha(sha: str) -> bool:

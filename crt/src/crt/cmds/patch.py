@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 import errno
+import logging
 import re
 import sys
 from collections.abc import Callable
@@ -25,7 +26,6 @@ from cbscommon.git import (
 )  # Git exceptions and functions are now imported from cbscommon.git
 
 from crt.cmds import Ctx, pass_ctx, perror, psuccess, pwarn, with_patches_repo_path
-from crt.cmds import logger as parent_logger
 from crt.crtlib.apply import ApplyError, patches_apply_to_manifest
 from crt.crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
 from crt.crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
@@ -34,7 +34,7 @@ from crt.crtlib.patch import (
     patch_add,
 )
 
-logger = parent_logger.getChild("patches")
+logger = logging.getLogger(__name__)
 
 
 def _cmd_validate_version_wrapper(

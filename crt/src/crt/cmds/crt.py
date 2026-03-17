@@ -15,12 +15,11 @@
 from pathlib import Path
 
 import click
-from rich.logging import RichHandler
 from rich.padding import Padding
 from rich.table import Table
 
 from crt.cmds import patch, release, stages
-from crt.crtlib.logger import logger_set_handler
+from crt.cmds.log_config import setup_logging
 
 from . import (
     Ctx,
@@ -28,12 +27,7 @@ from . import (
     manifest,
     pass_ctx,
     patchset,
-    set_debug_logging,
-    set_verbose_logging,
 )
-from . import logger as parent_logger
-
-logger = parent_logger.getChild("crt")
 
 
 @click.group()
@@ -96,14 +90,7 @@ def cmd_crt(
     patches_repo_path: Path,
     run_locally: bool,
 ) -> None:
-    if verbose:
-        set_verbose_logging()
-
-    if debug:
-        set_debug_logging()
-
-    rich_handler = RichHandler(rich_tracebacks=True, console=console)
-    logger_set_handler(rich_handler)
+    setup_logging(verbose=verbose, debug=debug, console=console)
 
     ctx.github_token = github_token
     ctx.patches_repo_path = patches_repo_path

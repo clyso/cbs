@@ -13,6 +13,7 @@
 
 
 import datetime
+import logging
 import re
 import uuid
 from datetime import datetime as dt
@@ -46,14 +47,13 @@ from crt.crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crt.crtlib.errors.stages import MissingStagePatchError
-from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
 from crt.crtlib.models.patch import Patch, PatchMeta
 from crt.crtlib.models.patchset import GitHubPullRequest
 from crt.crtlib.utils import split_version_into_paths
 
-logger = parent_logger.getChild("manifest")
+logger = logging.getLogger(__name__)
 
 
 class ManifestExecuteResult(pydantic.BaseModel):

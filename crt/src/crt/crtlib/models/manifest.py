@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import string
 import uuid
 from datetime import datetime as dt
@@ -33,9 +34,7 @@ from crt.crtlib.models.discriminator import (
     ManifestPatchEntryWrapper,
 )
 
-from . import logger as parent_logger
-
-logger = parent_logger.getChild("manifest")
+logger = logging.getLogger(__name__)
 
 
 class ManifestStage(pydantic.BaseModel):

@@ -14,6 +14,7 @@
 
 import datetime
 import errno
+import logging
 import re
 import sys
 import uuid
@@ -83,9 +84,8 @@ from . import (
     pwarn,
     with_patches_repo_path,
 )
-from . import logger as parent_logger
 
-logger = parent_logger.getChild("manifest")
+logger = logging.getLogger(__name__)
 
 _ExitError = CRTExitError
 
