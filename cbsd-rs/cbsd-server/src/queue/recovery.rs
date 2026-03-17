@@ -13,7 +13,7 @@
 //! Startup recovery: reconcile in-flight builds after a server restart.
 
 use cbsd_proto::{BuildDescriptor, BuildId, Priority};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use crate::app::LogWatchers;
 use crate::queue::{QueuedBuild, SharedBuildQueue};
@@ -32,48 +32,55 @@ pub async fn run_startup_recovery(
     log_watchers: &LogWatchers,
 ) -> Result<(), sqlx::Error> {
     // 1. Fail in-flight builds (dispatched or started).
-    let in_flight_rows =
-        sqlx::query("SELECT id FROM builds WHERE state IN ('dispatched', 'started')")
-            .fetch_all(pool)
-            .await?;
+    let in_flight_rows = sqlx::query!(
+        r#"SELECT id AS "id!" FROM builds WHERE state IN ('dispatched', 'started')"#,
+    )
+    .fetch_all(pool)
+    .await?;
 
     let failed_count = in_flight_rows.len();
     for row in &in_flight_rows {
-        let id: i64 = row.get("id");
-        sqlx::query(
+        let id = row.id;
+        sqlx::query!(
             "UPDATE builds SET state = 'failure', error = 'server restarted', \
              finished_at = unixepoch() WHERE id = ?",
+            id,
         )
-        .bind(id)
         .execute(pool)
         .await?;
     }
 
     // 2. Finalize revoking builds.
-    let revoking_rows = sqlx::query("SELECT id FROM builds WHERE state = 'revoking'")
-        .fetch_all(pool)
-        .await?;
+    let revoking_rows = sqlx::query!(
+        r#"SELECT id AS "id!" FROM builds WHERE state = 'revoking'"#,
+    )
+    .fetch_all(pool)
+    .await?;
 
     let revoked_count = revoking_rows.len();
     for row in &revoking_rows {
-        let id: i64 = row.get("id");
-        sqlx::query("UPDATE builds SET state = 'revoked', finished_at = unixepoch() WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        sqlx::query(
-            "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+        let id = row.id;
+        sqlx::query!(
+            "UPDATE builds SET state = 'revoked', finished_at = unixepoch() WHERE id = ?",
+            id,
         )
-        .bind(id)
+        .execute(pool)
+        .await?;
+
+        sqlx::query!(
+            "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+            id,
+        )
         .execute(pool)
         .await?;
     }
 
     // 3. Re-enqueue queued builds into the in-memory priority queue.
-    let queued_rows = sqlx::query(
-        "SELECT id, descriptor, priority, user_email, queued_at \
-         FROM builds WHERE state = 'queued' ORDER BY queued_at ASC",
+    let queued_rows = sqlx::query!(
+        r#"SELECT id AS "id!", descriptor AS "descriptor!",
+                  priority AS "priority!", user_email AS "user_email!",
+                  queued_at AS "queued_at!"
+         FROM builds WHERE state = 'queued' ORDER BY queued_at ASC"#,
     )
     .fetch_all(pool)
     .await?;
@@ -82,11 +89,11 @@ pub async fn run_startup_recovery(
     {
         let mut q = queue.lock().await;
         for row in &queued_rows {
-            let id: i64 = row.get("id");
-            let descriptor_json: String = row.get("descriptor");
-            let priority_str: String = row.get("priority");
-            let user_email: String = row.get("user_email");
-            let queued_at: i64 = row.get("queued_at");
+            let id = row.id;
+            let descriptor_json = &row.descriptor;
+            let priority_str = &row.priority;
+            let user_email = row.user_email.clone();
+            let queued_at = row.queued_at;
 
             let priority = match priority_str.as_str() {
                 "high" => Priority::High,
@@ -94,7 +101,7 @@ pub async fn run_startup_recovery(
                 _ => Priority::Normal,
             };
 
-            let descriptor: BuildDescriptor = match serde_json::from_str(&descriptor_json) {
+            let descriptor: BuildDescriptor = match serde_json::from_str(descriptor_json) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::error!(
@@ -102,12 +109,12 @@ pub async fn run_startup_recovery(
                         "failed to deserialize build descriptor during recovery: {e} — \
                          marking as failure"
                     );
-                    sqlx::query(
+                    sqlx::query!(
                         "UPDATE builds SET state = 'failure', \
                          error = 'corrupt descriptor (recovery)', \
                          finished_at = unixepoch() WHERE id = ?",
+                        id,
                     )
-                    .bind(id)
                     .execute(pool)
                     .await?;
                     continue;

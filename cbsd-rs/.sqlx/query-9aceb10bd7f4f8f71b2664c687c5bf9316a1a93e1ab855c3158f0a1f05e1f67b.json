@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT log_path AS \"log_path!\", finished AS \"finished!\" FROM build_logs WHERE build_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "log_path!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "finished!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "9aceb10bd7f4f8f71b2664c687c5bf9316a1a93e1ab855c3158f0a1f05e1f67b"
+}

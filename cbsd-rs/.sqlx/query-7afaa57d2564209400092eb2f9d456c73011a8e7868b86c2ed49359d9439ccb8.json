@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT role_name AS \"role_name!\" FROM user_roles WHERE user_email = ? ORDER BY role_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "role_name!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7afaa57d2564209400092eb2f9d456c73011a8e7868b86c2ed49359d9439ccb8"
+}

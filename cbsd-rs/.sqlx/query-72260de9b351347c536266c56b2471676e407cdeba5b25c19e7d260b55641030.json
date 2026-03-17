@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cap AS \"cap!\" FROM role_caps WHERE role_name = ? ORDER BY cap",
+  "describe": {
+    "columns": [
+      {
+        "name": "cap!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "72260de9b351347c536266c56b2471676e407cdeba5b25c19e7d260b55641030"
+}

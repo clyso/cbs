@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT rc.cap AS \"cap!\"\n           FROM user_roles ur\n           JOIN role_caps rc ON ur.role_name = rc.role_name\n           WHERE ur.user_email = ?\n           ORDER BY rc.cap",
+  "describe": {
+    "columns": [
+      {
+        "name": "cap!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "154df6f020852cd6a17e99ed626f24cc6431b79474d3ff5af75bd1cfed50a1ea"
+}

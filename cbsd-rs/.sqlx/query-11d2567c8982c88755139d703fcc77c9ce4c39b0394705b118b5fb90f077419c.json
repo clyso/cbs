@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bl.build_id AS \"build_id!\", bl.log_path AS \"log_path!\"\n         FROM build_logs bl\n         JOIN builds b ON b.id = bl.build_id\n         WHERE b.state IN ('success', 'failure', 'revoked')\n           AND b.finished_at IS NOT NULL\n           AND b.finished_at < ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "build_id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "log_path!",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "11d2567c8982c88755139d703fcc77c9ce4c39b0394705b118b5fb90f077419c"
+}

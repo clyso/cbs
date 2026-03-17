@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(DISTINCT u.email) AS \"cnt!\"\n         FROM users u\n         JOIN user_roles ur ON u.email = ur.user_email\n         JOIN role_caps rc ON ur.role_name = rc.role_name\n         WHERE u.active = 1 AND rc.cap = '*'",
+  "describe": {
+    "columns": [
+      {
+        "name": "cnt!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9ad3b6852db711461fa499ea01e74fb176c64edec6b025f0876ecd6bac76bdad"
+}

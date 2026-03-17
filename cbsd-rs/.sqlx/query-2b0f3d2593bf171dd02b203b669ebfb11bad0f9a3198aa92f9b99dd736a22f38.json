@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE builds SET state = 'failure', error = 'server restarted', finished_at = unixepoch() WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "2b0f3d2593bf171dd02b203b669ebfb11bad0f9a3198aa92f9b99dd736a22f38"
+}

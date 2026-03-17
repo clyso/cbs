@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "07055fab4cb4fd85c768b8d3fe432d031d2811b228766df75b5869d0c34ecc6e"
+}

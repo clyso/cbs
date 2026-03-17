@@ -14,7 +14,7 @@
 
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use crate::config::ServerConfig;
 use crate::db;
@@ -30,11 +30,11 @@ pub async fn run_first_startup_seed(
     pool: &SqlitePool,
     config: &ServerConfig,
 ) -> Result<(), SeedError> {
-    let count: i64 = sqlx::query("SELECT COUNT(*) as cnt FROM roles")
+    let count = sqlx::query!(r#"SELECT COUNT(*) AS "cnt!" FROM roles"#)
         .fetch_one(pool)
         .await
         .map_err(SeedError::Db)?
-        .get("cnt");
+        .cnt;
 
     if count > 0 {
         tracing::debug!("roles table is not empty — skipping first-startup seed");
@@ -119,17 +119,21 @@ pub async fn run_first_startup_seed(
 
     // 2. Create seed admin user if configured.
     if let Some(admin_email) = &config.seed.seed_admin {
-        sqlx::query("INSERT INTO users (email, name) VALUES (?, 'Admin')")
-            .bind(admin_email)
-            .execute(&mut *tx)
-            .await
-            .map_err(SeedError::Db)?;
+        sqlx::query!(
+            "INSERT INTO users (email, name) VALUES (?, 'Admin')",
+            admin_email,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(SeedError::Db)?;
 
-        sqlx::query("INSERT INTO user_roles (user_email, role_name) VALUES (?, 'admin')")
-            .bind(admin_email)
-            .execute(&mut *tx)
-            .await
-            .map_err(SeedError::Db)?;
+        sqlx::query!(
+            "INSERT INTO user_roles (user_email, role_name) VALUES (?, 'admin')",
+            admin_email,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(SeedError::Db)?;
 
         tracing::info!(email = %admin_email, "created seed admin user with admin role");
 
@@ -182,20 +186,24 @@ async fn create_builtin_role(
     description: &str,
     caps: &[&str],
 ) -> Result<(), SeedError> {
-    sqlx::query("INSERT INTO roles (name, description, builtin) VALUES (?, ?, 1)")
-        .bind(name)
-        .bind(description)
+    sqlx::query!(
+        "INSERT INTO roles (name, description, builtin) VALUES (?, ?, 1)",
+        name,
+        description,
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(SeedError::Db)?;
+
+    for cap in caps {
+        sqlx::query!(
+            "INSERT INTO role_caps (role_name, cap) VALUES (?, ?)",
+            name,
+            *cap,
+        )
         .execute(&mut **tx)
         .await
         .map_err(SeedError::Db)?;
-
-    for cap in caps {
-        sqlx::query("INSERT INTO role_caps (role_name, cap) VALUES (?, ?)")
-            .bind(name)
-            .bind(*cap)
-            .execute(&mut **tx)
-            .await
-            .map_err(SeedError::Db)?;
     }
 
     Ok(())

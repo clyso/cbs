@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT revoked FROM tokens WHERE token_hash = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "revoked",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "152f633b775233d25a44499836b58d06802cd8f03157c380de595db3695ea1b5"
+}

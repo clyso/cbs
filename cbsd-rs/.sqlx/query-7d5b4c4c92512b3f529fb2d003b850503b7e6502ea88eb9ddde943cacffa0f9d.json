@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key_prefix AS \"key_prefix!\" FROM api_keys WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "key_prefix!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7d5b4c4c92512b3f529fb2d003b850503b7e6502ea88eb9ddde943cacffa0f9d"
+}

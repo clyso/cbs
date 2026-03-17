@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email AS \"email!\", name AS \"name!\", active FROM users WHERE email = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "email!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "active",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "7fff0636af3eab3b78ce0b96c6ec10b84cee49ab81fe2873130ef0f2cca418fa"
+}

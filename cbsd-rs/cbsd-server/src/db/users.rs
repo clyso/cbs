@@ -10,7 +10,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 pub struct UserRecord {
     pub email: String,
@@ -24,12 +24,12 @@ pub async fn create_or_update_user(
     email: &str,
     name: &str,
 ) -> Result<UserRecord, sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO users (email, name) VALUES (?, ?)
          ON CONFLICT(email) DO UPDATE SET name = excluded.name, updated_at = unixepoch()",
+        email,
+        name,
     )
-    .bind(email)
-    .bind(name)
     .execute(pool)
     .await?;
 
@@ -38,25 +38,26 @@ pub async fn create_or_update_user(
 
 /// Get a user by email.
 pub async fn get_user(pool: &SqlitePool, email: &str) -> Result<Option<UserRecord>, sqlx::Error> {
-    let row = sqlx::query("SELECT email, name, active FROM users WHERE email = ?")
-        .bind(email)
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query!(
+        r#"SELECT email AS "email!", name AS "name!", active FROM users WHERE email = ?"#,
+        email,
+    )
+    .fetch_optional(pool)
+    .await?;
 
     Ok(row.map(|r| UserRecord {
-        email: r.get("email"),
-        name: r.get("name"),
-        active: r.get::<i32, _>("active") != 0,
+        email: r.email,
+        name: r.name,
+        active: r.active != 0,
     }))
 }
 
 /// Check if a user is active.
 #[allow(dead_code)]
 pub async fn is_user_active(pool: &SqlitePool, email: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query("SELECT active FROM users WHERE email = ?")
-        .bind(email)
+    let row = sqlx::query!("SELECT active FROM users WHERE email = ?", email)
         .fetch_optional(pool)
         .await?;
 
-    Ok(row.is_some_and(|r| r.get::<i32, _>("active") != 0))
+    Ok(row.is_some_and(|r| r.active != 0))
 }

@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 /// Start the log GC background task.
 ///
@@ -74,15 +74,15 @@ async fn run_gc_cycle(
     //
     // We use a raw query because the terminal states list is static and
     // sqlx does not support binding arrays for IN clauses directly.
-    let rows = sqlx::query(
-        "SELECT bl.build_id, bl.log_path
+    let rows = sqlx::query!(
+        r#"SELECT bl.build_id AS "build_id!", bl.log_path AS "log_path!"
          FROM build_logs bl
          JOIN builds b ON b.id = bl.build_id
          WHERE b.state IN ('success', 'failure', 'revoked')
            AND b.finished_at IS NOT NULL
-           AND b.finished_at < ?",
+           AND b.finished_at < ?"#,
+        cutoff,
     )
-    .bind(cutoff)
     .fetch_all(pool)
     .await
     .map_err(GcError::Db)?;
@@ -94,11 +94,11 @@ async fn run_gc_cycle(
     let mut cleaned = 0usize;
 
     for row in &rows {
-        let build_id: i64 = row.get("build_id");
-        let log_path: String = row.get("log_path");
+        let build_id = row.build_id;
+        let log_path = &row.log_path;
 
         // Delete the log file from disk.
-        let full_path = log_dir.join(&log_path);
+        let full_path = log_dir.join(log_path);
         match tokio::fs::remove_file(&full_path).await {
             Ok(()) => {
                 tracing::debug!(
@@ -125,10 +125,12 @@ async fn run_gc_cycle(
         }
 
         // Delete the build_logs row.
-        if let Err(e) = sqlx::query("DELETE FROM build_logs WHERE build_id = ?")
-            .bind(build_id)
-            .execute(pool)
-            .await
+        if let Err(e) = sqlx::query!(
+            "DELETE FROM build_logs WHERE build_id = ?",
+            build_id,
+        )
+        .execute(pool)
+        .await
         {
             tracing::warn!(
                 build_id = build_id,

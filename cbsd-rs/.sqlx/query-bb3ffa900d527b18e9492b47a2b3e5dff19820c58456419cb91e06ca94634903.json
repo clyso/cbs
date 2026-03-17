@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key_prefix AS \"key_prefix!\", name AS \"name!\", created_at AS \"created_at!\"\n           FROM api_keys\n           WHERE owner_email = ? AND revoked = 0\n           ORDER BY created_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "key_prefix!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bb3ffa900d527b18e9492b47a2b3e5dff19820c58456419cb91e06ca94634903"
+}

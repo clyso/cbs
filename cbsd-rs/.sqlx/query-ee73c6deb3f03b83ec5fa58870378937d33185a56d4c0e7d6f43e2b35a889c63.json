@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM role_caps WHERE role_name = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ee73c6deb3f03b83ec5fa58870378937d33185a56d4c0e7d6f43e2b35a889c63"
+}

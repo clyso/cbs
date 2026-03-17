@@ -78,31 +78,32 @@ async fn deactivate_user(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
     })?;
 
-    sqlx::query("UPDATE users SET active = 0, updated_at = unixepoch() WHERE email = ?")
-        .bind(&email)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to deactivate user '{email}': {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
+    sqlx::query!(
+        "UPDATE users SET active = 0, updated_at = unixepoch() WHERE email = ?",
+        email,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to deactivate user '{email}': {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+    })?;
 
     // Last-admin guard within transaction: count remaining active wildcard holders
-    let row = sqlx::query(
-        "SELECT COUNT(DISTINCT u.email) as cnt
+    let count = sqlx::query!(
+        r#"SELECT COUNT(DISTINCT u.email) AS "cnt!"
          FROM users u
          JOIN user_roles ur ON u.email = ur.user_email
          JOIN role_caps rc ON ur.role_name = rc.role_name
-         WHERE u.active = 1 AND rc.cap = '*'",
+         WHERE u.active = 1 AND rc.cap = '*'"#,
     )
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         tracing::error!("failed to check admin count: {e}");
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-    })?;
-
-    let count: i64 = sqlx::Row::get(&row, "cnt");
+    })?
+    .cnt;
     if count == 0 {
         // Rollback: transaction will be dropped without commit
         return Err(auth_error(
@@ -178,14 +179,16 @@ async fn activate_user(
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "user not found"))?;
 
-    sqlx::query("UPDATE users SET active = 1, updated_at = unixepoch() WHERE email = ?")
-        .bind(&email)
-        .execute(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to activate user '{email}': {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
+    sqlx::query!(
+        "UPDATE users SET active = 1, updated_at = unixepoch() WHERE email = ?",
+        email,
+    )
+    .execute(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to activate user '{email}': {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+    })?;
 
     tracing::info!("user {} activated user '{email}'", user.email);
 
@@ -407,26 +410,31 @@ async fn deregister_worker(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
     })?;
 
-    sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0")
-        .bind(worker.api_key_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to revoke API key for worker '{}': {e}", worker.name);
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to revoke API key",
-            )
-        })?;
+    let api_key_id = worker.api_key_id;
+    sqlx::query!(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0",
+        api_key_id,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to revoke API key for worker '{}': {e}", worker.name);
+        auth_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to revoke API key",
+        )
+    })?;
 
-    sqlx::query("DELETE FROM workers WHERE id = ?")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to delete worker '{}': {e}", worker.name);
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
+    sqlx::query!(
+        "DELETE FROM workers WHERE id = ?",
+        id,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to delete worker '{}': {e}", worker.name);
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+    })?;
 
     tx.commit().await.map_err(|e| {
         tracing::error!("failed to commit worker deregistration: {e}");
@@ -523,14 +531,16 @@ async fn regenerate_worker_token(
         })?;
 
     // Revoke old key inside the transaction
-    sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0")
-        .bind(old_api_key_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to revoke old API key: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
+    sqlx::query!(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0",
+        old_api_key_id,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to revoke old API key: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+    })?;
 
     tx.commit().await.map_err(|e| {
         tracing::error!("failed to commit token regeneration: {e}");

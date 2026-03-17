@@ -12,7 +12,7 @@
 
 //! Database operations for API keys.
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 /// Full API key row (including hash) for verification.
 #[allow(dead_code)]
@@ -42,13 +42,13 @@ pub async fn insert_api_key(
     key_hash: &str,
     key_prefix: &str,
 ) -> Result<i64, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO api_keys (name, key_hash, key_prefix, owner_email) VALUES (?, ?, ?, ?)",
+        name,
+        key_hash,
+        key_prefix,
+        owner_email,
     )
-    .bind(name)
-    .bind(key_hash)
-    .bind(key_prefix)
-    .bind(owner_email)
     .execute(pool)
     .await?;
 
@@ -61,26 +61,27 @@ pub async fn find_api_keys_by_prefix(
     pool: &SqlitePool,
     key_prefix: &str,
 ) -> Result<Vec<ApiKeyRow>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT id, name, key_hash, key_prefix, owner_email, expires_at, revoked, created_at
-         FROM api_keys
-         WHERE key_prefix = ? AND revoked = 0",
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!", name AS "name!", key_hash AS "key_hash!", key_prefix AS "key_prefix!",
+                  owner_email AS "owner_email!", expires_at, revoked AS "revoked!", created_at AS "created_at!"
+           FROM api_keys
+           WHERE key_prefix = ? AND revoked = 0"#,
+        key_prefix,
     )
-    .bind(key_prefix)
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
         .map(|r| ApiKeyRow {
-            id: r.get("id"),
-            name: r.get("name"),
-            key_hash: r.get("key_hash"),
-            key_prefix: r.get("key_prefix"),
-            owner_email: r.get("owner_email"),
-            expires_at: r.get("expires_at"),
-            revoked: r.get::<i32, _>("revoked") != 0,
-            created_at: r.get("created_at"),
+            id: r.id,
+            name: r.name,
+            key_hash: r.key_hash,
+            key_prefix: r.key_prefix,
+            owner_email: r.owner_email,
+            expires_at: r.expires_at,
+            revoked: r.revoked != 0,
+            created_at: r.created_at,
         })
         .collect())
 }
@@ -90,22 +91,22 @@ pub async fn list_api_keys_for_user(
     pool: &SqlitePool,
     owner_email: &str,
 ) -> Result<Vec<ApiKeyListItem>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT key_prefix, name, created_at
-         FROM api_keys
-         WHERE owner_email = ? AND revoked = 0
-         ORDER BY created_at DESC",
+    let rows = sqlx::query!(
+        r#"SELECT key_prefix AS "key_prefix!", name AS "name!", created_at AS "created_at!"
+           FROM api_keys
+           WHERE owner_email = ? AND revoked = 0
+           ORDER BY created_at DESC"#,
+        owner_email,
     )
-    .bind(owner_email)
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
         .map(|r| ApiKeyListItem {
-            key_prefix: r.get("key_prefix"),
-            name: r.get("name"),
-            created_at: r.get("created_at"),
+            key_prefix: r.key_prefix,
+            name: r.name,
+            created_at: r.created_at,
         })
         .collect())
 }
@@ -116,12 +117,12 @@ pub async fn revoke_api_key_by_prefix(
     owner_email: &str,
     key_prefix: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE api_keys SET revoked = 1
          WHERE owner_email = ? AND key_prefix = ? AND revoked = 0",
+        owner_email,
+        key_prefix,
     )
-    .bind(owner_email)
-    .bind(key_prefix)
     .execute(pool)
     .await?;
 
@@ -133,11 +134,12 @@ pub async fn revoke_all_api_keys_for_user(
     pool: &SqlitePool,
     owner_email: &str,
 ) -> Result<u64, sqlx::Error> {
-    let result =
-        sqlx::query("UPDATE api_keys SET revoked = 1 WHERE owner_email = ? AND revoked = 0")
-            .bind(owner_email)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query!(
+        "UPDATE api_keys SET revoked = 1 WHERE owner_email = ? AND revoked = 0",
+        owner_email,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(result.rows_affected())
 }
@@ -147,10 +149,12 @@ pub async fn revoke_all_api_keys_for_user(
 /// be the original key creator. Returns true if a key was revoked.
 #[allow(dead_code)]
 pub async fn revoke_api_key_by_id(pool: &SqlitePool, api_key_id: i64) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0")
-        .bind(api_key_id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ? AND revoked = 0",
+        api_key_id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -164,13 +168,13 @@ pub async fn insert_api_key_in_tx(
     key_hash: &str,
     key_prefix: &str,
 ) -> Result<i64, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "INSERT INTO api_keys (name, key_hash, key_prefix, owner_email) VALUES (?, ?, ?, ?)",
+        name,
+        key_hash,
+        key_prefix,
+        owner_email,
     )
-    .bind(name)
-    .bind(key_hash)
-    .bind(key_prefix)
-    .bind(owner_email)
     .execute(&mut **tx)
     .await?;
 
@@ -183,10 +187,12 @@ pub async fn get_key_prefix_by_id(
     pool: &SqlitePool,
     api_key_id: i64,
 ) -> Result<Option<String>, sqlx::Error> {
-    let row = sqlx::query("SELECT key_prefix FROM api_keys WHERE id = ?")
-        .bind(api_key_id)
-        .fetch_optional(pool)
-        .await?;
+    let row = sqlx::query!(
+        r#"SELECT key_prefix AS "key_prefix!" FROM api_keys WHERE id = ?"#,
+        api_key_id,
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    Ok(row.map(|r| r.get("key_prefix")))
+    Ok(row.map(|r| r.key_prefix))
 }

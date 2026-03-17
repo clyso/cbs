@@ -1,0 +1,92 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n                id            AS \"id!\",\n                descriptor    AS \"descriptor!\",\n                descriptor_version AS \"descriptor_version!\",\n                user_email    AS \"user_email!\",\n                priority      AS \"priority!\",\n                state         AS \"state!\",\n                worker_id,\n                trace_id,\n                error,\n                submitted_at  AS \"submitted_at!\",\n                queued_at     AS \"queued_at!\",\n                started_at,\n                finished_at\n         FROM builds WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "descriptor!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "descriptor_version!",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "user_email!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "state!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "worker_id",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "trace_id",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "error",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "submitted_at!",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "queued_at!",
+        "ordinal": 10,
+        "type_info": "Integer"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 11,
+        "type_info": "Integer"
+      },
+      {
+        "name": "finished_at",
+        "ordinal": 12,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "7dd22d08b79bb25ed944dcbd8d9680f018f55da5dc322d98e114c07d17c6db6b"
+}
