@@ -21,6 +21,7 @@ use serde::Deserialize;
 /// via a `worker_token` (base64url-encoded JSON from the registration API).
 /// The `CBSD_WORKER_TOKEN` env var takes highest precedence.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct WorkerConfig {
     /// WebSocket endpoint, e.g. `wss://cbsd.clyso.com:8080/api/ws/worker`.
     pub server_url: String,

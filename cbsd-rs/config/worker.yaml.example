@@ -18,7 +18,7 @@
 #
 # Within a podman-compose deployment, use the server's service name:
 #   ws://server:8080/api/ws/worker
-server_url: "ws://server:8080/api/ws/worker"
+server-url: "ws://server:8080/api/ws/worker"
 
 # --------------------------------------------------------------------------
 # Authentication — choose ONE of the following methods:
@@ -29,42 +29,42 @@ server_url: "ws://server:8080/api/ws/worker"
 # Base64url-encoded JSON containing worker_id, worker_name, api_key, arch.
 # Can also be set via the CBSD_WORKER_TOKEN environment variable.
 #
-# worker_token: "eyJ3b3JrZXJfaWQ..."
+# worker-token: "eyJ3b3JrZXJfaWQ..."
 
 # Method 2: Pre-configured API key (development).
-# Use the same api_key value configured in the server's dev.seed_workers.
+# Use the same api-key value configured in the server's dev.seed-workers.
 # This is the simplest path for podman-compose dev deployments.
-api_key: "cbsk_0000000000000000000000000000000000000000000000000000000000000000"
+api-key: "cbsk_0000000000000000000000000000000000000000000000000000000000000000"
 arch: "x86_64"
 
 # Path to a custom TLS CA bundle (PEM format).
 # Required when the server uses a self-signed certificate or an internal CA.
 # Omit for servers using a publicly trusted certificate.
-# tls_ca_bundle_path: /cbs/config/internal-ca.pem
+# tls-ca-bundle-path: /cbs/config/internal-ca.pem
 
 # Path to the cbscore-wrapper.py script that bridges the worker to the
 # cbscore Python build library. Defaults to cbscore-wrapper.py located
 # in the same directory as the cbsd-worker binary.
-cbscore_wrapper_path: /opt/cbsd-rs/cbscore-wrapper.py
+cbscore-wrapper-path: /opt/cbsd-rs/cbscore-wrapper.py
 
 # Path to the cbscore configuration file (cbs-build.config.yaml).
 # This is the same config file used by cbsbuild CLI.
-cbscore_config_path: /cbs/config/cbs-build.config.yaml
+cbscore-config-path: /cbs/config/cbs-build.config.yaml
 
 # Maximum build duration in seconds before the build is forcibly terminated.
 # Omit to allow unlimited build time.
-# build_timeout_secs: 7200
+# build-timeout-secs: 7200
 
 # Temporary directory for staging component tarballs before unpacking.
 # Defaults to the system temporary directory.
-# component_temp_dir: /cbs/scratch/components
+# component-temp-dir: /cbs/scratch/components
 
 # Seconds between SIGTERM and SIGKILL escalation when terminating a build
 # subprocess. The server sends a suggested value at dispatch time; this
 # setting overrides it locally on the worker.
-# sigkill_escalation_timeout_secs: 15
+# sigkill-escalation-timeout-secs: 15
 
 # Maximum ceiling for reconnection exponential backoff in seconds.
-# Must be less than the server's liveness_grace_period_secs (default: 90).
+# Must be less than the server's liveness-grace-period-secs (default: 90).
 # Default: 30
-# reconnect_backoff_ceiling_secs: 30
+# reconnect-backoff-ceiling-secs: 30

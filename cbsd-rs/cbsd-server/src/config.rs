@@ -16,6 +16,7 @@ use serde::Deserialize;
 
 /// Top-level server configuration. Loaded from YAML.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct ServerConfig {
     /// Listen address (e.g., "0.0.0.0:8080").
     #[serde(default = "default_listen_addr")]
@@ -68,6 +69,7 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct SecretsConfig {
     /// 64-byte hex key for PASETO tokens and session key derivation (HKDF).
     pub token_secret_key: String,
@@ -77,6 +79,7 @@ pub struct SecretsConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct OAuthConfig {
     /// Path to Google OAuth2 secrets JSON file.
     pub secrets_file: PathBuf,
@@ -94,6 +97,7 @@ pub struct OAuthConfig {
 /// `#[serde(default)]`, so serde calls `TimeoutsConfig::default()` when the
 /// entire section is missing. Per-field defaults are not needed.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct TimeoutsConfig {
     /// Seconds to wait for build_accepted after build_new.
     pub dispatch_ack_timeout_secs: u64,
@@ -125,6 +129,7 @@ impl Default for TimeoutsConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct LogRetentionConfig {
     /// Days to retain build log files.
     pub log_retention_days: u32,
@@ -139,6 +144,7 @@ impl Default for LogRetentionConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct SeedConfig {
     /// Admin email for first-startup seeding.
     pub seed_admin: Option<String>,
@@ -150,6 +156,7 @@ pub struct SeedConfig {
 /// first startup, allowing zero-touch `podman-compose` deployments where
 /// both server and worker configs reference the same key.
 #[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct DevConfig {
     /// Enable development mode. Default: false.
     #[serde(default)]
@@ -163,6 +170,7 @@ pub struct DevConfig {
 
 /// A worker to seed in dev mode, with a pre-configured API key.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct DevSeedWorker {
     pub name: String,
     /// Typed as `Arch` — serde validates at parse time.
@@ -173,6 +181,7 @@ pub struct DevSeedWorker {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct LoggingConfig {
     /// Log level (e.g., "info", "debug", "trace").
     #[serde(default = "default_log_level")]
