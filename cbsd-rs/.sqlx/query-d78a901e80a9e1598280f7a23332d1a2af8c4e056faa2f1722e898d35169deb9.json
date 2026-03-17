@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO role_caps (role_name, cap) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d78a901e80a9e1598280f7a23332d1a2af8c4e056faa2f1722e898d35169deb9"
+}

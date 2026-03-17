@@ -40,32 +40,58 @@ pub async fn insert_build(
     user_email: &str,
     priority: &str,
 ) -> Result<i64, sqlx::Error> {
-    let row = sqlx::query(
-        "INSERT INTO builds (descriptor, user_email, priority, state)
+    let row = sqlx::query!(
+        r#"INSERT INTO builds (descriptor, user_email, priority, state)
          VALUES (?, ?, ?, 'queued')
-         RETURNING id",
+         RETURNING id AS "id!""#,
+        descriptor_json,
+        user_email,
+        priority,
     )
-    .bind(descriptor_json)
-    .bind(user_email)
-    .bind(priority)
     .fetch_one(pool)
     .await?;
 
-    Ok(row.get("id"))
+    Ok(row.id)
 }
 
 /// Get a single build by ID.
 pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT id, descriptor, descriptor_version, user_email, priority, state,
-                worker_id, trace_id, error, submitted_at, queued_at, started_at, finished_at
-         FROM builds WHERE id = ?",
+    let row = sqlx::query!(
+        r#"SELECT
+                id            AS "id!",
+                descriptor    AS "descriptor!",
+                descriptor_version AS "descriptor_version!",
+                user_email    AS "user_email!",
+                priority      AS "priority!",
+                state         AS "state!",
+                worker_id,
+                trace_id,
+                error,
+                submitted_at  AS "submitted_at!",
+                queued_at     AS "queued_at!",
+                started_at,
+                finished_at
+         FROM builds WHERE id = ?"#,
+        id,
     )
-    .bind(id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(row_to_build_record))
+    Ok(row.map(|r| BuildRecord {
+        id: r.id,
+        descriptor: r.descriptor,
+        descriptor_version: r.descriptor_version,
+        user_email: r.user_email,
+        priority: r.priority,
+        state: r.state,
+        worker_id: r.worker_id,
+        trace_id: r.trace_id,
+        error: r.error,
+        submitted_at: r.submitted_at,
+        queued_at: r.queued_at,
+        started_at: r.started_at,
+        finished_at: r.finished_at,
+    }))
 }
 
 /// List builds with optional filters on user email and state.
@@ -114,13 +140,13 @@ pub async fn update_build_state(
     new_state: &str,
     error: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE builds SET state = ?, error = COALESCE(?, error)
          WHERE id = ?",
+        new_state,
+        error,
+        id,
     )
-    .bind(new_state)
-    .bind(error)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -133,11 +159,13 @@ pub async fn insert_build_log_row(
     build_id: i64,
     log_path: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO build_logs (build_id, log_path) VALUES (?, ?)")
-        .bind(build_id)
-        .bind(log_path)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO build_logs (build_id, log_path) VALUES (?, ?)",
+        build_id,
+        log_path,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -150,13 +178,13 @@ pub async fn set_build_dispatched(
     trace_id: &str,
     worker_id: &str,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE builds SET state = 'dispatched', trace_id = ?, worker_id = ?
          WHERE id = ?",
+        trace_id,
+        worker_id,
+        id,
     )
-    .bind(trace_id)
-    .bind(worker_id)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -166,11 +194,11 @@ pub async fn set_build_dispatched(
 /// Mark a build as started and set started_at to the current time.
 /// Returns `true` if a row was updated.
 pub async fn set_build_started(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE builds SET state = 'started', started_at = unixepoch()
          WHERE id = ?",
+        id,
     )
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -186,13 +214,13 @@ pub async fn set_build_finished(
     state: &str,
     error: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "UPDATE builds SET state = ?, finished_at = unixepoch(), error = COALESCE(?, error)
          WHERE id = ?",
+        state,
+        error,
+        id,
     )
-    .bind(state)
-    .bind(error)
-    .bind(id)
     .execute(pool)
     .await?;
 
@@ -202,25 +230,31 @@ pub async fn set_build_finished(
 /// Set a build's state to "revoking".
 /// Returns `true` if a row was updated.
 pub async fn set_build_revoking(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("UPDATE builds SET state = 'revoking' WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "UPDATE builds SET state = 'revoking' WHERE id = ?",
+        id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(result.rows_affected() > 0)
 }
 
 /// Mark a build log as finished (`build_logs.finished = 1`).
 pub async fn set_build_log_finished(pool: &SqlitePool, build_id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?")
-        .bind(build_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+        build_id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
 
 /// Map a sqlx Row to a BuildRecord.
+///
+/// Used by `list_builds` which constructs dynamic SQL and returns untyped rows.
 fn row_to_build_record(r: sqlx::sqlite::SqliteRow) -> BuildRecord {
     BuildRecord {
         id: r.get("id"),

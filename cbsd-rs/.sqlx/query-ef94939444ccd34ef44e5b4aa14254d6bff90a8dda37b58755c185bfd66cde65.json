@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name AS \"name!\", description AS \"description!\",\n                  builtin, created_at AS \"created_at!\"\n           FROM roles ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "description!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "builtin",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ef94939444ccd34ef44e5b4aa14254d6bff90a8dda37b58755c185bfd66cde65"
+}

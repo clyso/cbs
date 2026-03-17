@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO builds (descriptor, user_email, priority, state)\n         VALUES (?, ?, ?, 'queued')\n         RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "12bfb014347fef713d5eb004cbdbcb0f917d848a4cb2ccff3e5e148d66cb68f5"
+}

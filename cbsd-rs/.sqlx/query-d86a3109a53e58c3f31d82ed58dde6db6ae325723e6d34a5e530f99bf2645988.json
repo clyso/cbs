@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE workers SET last_seen = unixepoch() WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "d86a3109a53e58c3f31d82ed58dde6db6ae325723e6d34a5e530f99bf2645988"
+}

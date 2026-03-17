@@ -490,19 +490,21 @@ async fn list_users_with_roles(
 ) -> Result<Json<Vec<UserWithRolesItem>>, (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:view")?;
 
-    let users = sqlx::query("SELECT email, name, active FROM users ORDER BY email")
-        .fetch_all(&state.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to list users: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list users")
-        })?;
+    let users = sqlx::query!(
+        r#"SELECT email AS "email!", name AS "name!", active AS "active!" FROM users ORDER BY email"#,
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to list users: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list users")
+    })?;
 
     let mut result = Vec::with_capacity(users.len());
     for row in users {
-        let email: String = sqlx::Row::get(&row, "email");
-        let name: String = sqlx::Row::get(&row, "name");
-        let active: bool = sqlx::Row::get::<i32, _>(&row, "active") != 0;
+        let email = row.email;
+        let name = row.name;
+        let active: bool = row.active != 0;
 
         let user_roles = db::roles::get_user_roles(&state.pool, &email)
             .await
@@ -732,14 +734,14 @@ async fn add_user_role(
 
     // Insert scopes for this assignment
     for scope in &body.scopes {
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR IGNORE INTO user_role_scopes (user_email, role_name, scope_type, pattern)
              VALUES (?, ?, ?, ?)",
+            email,
+            body.role,
+            scope.scope_type,
+            scope.pattern,
         )
-        .bind(&email)
-        .bind(&body.role)
-        .bind(&scope.scope_type)
-        .bind(&scope.pattern)
         .execute(&state.pool)
         .await
         .map_err(|e| {

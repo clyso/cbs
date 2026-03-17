@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", name AS \"name!\", key_hash AS \"key_hash!\", key_prefix AS \"key_prefix!\",\n                  owner_email AS \"owner_email!\", expires_at, revoked AS \"revoked!\", created_at AS \"created_at!\"\n           FROM api_keys\n           WHERE key_prefix = ? AND revoked = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_hash!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "key_prefix!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "owner_email!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "expires_at",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "revoked!",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 7,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "ea8206124267052ae83f487dfceac995b55ffee6ae6219384565251b7cfb5799"
+}

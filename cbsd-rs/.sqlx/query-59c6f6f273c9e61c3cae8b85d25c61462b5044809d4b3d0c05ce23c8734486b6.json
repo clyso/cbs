@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO build_logs (build_id, log_path) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "59c6f6f273c9e61c3cae8b85d25c61462b5044809d4b3d0c05ce23c8734486b6"
+}

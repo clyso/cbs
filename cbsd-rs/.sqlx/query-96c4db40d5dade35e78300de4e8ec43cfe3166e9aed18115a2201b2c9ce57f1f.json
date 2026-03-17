@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE builds SET state = 'started', started_at = unixepoch()\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "96c4db40d5dade35e78300de4e8ec43cfe3166e9aed18115a2201b2c9ce57f1f"
+}

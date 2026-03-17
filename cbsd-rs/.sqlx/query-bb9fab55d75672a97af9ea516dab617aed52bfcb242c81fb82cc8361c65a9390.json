@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT builtin FROM roles WHERE name = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "builtin",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bb9fab55d75672a97af9ea516dab617aed52bfcb242c81fb82cc8361c65a9390"
+}

@@ -12,7 +12,7 @@
 
 //! Database operations for registered workers.
 
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 /// Full worker row from the database.
 pub struct WorkerRow {
@@ -34,14 +34,14 @@ pub async fn insert_worker(
     api_key_id: i64,
     created_by: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
+    sqlx::query!(
         "INSERT INTO workers (id, name, arch, api_key_id, created_by) VALUES (?, ?, ?, ?, ?)",
+        id,
+        name,
+        arch,
+        api_key_id,
+        created_by,
     )
-    .bind(id)
-    .bind(name)
-    .bind(arch)
-    .bind(api_key_id)
-    .bind(created_by)
     .execute(&mut **tx)
     .await?;
 
@@ -53,22 +53,24 @@ pub async fn get_worker_by_id(
     pool: &SqlitePool,
     id: &str,
 ) -> Result<Option<WorkerRow>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT id, name, arch, api_key_id, created_by, created_at, last_seen
-         FROM workers WHERE id = ?",
+    let row = sqlx::query!(
+        r#"SELECT id AS "id!", name AS "name!", arch AS "arch!",
+                  api_key_id AS "api_key_id!", created_by AS "created_by!",
+                  created_at AS "created_at!", last_seen
+           FROM workers WHERE id = ?"#,
+        id,
     )
-    .bind(id)
     .fetch_optional(pool)
     .await?;
 
     Ok(row.map(|r| WorkerRow {
-        id: r.get("id"),
-        name: r.get("name"),
-        arch: r.get("arch"),
-        api_key_id: r.get("api_key_id"),
-        created_by: r.get("created_by"),
-        created_at: r.get("created_at"),
-        last_seen: r.get("last_seen"),
+        id: r.id,
+        name: r.name,
+        arch: r.arch,
+        api_key_id: r.api_key_id,
+        created_by: r.created_by,
+        created_at: r.created_at,
+        last_seen: r.last_seen,
     }))
 }
 
@@ -77,30 +79,34 @@ pub async fn get_worker_by_api_key_id(
     pool: &SqlitePool,
     api_key_id: i64,
 ) -> Result<Option<WorkerRow>, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT id, name, arch, api_key_id, created_by, created_at, last_seen
-         FROM workers WHERE api_key_id = ?",
+    let row = sqlx::query!(
+        r#"SELECT id AS "id!", name AS "name!", arch AS "arch!",
+                  api_key_id AS "api_key_id!", created_by AS "created_by!",
+                  created_at AS "created_at!", last_seen
+           FROM workers WHERE api_key_id = ?"#,
+        api_key_id,
     )
-    .bind(api_key_id)
     .fetch_optional(pool)
     .await?;
 
     Ok(row.map(|r| WorkerRow {
-        id: r.get("id"),
-        name: r.get("name"),
-        arch: r.get("arch"),
-        api_key_id: r.get("api_key_id"),
-        created_by: r.get("created_by"),
-        created_at: r.get("created_at"),
-        last_seen: r.get("last_seen"),
+        id: r.id,
+        name: r.name,
+        arch: r.arch,
+        api_key_id: r.api_key_id,
+        created_by: r.created_by,
+        created_at: r.created_at,
+        last_seen: r.last_seen,
     }))
 }
 
 /// List all registered workers.
 pub async fn list_workers(pool: &SqlitePool) -> Result<Vec<WorkerRow>, sqlx::Error> {
-    let rows = sqlx::query(
-        "SELECT id, name, arch, api_key_id, created_by, created_at, last_seen
-         FROM workers ORDER BY created_at",
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!", name AS "name!", arch AS "arch!",
+                  api_key_id AS "api_key_id!", created_by AS "created_by!",
+                  created_at AS "created_at!", last_seen
+           FROM workers ORDER BY created_at"#,
     )
     .fetch_all(pool)
     .await?;
@@ -108,13 +114,13 @@ pub async fn list_workers(pool: &SqlitePool) -> Result<Vec<WorkerRow>, sqlx::Err
     Ok(rows
         .into_iter()
         .map(|r| WorkerRow {
-            id: r.get("id"),
-            name: r.get("name"),
-            arch: r.get("arch"),
-            api_key_id: r.get("api_key_id"),
-            created_by: r.get("created_by"),
-            created_at: r.get("created_at"),
-            last_seen: r.get("last_seen"),
+            id: r.id,
+            name: r.name,
+            arch: r.arch,
+            api_key_id: r.api_key_id,
+            created_by: r.created_by,
+            created_at: r.created_at,
+            last_seen: r.last_seen,
         })
         .collect())
 }
@@ -122,8 +128,7 @@ pub async fn list_workers(pool: &SqlitePool) -> Result<Vec<WorkerRow>, sqlx::Err
 /// Delete a worker by UUID. Returns true if a row was deleted.
 #[allow(dead_code)]
 pub async fn delete_worker(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM workers WHERE id = ?")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM workers WHERE id = ?", id)
         .execute(pool)
         .await?;
 
@@ -133,10 +138,12 @@ pub async fn delete_worker(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Er
 /// Update `last_seen` to the current Unix timestamp. Returns true if
 /// a row was updated (false if the worker was deleted mid-flight).
 pub async fn update_last_seen(pool: &SqlitePool, id: &str) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("UPDATE workers SET last_seen = unixepoch() WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
+    let result = sqlx::query!(
+        "UPDATE workers SET last_seen = unixepoch() WHERE id = ?",
+        id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -147,11 +154,13 @@ pub async fn update_api_key_id(
     id: &str,
     new_api_key_id: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE workers SET api_key_id = ? WHERE id = ?")
-        .bind(new_api_key_id)
-        .bind(id)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE workers SET api_key_id = ? WHERE id = ?",
+        new_api_key_id,
+        id,
+    )
+    .execute(&mut **tx)
+    .await?;
 
     Ok(())
 }

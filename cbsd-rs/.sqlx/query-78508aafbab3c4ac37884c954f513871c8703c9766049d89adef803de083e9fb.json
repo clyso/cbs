@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", descriptor AS \"descriptor!\",\n                  priority AS \"priority!\", user_email AS \"user_email!\",\n                  queued_at AS \"queued_at!\"\n         FROM builds WHERE state = 'queued' ORDER BY queued_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "descriptor!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "user_email!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "queued_at!",
+        "ordinal": 4,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "78508aafbab3c4ac37884c954f513871c8703c9766049d89adef803de083e9fb"
+}

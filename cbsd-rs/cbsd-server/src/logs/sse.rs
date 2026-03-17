@@ -269,18 +269,15 @@ async fn get_build_log_row(
     pool: &SqlitePool,
     build_id: i64,
 ) -> Result<Option<BuildLogRow>, sqlx::Error> {
-    use sqlx::Row;
+    let row = sqlx::query!(
+        r#"SELECT log_path AS "log_path!", finished AS "finished!" FROM build_logs WHERE build_id = ?"#,
+        build_id,
+    )
+    .fetch_optional(pool)
+    .await?;
 
-    let row = sqlx::query("SELECT log_path, finished FROM build_logs WHERE build_id = ?")
-        .bind(build_id)
-        .fetch_optional(pool)
-        .await?;
-
-    Ok(row.map(|r| {
-        let finished_int: i32 = r.get("finished");
-        BuildLogRow {
-            log_path: r.get("log_path"),
-            finished: finished_int != 0,
-        }
+    Ok(row.map(|r| BuildLogRow {
+        log_path: r.log_path,
+        finished: r.finished != 0,
     }))
 }

@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", name AS \"name!\", arch AS \"arch!\",\n                  api_key_id AS \"api_key_id!\", created_by AS \"created_by!\",\n                  created_at AS \"created_at!\", last_seen\n           FROM workers ORDER BY created_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "arch!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "api_key_id!",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_by!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_seen",
+        "ordinal": 6,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "9f1a8256517ffbc3d302aad37a8450d6d157dbbb28a3777f2e7372fc9fb93517"
+}

@@ -160,11 +160,13 @@ async fn update_build_log_size(
     build_id: i64,
     log_size: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE build_logs SET log_size = ?, updated_at = unixepoch() WHERE build_id = ?")
-        .bind(log_size)
-        .bind(build_id)
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "UPDATE build_logs SET log_size = ?, updated_at = unixepoch() WHERE build_id = ?",
+        log_size,
+        build_id,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

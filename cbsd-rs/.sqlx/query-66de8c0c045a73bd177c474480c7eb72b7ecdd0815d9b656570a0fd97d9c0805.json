@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\" FROM builds WHERE state IN ('dispatched', 'started')",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "66de8c0c045a73bd177c474480c7eb72b7ecdd0815d9b656570a0fd97d9c0805"
+}

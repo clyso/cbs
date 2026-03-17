@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE builds SET state = ?, error = COALESCE(?, error)\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "096a349240724e94f7190ad0ba383f340379d529c61b2754ec213052110b32ba"
+}

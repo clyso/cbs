@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE users SET active = 0, updated_at = unixepoch() WHERE email = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f14086763e48e35ba65a0b390f582612cf50054405ba3c720ec71b80ea03e55f"
+}
