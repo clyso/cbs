@@ -10,5 +10,10 @@
     "**/node_modules"
   ],
   "baselineFile": ".basedpyright/baseline.json",
-  "extraPaths": ["cbscore/src", "crt/src"]
+  "extraPaths": [
+    "cbscore/src",
+    "crt/src",
+    "cbsd",
+    "cbc/src"
+  ]
 }

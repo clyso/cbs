@@ -23,6 +23,32 @@ We will also find a `podman-compose.cbs.yaml` file, which will set up a local
 `cbs` -- server, worker, and the required `redis` broker for the server's work
 queue. Using the `do-cbs-compose.sh` script we can easily run this setup.
 
+## Development
+
+Requires Python 3.13+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+# Install all dependencies
+uv sync
+
+# Lint and format
+uv run ruff check
+uv run ruff format --check
+
+# Type check
+uv run basedpyright .
+```
+
+### Running tests
+
+```bash
+# Install all workspace packages + test dependencies
+uv sync --all-packages --group test
+
+# Run the test suite
+uv run pytest cbsd/tests/ -v
+```
+
 ## Contributing
 
 We haven't quite defined all the requirements for contributing to this
