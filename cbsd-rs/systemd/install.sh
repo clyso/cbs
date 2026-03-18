@@ -427,11 +427,17 @@ ${old_config_warning}
 CBSD-RS worker configuration must exist at:
   ${deployment_config_dir}/${svc_name}/worker.yaml
 
-Copy and adapt cbsd-rs/config/worker.yaml.example. The server_url must
+Copy and adapt cbsd-rs/config/worker.yaml.example. The server-url must
 use the server's container name on the cbsd-rs-${deployment} network:
-  server_url: "ws://cbsd-rs-server.${deployment}:8080/api/ws/worker"
+  server-url: "ws://cbsd-rs-server.${deployment}:8080/api/ws/worker"
 
-The API key is printed to the server's stdout on first startup.
+Register this worker via the server REST API to obtain a worker-token:
+  curl -X POST http://<server-host>:8080/api/admin/workers \\
+    -H "Authorization: Bearer <admin-token>" \\
+    -H "Content-Type: application/json" \\
+    -d '{"name": "<worker-name>", "arch": "x86_64"}'
+
+Set the returned worker-token in worker.yaml before starting the service.
 
 Component files are installed to:
   ${deployment_data_dir}/components/

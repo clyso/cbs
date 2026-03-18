@@ -46,7 +46,8 @@ All YAML configuration keys use **kebab-case** throughout (e.g. `listen-addr`,
 The `podman-compose.cbsd-rs.yaml` file is primarily intended for **development
 and staging**. It builds images locally from source and bind-mounts
 configuration from `_local/cbsd-rs/`. For production, use the systemd-based
-setup instead.
+setup instead (see [Production deployment](#production-deployment-systemd)
+below).
 
 Two compose profiles are available:
 
@@ -84,3 +85,36 @@ server start):
 
 Run `./do-cbsd-rs-compose.sh --help` for full options including
 `--worker-name`, `--arch`, `--allowed-domain`, and `--rebuild`.
+
+## Production deployment (systemd)
+
+For production, use the systemd user-service installer in
+`cbsd-rs/systemd/`. It pulls pre-built images from the registry and
+integrates with the host service manager rather than managing the
+container lifecycle through podman-compose.
+
+```bash
+# Install server + worker services for the default deployment
+./cbsd-rs/systemd/install.sh
+
+# Install server only, or a named worker instance
+./cbsd-rs/systemd/install.sh server
+./cbsd-rs/systemd/install.sh worker --name host-01
+```
+
+The installer places systemd unit files under `~/.config/systemd/user/`
+and prints per-service instructions explaining what config files must be
+created before the service can be started.
+
+**Worker registration** — workers must be registered via the server REST
+API (not pre-seeded at startup). After the server is running and you have
+an admin token, register each worker and copy the returned `worker-token`
+into the worker's `worker.yaml`:
+
+```bash
+curl -X POST http://<server-host>:8080/api/admin/workers \
+  -H "Authorization: Bearer <admin-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "worker-x86-01", "arch": "x86_64"}'
+# response includes: {"worker-token": "..."}
+```
