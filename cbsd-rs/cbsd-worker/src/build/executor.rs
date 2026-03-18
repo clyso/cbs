@@ -48,6 +48,8 @@ pub struct BuildExecutor {
 pub enum ExecutorError {
     /// Failed to resolve the wrapper script path.
     WrapperNotFound(PathBuf),
+    /// A required config field is missing.
+    MissingConfig(&'static str),
     /// Failed to serialize the build input to JSON.
     SerializeInput(serde_json::Error),
     /// Failed to spawn the subprocess.
@@ -62,6 +64,9 @@ impl std::fmt::Display for ExecutorError {
             Self::WrapperNotFound(path) => {
                 write!(f, "cbscore wrapper not found: {}", path.display())
             }
+            Self::MissingConfig(field) => {
+                write!(f, "missing required config: {field}")
+            }
             Self::SerializeInput(err) => write!(f, "failed to serialize build input: {err}"),
             Self::Spawn(err) => write!(f, "failed to spawn build subprocess: {err}"),
             Self::WriteStdin(err) => {
@@ -74,7 +79,7 @@ impl std::fmt::Display for ExecutorError {
 impl std::error::Error for ExecutorError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::WrapperNotFound(_) => None,
+            Self::WrapperNotFound(_) | Self::MissingConfig(_) => None,
             Self::SerializeInput(err) => Some(err),
             Self::Spawn(err) | Self::WriteStdin(err) => Some(err),
         }
@@ -112,6 +117,12 @@ pub async fn spawn_build(
         return Err(ExecutorError::WrapperNotFound(wrapper_path));
     }
 
+    // Guard: cbscore config is required for builds.
+    let cbscore_config_path = config
+        .cbscore_config_path
+        .as_ref()
+        .ok_or(ExecutorError::MissingConfig("cbscore-config-path"))?;
+
     // Build the JSON payload for stdin.
     let input = serde_json::json!({
         "descriptor": descriptor,
@@ -130,9 +141,15 @@ pub async fn spawn_build(
     let mut cmd = Command::new("python3");
     cmd.arg(&wrapper_path)
         .env("CBS_TRACE_ID", trace_id)
+        .env("CBSCORE_CONFIG", cbscore_config_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::null()); // wrapper redirects stderr→stdout via os.dup2
+
+    // Optional env vars.
+    if let Some(timeout) = config.build_timeout_secs {
+        cmd.env("CBS_BUILD_TIMEOUT", timeout.to_string());
+    }
 
     // SAFETY: `setsid()` is async-signal-safe (POSIX). This is the only
     // operation in the `pre_exec` hook.
