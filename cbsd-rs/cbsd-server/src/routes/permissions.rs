@@ -36,6 +36,9 @@ const KNOWN_CAPS: &[&str] = &[
     "components:manage",
     "workers:view",
     "workers:manage",
+    "periodic:create",
+    "periodic:view",
+    "periodic:manage",
     "*",
 ];
 

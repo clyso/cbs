@@ -122,69 +122,30 @@ async fn submit_build(
     descriptor.signed_off_by.user = user.name.clone();
     descriptor.signed_off_by.email = user.email.clone();
 
-    // Serialize descriptor to JSON for storage
-    let descriptor_json = serde_json::to_string(&descriptor).map_err(|e| {
-        tracing::error!("failed to serialize descriptor: {e}");
-        auth_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to serialize build descriptor",
-        )
+    let (build_id, pending_count) = insert_build_internal(
+        &state,
+        descriptor,
+        &user.email,
+        body.priority,
+        None,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to submit build: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
     })?;
 
-    // Map priority to DB string
-    let priority_str = match body.priority {
-        Priority::High => "high",
-        Priority::Normal => "normal",
-        Priority::Low => "low",
+    let warning = if pending_count > 1 {
+        Some(format!("{pending_count} build(s) in queue"))
+    } else {
+        None
     };
-
-    // Insert into database
-    let build_id =
-        db::builds::insert_build(&state.pool, &descriptor_json, &user.email, priority_str)
-            .await
-            .map_err(|e| {
-                tracing::error!("failed to insert build: {e}");
-                auth_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to create build record",
-                )
-            })?;
-
-    // Enqueue in the in-memory queue
-    let queued_at = chrono::Utc::now().timestamp();
-    let queued_build = QueuedBuild {
-        build_id: BuildId(build_id),
-        priority: body.priority,
-        descriptor,
-        user_email: user.email.clone(),
-        queued_at,
-    };
-
-    let warning;
-    {
-        let mut queue = state.queue.lock().await;
-        queue.enqueue(queued_build);
-        let (h, n, l) = queue.pending_counts();
-        let total = h + n + l;
-        warning = if total > 1 {
-            Some(format!("{total} build(s) in queue"))
-        } else {
-            None
-        };
-    }
 
     tracing::info!(
-        "user {} submitted build {build_id} (priority={priority_str})",
-        user.email
+        "user {} submitted build {build_id} (priority={:?})",
+        user.email,
+        body.priority,
     );
-
-    // Attempt immediate dispatch (non-blocking — spawned as background task).
-    let state_clone = state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = ws::dispatch::try_dispatch(&state_clone).await {
-            tracing::debug!("post-submit dispatch for build {build_id}: {e}");
-        }
-    });
 
     Ok((
         StatusCode::ACCEPTED,
@@ -194,6 +155,69 @@ async fn submit_build(
             warning,
         }),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Shared build insertion (used by REST handler and scheduler trigger)
+// ---------------------------------------------------------------------------
+
+/// Insert a build into the DB, enqueue it, and attempt dispatch.
+///
+/// Returns `(build_id, pending_queue_count)`. Called by both the REST
+/// `submit_build` handler (with `periodic_task_id = None`) and the
+/// scheduler trigger (with `periodic_task_id = Some(id)`).
+pub async fn insert_build_internal(
+    state: &AppState,
+    descriptor: BuildDescriptor,
+    user_email: &str,
+    priority: Priority,
+    periodic_task_id: Option<&str>,
+) -> Result<(i64, usize), String> {
+    let descriptor_json = serde_json::to_string(&descriptor)
+        .map_err(|e| format!("failed to serialize descriptor: {e}"))?;
+
+    let priority_str = match priority {
+        Priority::High => "high",
+        Priority::Normal => "normal",
+        Priority::Low => "low",
+    };
+
+    let build_id = db::builds::insert_build(
+        &state.pool,
+        &descriptor_json,
+        user_email,
+        priority_str,
+        periodic_task_id,
+    )
+    .await
+    .map_err(|e| format!("failed to insert build: {e}"))?;
+
+    let queued_at = chrono::Utc::now().timestamp();
+    let queued_build = QueuedBuild {
+        build_id: BuildId(build_id),
+        priority,
+        descriptor,
+        user_email: user_email.to_string(),
+        queued_at,
+    };
+
+    let pending_count;
+    {
+        let mut queue = state.queue.lock().await;
+        queue.enqueue(queued_build);
+        let (h, n, l) = queue.pending_counts();
+        pending_count = h + n + l;
+    }
+
+    // Attempt immediate dispatch (non-blocking).
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = ws::dispatch::try_dispatch(&state_clone).await {
+            tracing::debug!("post-submit dispatch for build {build_id}: {e}");
+        }
+    });
+
+    Ok((build_id, pending_count))
 }
 
 // ---------------------------------------------------------------------------

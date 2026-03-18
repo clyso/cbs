@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE periodic_tasks\n           SET cron_expr = ?, tag_format = ?, descriptor = ?, priority = ?,\n               summary = ?, retry_count = 0, retry_at = NULL, last_error = NULL,\n               updated_at = unixepoch()\n           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f3eec2f87d589a0a45ae02b96427593b45d5fa363aeac1dad7604e6e15536c13"
+}

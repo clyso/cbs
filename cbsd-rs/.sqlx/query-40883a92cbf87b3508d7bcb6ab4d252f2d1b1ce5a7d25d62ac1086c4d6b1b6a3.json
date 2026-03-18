@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE periodic_tasks\n           SET enabled = 0, retry_at = NULL, last_error = ?,\n               updated_at = unixepoch()\n           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "40883a92cbf87b3508d7bcb6ab4d252f2d1b1ce5a7d25d62ac1086c4d6b1b6a3"
+}

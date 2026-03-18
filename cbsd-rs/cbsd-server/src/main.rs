@@ -18,6 +18,7 @@ mod db;
 mod logs;
 mod queue;
 mod routes;
+mod scheduler;
 mod ws;
 
 use std::net::SocketAddr;
@@ -146,6 +147,9 @@ async fn main() {
 
     let gc_handle = Arc::new(tokio::sync::Mutex::new(None));
 
+    let scheduler_notify = Arc::new(tokio::sync::Notify::new());
+    let scheduler_handle = Arc::new(tokio::sync::Mutex::new(None));
+
     let state = app::AppState {
         pool: pool.clone(),
         config: Arc::new(config),
@@ -158,6 +162,8 @@ async fn main() {
         log_writer,
         sweep_handle: sweep_handle.clone(),
         gc_handle: gc_handle.clone(),
+        scheduler_notify: scheduler_notify.clone(),
+        scheduler_handle: scheduler_handle.clone(),
     };
 
     // Start the periodic re-dispatch sweep.
@@ -182,6 +188,15 @@ async fn main() {
         retention_days = state.config.log_retention.log_retention_days,
         "log GC task started (24h interval, first tick delayed)"
     );
+
+    // Start the periodic build scheduler.
+    let sched_task_handle =
+        tokio::spawn(scheduler::run_scheduler(state.clone(), scheduler_notify));
+    {
+        let mut guard = scheduler_handle.lock().await;
+        *guard = Some(sched_task_handle);
+    }
+    tracing::info!("periodic build scheduler started");
 
     let router = app::build_router(state.clone(), session_layer);
 
@@ -226,6 +241,12 @@ async fn main() {
     }
     {
         let guard = state.gc_handle.lock().await;
+        if let Some(h) = guard.as_ref() {
+            h.abort();
+        }
+    }
+    {
+        let guard = state.scheduler_handle.lock().await;
         if let Some(h) = guard.as_ref() {
             h.abort();
         }

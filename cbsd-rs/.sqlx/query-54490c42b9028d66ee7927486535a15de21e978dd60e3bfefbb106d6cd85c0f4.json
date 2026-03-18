@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM periodic_tasks WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "54490c42b9028d66ee7927486535a15de21e978dd60e3bfefbb106d6cd85c0f4"
+}

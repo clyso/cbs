@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO periodic_tasks\n           (id, cron_expr, tag_format, descriptor, priority, summary, created_by)\n           VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "604ad988c993923bcef8208b7ad3f152d9bb3b754ab25a5c85f990718a49e800"
+}
