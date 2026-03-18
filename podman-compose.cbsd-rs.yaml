@@ -15,8 +15,8 @@
 #   config/server/server.yaml    — server configuration (see cbsd-rs/config/server.yaml.example)
 #   config/worker/worker.yaml    — worker configuration (see cbsd-rs/config/worker.yaml.example)
 #
-# Worker server_url must use the compose service name as the hostname:
-#   server_url: "ws://server:8080/api/ws/worker"
+# Worker server-url must use the compose service name as the hostname:
+#   server-url: "ws://server:8080/api/ws/worker"
 #
 # Note on network_mode for workers: both server and worker run on the
 # default compose bridge network. If builds require access to VPN routes
