@@ -69,17 +69,17 @@ build_ceph_release_rpm() {
   local el_version="${2}"
   local topdir="${3}"
   local version="${4}"
+  local base_url=$"${5:-https://s3.clyso.com/ces-packages}"
+  local gpgcheck=$"${6:-1}"
 
   echo "Build Ceph RPM release package"
 
   summary="CES Ceph repository configuration"
   project_url=https://www.clyso.com/
   epoch=1 # means a non-development release (0 would be development)
-  base_url="https://s3.clyso.com/ces-packages"
   target="el${el_version}.clyso"
   repo_base_url="${base_url}/components/ceph/rpm-${version}/${target}"
   # repo_base_url="http://download.ceph.com/rpm-${ceph_release}/${target}"
-  gpgcheck=1
   gpgkey=https://s3.clyso.com/ces-packages/release.asc
   dist_version=".el${el_version}.clyso"
 
