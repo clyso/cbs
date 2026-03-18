@@ -34,19 +34,22 @@ pub struct BuildRecord {
 }
 
 /// Insert a new build in QUEUED state. Returns the auto-generated build ID.
+/// `periodic_task_id` is set for scheduler-triggered builds, `None` for manual.
 pub async fn insert_build(
     pool: &SqlitePool,
     descriptor_json: &str,
     user_email: &str,
     priority: &str,
+    periodic_task_id: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
     let row = sqlx::query!(
-        r#"INSERT INTO builds (descriptor, user_email, priority, state)
-         VALUES (?, ?, ?, 'queued')
+        r#"INSERT INTO builds (descriptor, user_email, priority, state, periodic_task_id)
+         VALUES (?, ?, ?, 'queued', ?)
          RETURNING id AS "id!""#,
         descriptor_json,
         user_email,
         priority,
+        periodic_task_id,
     )
     .fetch_one(pool)
     .await?;

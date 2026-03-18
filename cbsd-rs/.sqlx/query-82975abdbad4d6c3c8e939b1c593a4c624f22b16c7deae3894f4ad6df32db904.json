@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n               id                 AS \"id!\",\n               cron_expr          AS \"cron_expr!\",\n               tag_format         AS \"tag_format!\",\n               descriptor         AS \"descriptor!\",\n               descriptor_version AS \"descriptor_version!\",\n               priority           AS \"priority!\",\n               summary,\n               enabled            AS \"enabled!\",\n               created_by         AS \"created_by!\",\n               created_at         AS \"created_at!\",\n               updated_at         AS \"updated_at!\",\n               retry_count        AS \"retry_count!\",\n               retry_at,\n               last_error,\n               last_triggered_at,\n               last_build_id\n           FROM periodic_tasks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cron_expr!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "tag_format!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "descriptor!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "descriptor_version!",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "priority!",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "summary",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "enabled!",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_by!",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at!",
+        "ordinal": 10,
+        "type_info": "Integer"
+      },
+      {
+        "name": "retry_count!",
+        "ordinal": 11,
+        "type_info": "Integer"
+      },
+      {
+        "name": "retry_at",
+        "ordinal": 12,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_error",
+        "ordinal": 13,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_triggered_at",
+        "ordinal": 14,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_build_id",
+        "ordinal": 15,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "82975abdbad4d6c3c8e939b1c593a4c624f22b16c7deae3894f4ad6df32db904"
+}

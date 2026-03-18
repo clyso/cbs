@@ -59,6 +59,10 @@ pub struct AppState {
     pub sweep_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Handle for the log GC background task.
     pub gc_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Notify handle for the periodic build scheduler (wakes on task changes).
+    pub scheduler_notify: Arc<tokio::sync::Notify>,
+    /// Handle for the periodic build scheduler task.
+    pub scheduler_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Build the axum router.
@@ -73,7 +77,8 @@ pub fn build_router(
         .nest("/admin", routes::admin::router())
         .nest("/builds", routes::builds::router())
         .nest("/components", routes::components::router())
-        .nest("/workers", routes::workers::router());
+        .nest("/workers", routes::workers::router())
+        .nest("/periodic", routes::periodic::router());
 
     Router::new()
         .nest("/api", api.route("/ws/worker", get(ws::handler::ws_upgrade)))
