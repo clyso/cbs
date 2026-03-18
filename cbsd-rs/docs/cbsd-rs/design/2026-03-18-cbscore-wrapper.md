@@ -1,0 +1,218 @@
+# cbscore Wrapper: Python Subprocess Bridge
+
+## Problem
+
+The Rust worker spawns `cbscore-wrapper.py` as a subprocess to execute
+builds. The current wrapper is a stub — it prints a message and exits 0.
+No builds actually execute.
+
+## Context
+
+The Python cbsd worker calls cbscore directly (in-process):
+
+```
+Celery task → WorkerBuilder._do_build()
+  → version_create_helper() → VersionDescriptor
+  → runner(desc_file, cbscore_path, config, log_out_cb=...)
+    → podman_run(image, volumes, entrypoint, output_cb=...)
+      → cbsbuild runner build --desc ...
+        → Builder.run() → actual RPM/container build
+```
+
+The Rust worker cannot call cbscore in-process (it's Python). Instead,
+it spawns a subprocess that bridges the gap:
+
+```
+Rust worker → spawn cbscore-wrapper.py (stdin: JSON, stdout: log lines)
+  → wrapper reads descriptor + component_path + trace_id from stdin
+  → wrapper calls cbscore's runner() with the same parameters
+  → wrapper streams build output to stdout (stderr redirected to stdout)
+  → wrapper emits {"type": "result", ...} on completion
+  → Rust worker captures stdout, streams to server via WebSocket
+```
+
+## Interface contract
+
+The Rust worker (`build/executor.rs`) defines the interface:
+
+**Stdin (JSON):**
+```json
+{
+  "descriptor": { ... BuildDescriptor ... },
+  "component_path": "/path/to/unpacked/component/parent",
+  "trace_id": "uuid-string"
+}
+```
+
+`component_path` is the **parent directory** containing a named component
+subdirectory (e.g., `/tmp/build-abc123/` containing `ceph/`). This matches
+cbscore's `_setup_components_dir()` expectation of iterating subdirectories.
+
+**Note on JSON field names:** The Rust `BuildComponent` struct uses
+`#[serde(rename = "ref")]` for the `git_ref` field. In the JSON, the key
+is `"ref"`, not `"git_ref"`. The `repo` field uses
+`#[serde(skip_serializing_if)]` and is omitted entirely when absent.
+
+**Stdout:** Lines of build output, streamed in real-time. The Rust worker
+batches these and sends them to the server as `BuildOutput` messages.
+stderr is redirected to stdout via `os.dup2(1, 2)` so all diagnostic
+output (Python logging, podman errors) is captured.
+
+**Last stdout line (structured result):**
+```json
+{"type":"result","exit_code":0,"error":null}
+```
+
+The Rust worker recognizes this line by prefix matching
+(`line.starts_with('{"type":"result"')`) and extracts the exit code and
+error fields. Compact JSON (no spaces) used by convention.
+
+**Exit codes:**
+- `0` — build succeeded
+- `1` — build failed (cbscore error, version error)
+- `2` — infrastructure error (config missing, import failure, etc.)
+
+## Environment variables (set by Rust executor)
+
+The Rust executor (`build/executor.rs`) must pass these env vars to the
+subprocess. The executor must also change stderr to `Stdio::null()` (the
+wrapper redirects stderr to stdout via `os.dup2`; the Rust-side stderr
+pipe is unused and pre-dup2 failures are accepted as lost).
+
+| Env var | Source | Required |
+|---|---|---|
+| `CBS_TRACE_ID` | `trace_id` from dispatch | Yes |
+| `CBSCORE_CONFIG` | `ResolvedWorkerConfig.cbscore_config_path` | Yes |
+| `CBSCORE_PATH` | cbscore library directory (for podman volume mount) | No (falls back to `Path(cbscore.__file__).parent`) |
+| `CBS_BUILD_TIMEOUT` | `ResolvedWorkerConfig.build_timeout_secs` | No (default 7200) |
+
+`CBSCORE_PATH` is the **cbscore library directory** mounted into the
+podman container at `/runner/cbscore`. This is distinct from
+`cbscore_wrapper_path` (the wrapper script itself). When unset, the
+wrapper derives it from `import cbscore; Path(cbscore.__file__).parent`.
+
+## What the wrapper does
+
+1. Redirect stderr to stdout (`os.dup2(1, 2)`) as the first operation.
+   This prevents the pipe deadlock where >64KB of stderr fills the pipe
+   buffer and blocks the subprocess, and ensures all cbscore diagnostic
+   logging is captured in the build log.
+2. Read JSON from stdin.
+3. Load cbscore config from `CBSCORE_CONFIG` env var (mandatory in
+   deployed environments; cwd fallback is for manual testing only).
+   Verify `config.storage.registry` is present (exit 2 if missing).
+4. Override `config.paths.components` with `[Path(component_path)]` from
+   stdin. This is how the Rust worker's unpacked tarball reaches the
+   build container — without this override, `runner()` would mount the
+   config's original paths, ignoring the tarball.
+5. Parse `descriptor["build"]["os_version"]` (e.g., `"el9"`) to extract
+   the integer `el_version` (e.g., `9`). Regex: `^el(\d+)$`. Exit 2 on
+   mismatch.
+6. Convert the `BuildDescriptor` to a cbscore `VersionDescriptor` using
+   `version_create_helper()` with all 12 required parameters:
+
+   ```python
+   version_create_helper(
+       version=descriptor["version"],
+       version_type_name=descriptor["version_type"],
+       component_refs={
+           c["name"]: c["ref"]  # JSON key is "ref", not "git_ref"
+           for c in descriptor["components"]
+       },
+       components_paths=config.paths.components,  # overridden in step 4
+       component_uri_overrides={
+           c["name"]: c["repo"]
+           for c in descriptor["components"]
+           if c.get("repo") is not None  # omitted from JSON when absent
+       },
+       distro=descriptor["build"]["distro"],
+       el_version=el_version,  # from step 5
+       registry=config.storage.registry.url,
+       image_name=descriptor["dst_image"]["name"],
+       image_tag=descriptor["dst_image"]["tag"],
+       user_name=descriptor["signed_off_by"]["user"],
+       user_email=descriptor["signed_off_by"]["email"],
+   )
+   ```
+
+7. Write the `VersionDescriptor` to a temp file
+   (`tempfile.mkstemp(suffix=".json")`; explicit close before passing
+   to `runner()`; `Path.unlink(missing_ok=True)` in `finally` block).
+8. Resolve `cbscore_path`: from `CBSCORE_PATH` env var if set, otherwise
+   `Path(cbscore.__file__).parent`. Validate that
+   `_tools/cbscore-entrypoint.sh` exists at the expected location.
+9. Call `asyncio.run(runner(...))` — `runner()` is an `async def`. Pass:
+   - `desc_file_path` — temp file from step 7
+   - `cbscore_path` — resolved in step 8
+   - `config` — with overridden components path
+   - `run_name=f"cbs-{trace_id.replace('-', '')[:12]}"` — 12 hex chars
+     for collision resistance (hyphens stripped from UUID)
+   - `replace_run=True` — handle stale containers from previous runs
+   - `timeout` — from `CBS_BUILD_TIMEOUT` env var or default 7200
+   - `log_out_cb` — `async def` callback that prints to stdout with
+     `flush=True`. The callback is async to match cbscore's
+     `AsyncRunCmdOutCallback` type.
+10. On success: emit `{"type":"result","exit_code":0,"error":null}`.
+11. On failure: emit result with exit code 1 or 2 and error message.
+12. Clean up temp files in a `finally` block.
+
+**Note:** `CBS_TRACE_ID` is already set by the Rust executor via `.env()`
+before the subprocess starts. The wrapper inherits it — no need to set
+it again.
+
+## What the wrapper does NOT do
+
+- **Component download/unpacking** — the Rust worker handles this. The
+  wrapper receives `component_path` pointing to the already-unpacked
+  parent directory.
+- **Log streaming to the server** — the Rust worker captures stdout and
+  streams it over WebSocket. The wrapper just prints to stdout.
+- **Build state tracking** — the Rust worker manages state transitions.
+- **Signal handling** — the Rust worker sends SIGTERM/SIGKILL to the
+  process group.
+
+## Configuration
+
+The wrapper needs cbscore's config to set up volumes, secrets, and paths
+for the podman container. This config is the same `cbs-build.config.yaml`
+used by the `cbsbuild` CLI.
+
+The Rust executor passes the config path via the `CBSCORE_CONFIG` env
+var (sourced from `ResolvedWorkerConfig.cbscore_config_path`). The cwd
+fallback exists for manual testing only — it will always fail in deployed
+workers.
+
+## Dependencies
+
+The wrapper requires a Python environment with:
+- `cbscore` package installed (provides `runner`, `version_create_helper`,
+  `Config`, `_tools/cbscore-entrypoint.sh`)
+
+`cbsdcore` is not required — the wrapper uses raw dict access on the JSON
+descriptor, not Pydantic validation.
+
+In the container image (`ContainerFile.cbsd-rs` worker stage), cbscore is
+installed via `uv` from the workspace.
+
+## Error classification
+
+| Scenario | Exit code | Error field |
+|---|---|---|
+| Build succeeded | 0 | null |
+| cbscore `RunnerError` (build failure) | 1 | Error message |
+| cbscore `VersionError` (bad descriptor) | 1 | Error message |
+| cbscore `MalformedVersionError` (bad version string) | 1 | Error message |
+| cbscore `ConfigError` (bad config) | 2 | Error message |
+| Missing `config.storage.registry` | 2 | "registry not configured" |
+| Invalid `os_version` format | 2 | "invalid os_version: {value}" |
+| `cbscore_path` validation failure | 2 | "entrypoint not found" |
+| Import failure (cbscore not installed) | 2 | Import error |
+| Stdin parse failure (bad JSON) | 2 | Parse error |
+| Unexpected exception | 2 | Exception string |
+
+## Known limitations
+
+- **SIGTERM temp file leak:** Python's default SIGTERM handler calls
+  `_exit()`, bypassing `finally` blocks. Cancelled builds may leak the
+  temp `VersionDescriptor` file in `/tmp`. This is accepted — worker
+  containers restart periodically, and `/tmp` is ephemeral.

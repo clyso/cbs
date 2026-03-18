@@ -1,0 +1,190 @@
+# Phase 9: cbscore Wrapper Implementation
+
+**Design document:** `_docs/cbsd-rs/design/2026-03-18-cbscore-wrapper.md`
+
+## Progress
+
+| # | Commit | ~LOC | Status |
+|---|--------|------|--------|
+| 1 | `cbsd-rs: implement cbscore-wrapper.py build bridge` | ~200 | Done |
+
+**Total:** ~200 LOC Python + ~30 LOC Rust, 1 atomic commit.
+
+---
+
+## Commit 1: `cbsd-rs: implement cbscore-wrapper.py build bridge`
+
+**Files:**
+- `cbsd-rs/scripts/cbscore-wrapper.py` (rewrite from stub)
+- `cbsd-rs/cbsd-worker/src/build/executor.rs` (add env vars, change
+  stderr to `Stdio::null()`, guard missing cbscore config)
+
+### Rust-side changes (executor.rs)
+
+**Guard missing cbscore config at spawn time:**
+
+If `cbscore_config_path` is `None`, return `ExecutorError` immediately
+instead of letting the subprocess fail with an opaque exit 2. This
+surfaces misconfiguration at build dispatch time, not mid-build.
+
+**Add env var pass-through and fix stderr:**
+
+```rust
+let cbscore_config = config.cbscore_config_path.as_ref()
+    .ok_or(ExecutorError::MissingConfig("cbscore_config_path"))?;
+
+cmd.arg(&wrapper_path)
+    .env("CBS_TRACE_ID", trace_id)
+    .env("CBSCORE_CONFIG", cbscore_config)         // new
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());                         // changed from piped()
+
+// Optional env vars (only set when config fields are present):
+if let Some(timeout) = config.build_timeout_secs {
+    cmd.env("CBS_BUILD_TIMEOUT", timeout.to_string());
+}
+```
+
+`CBSCORE_CONFIG` is mandatory — guard ensures spawn fails fast if absent.
+
+stderr changed to `Stdio::null()` because the wrapper redirects stderr
+to stdout via `os.dup2(1, 2)`. The Rust-side stderr pipe was piped but
+never read — pre-dup2 failures (syntax errors) are accepted as lost.
+
+Note: `CBSCORE_PATH` is not passed by the executor by default — the
+wrapper derives it from `import cbscore; Path(cbscore.__file__).parent`
+with validation. This is the right default for container deployments
+where cbscore is installed in the Python environment. The `CBSCORE_PATH`
+env var (documented in the design) remains available for operators who
+need to override the library path manually (e.g., development setups
+where cbscore is in a non-standard location).
+
+### Python wrapper implementation (cbscore-wrapper.py)
+
+Replace the stub:
+
+1. `os.dup2(1, 2)` — redirect stderr to stdout (first operation).
+
+2. Read JSON from stdin (`descriptor`, `component_path`, `trace_id`).
+   `CBS_TRACE_ID` is already set by the executor — the wrapper inherits
+   it, no need to set it again.
+
+3. Emit startup log: `cbscore-wrapper: starting build {version}
+   trace_id={trace_id}`.
+
+4. Validate `descriptor["dst_image"]["tag"]` is non-empty (exit 2 if
+   empty — an empty string silently substitutes the version as the tag
+   inside `version_create_helper`).
+
+5. Load cbscore config from `CBSCORE_CONFIG` env var. Validate
+   `config.storage.registry` is present (exit 2 if missing).
+
+6. Override `config.paths.components = [Path(component_path)]`.
+
+7. Parse `descriptor["build"]["os_version"]` (e.g., `"el9"`) → integer
+   `el_version` (e.g., `9`). Regex `^el(\d+)$`, exit 2 on mismatch.
+
+8. Convert to `VersionDescriptor` via `version_create_helper()` with
+   all 12 required parameters:
+
+   ```python
+   version_create_helper(
+       version=descriptor["version"],
+       version_type_name=descriptor["version_type"],
+       component_refs={
+           c["name"]: c["ref"]  # JSON key is "ref" (serde rename)
+           for c in descriptor["components"]
+       },
+       components_paths=config.paths.components,
+       component_uri_overrides={
+           c["name"]: c["repo"]
+           for c in descriptor["components"]
+           if c.get("repo") is not None  # omitted from JSON when absent
+       },
+       distro=descriptor["build"]["distro"],
+       el_version=el_version,
+       registry=config.storage.registry.url,
+       image_name=descriptor["dst_image"]["name"],
+       image_tag=descriptor["dst_image"]["tag"],
+       user_name=descriptor["signed_off_by"]["user"],
+       user_email=descriptor["signed_off_by"]["email"],
+   )
+   ```
+
+9. Write `VersionDescriptor` to temp file
+   (`tempfile.mkstemp(prefix="cbsd-wrapper-", suffix=".json")`).
+   Close FD after writing. `Path.unlink(missing_ok=True)` in `finally`.
+
+10. Resolve `cbscore_path`: `CBSCORE_PATH` env var if set, otherwise
+    `Path(cbscore.__file__).parent`. Validate
+    `_tools/cbscore-entrypoint.sh` exists (exit 2 if not).
+
+11. `asyncio.run(runner(...))` with:
+    - `desc_file_path` — temp file
+    - `cbscore_path` — resolved path (library directory)
+    - `config` — with overridden components
+    - `run_name=f"cbs-{trace_id.replace('-', '')[:12]}"` — 12 hex chars
+      for collision resistance
+    - `replace_run=True`
+    - `timeout` — from `CBS_BUILD_TIMEOUT` or 7200
+    - `log_out_cb` — `async def` callback: `print(msg, end="", flush=True)`
+      (avoids double newlines — `runner()` already normalizes lines with
+      trailing `\n`)
+
+12. Emit structured result and exit.
+
+### Error handling
+
+```python
+try:
+    asyncio.run(runner(...))
+    result = {"type": "result", "exit_code": 0, "error": None}
+except (RunnerError, VersionError, MalformedVersionError) as e:
+    result = {"type": "result", "exit_code": 1, "error": str(e)}
+except Exception as e:
+    result = {"type": "result", "exit_code": 2,
+              "error": f"[infra] {e}"}
+finally:
+    temp_desc_path.unlink(missing_ok=True)
+
+print(json.dumps(result, separators=(",", ":")), flush=True)
+sys.exit(result["exit_code"])
+```
+
+Exit 2 errors are prefixed with `[infra]` so operators can distinguish
+infrastructure failures from build failures in logs (both map to
+`BuildFinishedStatus::Failure` at the Rust level).
+
+### Testing
+
+```bash
+echo '{"descriptor": {...}, "component_path": "/tmp/test", "trace_id": "abc-123"}' | \
+  CBS_TRACE_ID=abc-123 \
+  CBSCORE_CONFIG=/path/to/cbs-build.config.yaml \
+  python3 cbsd-rs/scripts/cbscore-wrapper.py
+```
+
+Requires cbscore installed and valid config. Full integration testing
+needs the Rust worker + server + podman.
+
+---
+
+## Notes
+
+- Single atomic commit: wrapper + executor changes together. The wrapper
+  can't function without the env vars, and the env vars are meaningless
+  without the wrapper.
+- `cbsdcore` is NOT a dependency — raw dict access on JSON descriptor.
+  The `"ref"` key (not `"git_ref"`) is the serde-serialized form.
+- SIGTERM temp file leak is a known limitation (documented in design).
+  Worker containers restart, `/tmp` is ephemeral. Temp files use
+  `prefix="cbsd-wrapper-"` for identification during debugging.
+- `CBSCORE_PATH` is the **cbscore library directory** (mounted into
+  podman at `/runner/cbscore`), distinct from `cbscore_wrapper_path`
+  (the wrapper script). When unset, derived from `import cbscore`.
+- Single build per worker is an invariant — the dispatch engine only
+  sends `BuildNew` to workers that are `Connected` with no active build.
+- The container's `python3` on `PATH` must be the interpreter where
+  cbscore is installed. The `ContainerFile.cbsd-rs` worker stage
+  installs cbscore via `uv` in the default Python environment.
