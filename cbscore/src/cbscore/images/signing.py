@@ -69,7 +69,7 @@ def _get_signing_params(
 
 def can_sign(registry: str, secrets: SecretsMgr, transit: str) -> bool:
     try:
-        _get_signing_params(registry, secrets, transit)
+        _ = _get_signing_params(registry, secrets, transit)
     except SigningError as e:
         logger.debug(e.msg)
         return False
