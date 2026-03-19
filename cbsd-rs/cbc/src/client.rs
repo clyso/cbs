@@ -69,6 +69,69 @@ impl CbcClient {
             .await
     }
 
+    /// Return a raw `RequestBuilder` for the given method and API path.
+    ///
+    /// Useful when the caller needs to customise the request (e.g. SSE
+    /// streaming) instead of going through the generic JSON helpers.
+    pub fn request_builder(
+        &self,
+        method: Method,
+        path: &str,
+    ) -> Result<reqwest::RequestBuilder, Error> {
+        let url = self
+            .base_url
+            .join(path)
+            .map_err(|e| Error::Connection(format!("invalid path '{path}': {e}")))?;
+
+        if self.debug {
+            eprintln!("{method} {url}");
+        }
+
+        Ok(self.inner.request(method, url))
+    }
+
+    /// Send a GET request and return the raw response for streaming.
+    pub async fn get_stream(&self, path: &str) -> Result<reqwest::Response, Error> {
+        let url = self
+            .base_url
+            .join(path)
+            .map_err(|e| Error::Connection(format!("invalid path '{path}': {e}")))?;
+
+        if self.debug {
+            eprintln!("GET {url}");
+        }
+
+        let resp = self
+            .inner
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Error::Connection(e.to_string()))?;
+
+        let status = resp.status();
+
+        if self.debug {
+            eprintln!("  -> {status}");
+        }
+
+        if status.is_success() {
+            Ok(resp)
+        } else {
+            let status_code = status.as_u16();
+            let text = resp.text().await.unwrap_or_default();
+
+            let message = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(String::from))
+                .unwrap_or(text);
+
+            Err(Error::Api {
+                status: status_code,
+                message,
+            })
+        }
+    }
+
     pub async fn post<B: Serialize + Sync, T: DeserializeOwned>(
         &self,
         path: &str,

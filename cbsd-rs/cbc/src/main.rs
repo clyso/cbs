@@ -14,6 +14,7 @@ pub mod builds;
 mod client;
 mod config;
 mod error;
+pub mod logs;
 
 use std::io::Write;
 use std::path::PathBuf;
