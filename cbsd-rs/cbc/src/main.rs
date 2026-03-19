@@ -10,6 +10,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
+pub mod builds;
 mod client;
 mod config;
 mod error;
@@ -49,6 +50,8 @@ enum Commands {
     },
     /// Show current user identity and roles
     Whoami,
+    /// Build submission, listing, and management
+    Build(Box<builds::BuildArgs>),
 }
 
 #[derive(Deserialize)]
@@ -72,6 +75,7 @@ async fn run(cli: Cli) -> Result<(), Error> {
     match cli.command {
         Commands::Login { url } => cmd_login(&url, cli.debug).await,
         Commands::Whoami => cmd_whoami(cli.config.as_deref(), cli.debug).await,
+        Commands::Build(args) => builds::run(*args, cli.config.as_deref(), cli.debug).await,
     }
 }
 
