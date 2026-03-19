@@ -116,12 +116,9 @@ pub async fn delete_role(pool: &SqlitePool, name: &str) -> Result<bool, sqlx::Er
         return Ok(false);
     }
 
-    let result = sqlx::query!(
-        "DELETE FROM roles WHERE name = ? AND builtin = 0",
-        name,
-    )
-    .execute(pool)
-    .await?;
+    let result = sqlx::query!("DELETE FROM roles WHERE name = ? AND builtin = 0", name,)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -388,12 +385,9 @@ pub async fn has_assignments(pool: &SqlitePool, role_name: &str) -> Result<bool,
 
 /// Check if a role is builtin.
 pub async fn is_role_builtin(pool: &SqlitePool, role_name: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query!(
-        "SELECT builtin FROM roles WHERE name = ?",
-        role_name,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let row = sqlx::query!("SELECT builtin FROM roles WHERE name = ?", role_name,)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(row.is_some_and(|r| r.builtin != 0))
 }

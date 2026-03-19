@@ -32,11 +32,10 @@ pub async fn run_startup_recovery(
     log_watchers: &LogWatchers,
 ) -> Result<(), sqlx::Error> {
     // 1. Fail in-flight builds (dispatched or started).
-    let in_flight_rows = sqlx::query!(
-        r#"SELECT id AS "id!" FROM builds WHERE state IN ('dispatched', 'started')"#,
-    )
-    .fetch_all(pool)
-    .await?;
+    let in_flight_rows =
+        sqlx::query!(r#"SELECT id AS "id!" FROM builds WHERE state IN ('dispatched', 'started')"#,)
+            .fetch_all(pool)
+            .await?;
 
     let failed_count = in_flight_rows.len();
     for row in &in_flight_rows {
@@ -51,11 +50,9 @@ pub async fn run_startup_recovery(
     }
 
     // 2. Finalize revoking builds.
-    let revoking_rows = sqlx::query!(
-        r#"SELECT id AS "id!" FROM builds WHERE state = 'revoking'"#,
-    )
-    .fetch_all(pool)
-    .await?;
+    let revoking_rows = sqlx::query!(r#"SELECT id AS "id!" FROM builds WHERE state = 'revoking'"#,)
+        .fetch_all(pool)
+        .await?;
 
     let revoked_count = revoking_rows.len();
     for row in &revoking_rows {

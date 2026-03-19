@@ -145,10 +145,7 @@ pub fn validate_oci_tag(tag: &str) -> Result<(), String> {
         return Err("tag must not be empty".to_string());
     }
     if tag.len() > 128 {
-        return Err(format!(
-            "tag exceeds 128 characters (got {})",
-            tag.len()
-        ));
+        return Err(format!("tag exceeds 128 characters (got {})", tag.len()));
     }
 
     let mut chars = tag.chars();
@@ -157,9 +154,7 @@ pub fn validate_oci_tag(tag: &str) -> Result<(), String> {
     match chars.next() {
         Some(c) if c.is_ascii_alphanumeric() || c == '_' => {}
         Some(c) => {
-            return Err(format!(
-                "tag must start with [a-zA-Z0-9_], got '{c}'"
-            ));
+            return Err(format!("tag must start with [a-zA-Z0-9_], got '{c}'"));
         }
         None => unreachable!(), // already checked empty
     }
@@ -220,7 +215,8 @@ mod tests {
 
     #[test]
     fn validate_all_known_placeholders() {
-        let format = "{Y}{m}{d}{H}{M}{S}{DT}{version}{base_tag}{channel}{user}{arch}{distro}{os_version}";
+        let format =
+            "{Y}{m}{d}{H}{M}{S}{DT}{version}{base_tag}{channel}{user}{arch}{distro}{os_version}";
         assert!(validate_tag_format(format).is_ok());
     }
 

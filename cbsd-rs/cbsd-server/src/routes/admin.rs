@@ -425,16 +425,13 @@ async fn deregister_worker(
         )
     })?;
 
-    sqlx::query!(
-        "DELETE FROM workers WHERE id = ?",
-        id,
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        tracing::error!("failed to delete worker '{}': {e}", worker.name);
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-    })?;
+    sqlx::query!("DELETE FROM workers WHERE id = ?", id,)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to delete worker '{}': {e}", worker.name);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
 
     tx.commit().await.map_err(|e| {
         tracing::error!("failed to commit worker deregistration: {e}");

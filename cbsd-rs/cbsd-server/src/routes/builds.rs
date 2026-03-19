@@ -122,18 +122,13 @@ async fn submit_build(
     descriptor.signed_off_by.user = user.name.clone();
     descriptor.signed_off_by.email = user.email.clone();
 
-    let (build_id, pending_count) = insert_build_internal(
-        &state,
-        descriptor,
-        &user.email,
-        body.priority,
-        None,
-    )
-    .await
-    .map_err(|e| {
-        tracing::error!("failed to submit build: {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
-    })?;
+    let (build_id, pending_count) =
+        insert_build_internal(&state, descriptor, &user.email, body.priority, None)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to submit build: {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
+            })?;
 
     let warning = if pending_count > 1 {
         Some(format!("{pending_count} build(s) in queue"))
