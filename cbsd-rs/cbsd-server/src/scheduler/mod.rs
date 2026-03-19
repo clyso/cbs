@@ -259,8 +259,7 @@ pub async fn run_scheduler(state: AppState, notify: Arc<tokio::sync::Notify>) {
                     "scheduler: fatal error triggering build — disabling task"
                 );
 
-                if let Err(e) =
-                    db::periodic::disable_with_error(&state.pool, &task.id, &msg).await
+                if let Err(e) = db::periodic::disable_with_error(&state.pool, &task.id, &msg).await
                 {
                     tracing::error!(
                         task_id = %task.id,

@@ -81,7 +81,10 @@ pub fn build_router(
         .nest("/periodic", routes::periodic::router());
 
     Router::new()
-        .nest("/api", api.route("/ws/worker", get(ws::handler::ws_upgrade)))
+        .nest(
+            "/api",
+            api.route("/ws/worker", get(ws::handler::ws_upgrade)),
+        )
         .layer(session_layer)
         .with_state(state)
 }

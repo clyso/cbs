@@ -21,7 +21,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
-use crate::auth::extractors::{auth_error, AuthUser, ErrorDetail};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
 use crate::db::periodic::PeriodicTaskRow;
 use crate::scheduler::tag_format;

@@ -190,8 +190,7 @@ async fn main() {
     );
 
     // Start the periodic build scheduler.
-    let sched_task_handle =
-        tokio::spawn(scheduler::run_scheduler(state.clone(), scheduler_notify));
+    let sched_task_handle = tokio::spawn(scheduler::run_scheduler(state.clone(), scheduler_notify));
     {
         let mut guard = scheduler_handle.lock().await;
         *guard = Some(sched_task_handle);

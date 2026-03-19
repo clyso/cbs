@@ -125,12 +125,9 @@ async fn run_gc_cycle(
         }
 
         // Delete the build_logs row.
-        if let Err(e) = sqlx::query!(
-            "DELETE FROM build_logs WHERE build_id = ?",
-            build_id,
-        )
-        .execute(pool)
-        .await
+        if let Err(e) = sqlx::query!("DELETE FROM build_logs WHERE build_id = ?", build_id,)
+            .execute(pool)
+            .await
         {
             tracing::warn!(
                 build_id = build_id,

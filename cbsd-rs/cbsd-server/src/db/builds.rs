@@ -233,12 +233,9 @@ pub async fn set_build_finished(
 /// Set a build's state to "revoking".
 /// Returns `true` if a row was updated.
 pub async fn set_build_revoking(pool: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query!(
-        "UPDATE builds SET state = 'revoking' WHERE id = ?",
-        id,
-    )
-    .execute(pool)
-    .await?;
+    let result = sqlx::query!("UPDATE builds SET state = 'revoking' WHERE id = ?", id,)
+        .execute(pool)
+        .await?;
 
     Ok(result.rows_affected() > 0)
 }

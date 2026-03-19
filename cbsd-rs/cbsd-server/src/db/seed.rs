@@ -169,9 +169,7 @@ pub async fn run_first_startup_seed(
             );
         }
     } else if !prepared_workers.is_empty() {
-        tracing::warn!(
-            "dev.seed_workers configured but no seed_admin — skipping worker creation"
-        );
+        tracing::warn!("dev.seed_workers configured but no seed_admin — skipping worker creation");
     }
 
     tx.commit().await.map_err(SeedError::Db)?;

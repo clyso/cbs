@@ -66,10 +66,7 @@ pub async fn insert_task(
 }
 
 /// Get a single periodic task by ID.
-pub async fn get_task(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<PeriodicTaskRow>, sqlx::Error> {
+pub async fn get_task(pool: &SqlitePool, id: &str) -> Result<Option<PeriodicTaskRow>, sqlx::Error> {
     let row = sqlx::query!(
         r#"SELECT
                id                 AS "id!",
