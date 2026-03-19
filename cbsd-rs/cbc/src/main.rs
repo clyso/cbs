@@ -10,6 +10,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
+pub mod admin;
 pub mod builds;
 mod client;
 mod config;
@@ -58,6 +59,8 @@ enum Commands {
     Periodic(periodic::PeriodicArgs),
     /// Worker administration: list, register, deregister, token rotation
     Worker(worker::WorkerArgs),
+    /// RBAC administration: roles, users, build queue
+    Admin(admin::AdminArgs),
 }
 
 #[derive(Deserialize)]
@@ -84,6 +87,7 @@ async fn run(cli: Cli) -> Result<(), Error> {
         Commands::Build(args) => builds::run(*args, cli.config.as_deref(), cli.debug).await,
         Commands::Periodic(args) => periodic::run(args, cli.config.as_deref(), cli.debug).await,
         Commands::Worker(args) => worker::run(args, cli.config.as_deref(), cli.debug).await,
+        Commands::Admin(args) => admin::run(args, cli.config.as_deref(), cli.debug).await,
     }
 }
 
