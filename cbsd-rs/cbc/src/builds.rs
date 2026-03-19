@@ -58,43 +58,43 @@ enum BuildCommands {
 pub struct BuildDescriptorArgs {
     /// Release channel
     #[arg(short = 'p', long)]
-    channel: String,
+    pub channel: String,
 
     /// Component in `name@gitref` format (repeat for multiple)
     #[arg(short, long = "component", num_args = 1..)]
-    components: Vec<String>,
+    pub components: Vec<String>,
 
     /// Version type: release, dev, test, ci
     #[arg(short = 't', long = "type", default_value = "dev")]
-    version_type: String,
+    pub version_type: String,
 
     /// Base distribution
     #[arg(long, default_value = "rockylinux")]
-    distro: String,
+    pub distro: String,
 
     /// OS version string
     #[arg(long, default_value = "el9")]
-    os_version: String,
+    pub os_version: String,
 
     /// Destination image name
     #[arg(long, default_value = "ceph/ceph")]
-    image_name: String,
+    pub image_name: String,
 
     /// Destination image tag (defaults to VERSION)
     #[arg(long)]
-    image_tag: Option<String>,
+    pub image_tag: Option<String>,
 
     /// Build architecture: x86_64, aarch64
     #[arg(long, default_value = "x86_64")]
-    arch: String,
+    pub arch: String,
 
     /// Repository override in `name=url` format (repeat for multiple)
     #[arg(long)]
-    repo_override: Vec<String>,
+    pub repo_override: Vec<String>,
 
     /// Build priority: high, normal, low
     #[arg(long, default_value = "normal")]
-    priority: String,
+    pub priority: String,
 }
 
 #[derive(Args)]
@@ -169,9 +169,9 @@ struct BuildRecord {
 }
 
 #[derive(Deserialize)]
-struct WhoamiResponse {
-    email: String,
-    name: String,
+pub struct WhoamiResponse {
+    pub email: String,
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -455,7 +455,7 @@ async fn cmd_components(config_path: Option<&std::path::Path>, debug: bool) -> R
 // ---------------------------------------------------------------------------
 
 /// Parse `--component` values: split on `@` to get `{name, git_ref}`.
-fn parse_components(raw: &[String]) -> Result<Vec<BuildComponent>, Error> {
+pub fn parse_components(raw: &[String]) -> Result<Vec<BuildComponent>, Error> {
     raw.iter()
         .map(|s| {
             let (name, git_ref) = s.split_once('@').ok_or_else(|| {
@@ -472,7 +472,7 @@ fn parse_components(raw: &[String]) -> Result<Vec<BuildComponent>, Error> {
 
 /// Parse `--repo-override` values: split on first `=` to get `{name, url}`.
 /// Match overrides to components by name and set the `repo` field.
-fn apply_repo_overrides(
+pub fn apply_repo_overrides(
     mut components: Vec<BuildComponent>,
     overrides: &[String],
 ) -> Result<Vec<BuildComponent>, Error> {
@@ -490,7 +490,7 @@ fn apply_repo_overrides(
 }
 
 /// Parse a version type string into `VersionType`.
-fn parse_version_type(s: &str) -> Result<VersionType, Error> {
+pub fn parse_version_type(s: &str) -> Result<VersionType, Error> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
         Error::Other(format!(
             "invalid version type '{s}': expected release, dev, test, or ci"
@@ -499,7 +499,7 @@ fn parse_version_type(s: &str) -> Result<VersionType, Error> {
 }
 
 /// Parse an architecture string into `Arch`.
-fn parse_arch(s: &str) -> Result<Arch, Error> {
+pub fn parse_arch(s: &str) -> Result<Arch, Error> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
         Error::Other(format!(
             "invalid architecture '{s}': expected x86_64 or aarch64"
@@ -508,7 +508,7 @@ fn parse_arch(s: &str) -> Result<Arch, Error> {
 }
 
 /// Parse a priority string into `Priority`.
-fn parse_priority(s: &str) -> Result<Priority, Error> {
+pub fn parse_priority(s: &str) -> Result<Priority, Error> {
     serde_json::from_value(serde_json::Value::String(s.to_string())).map_err(|_| {
         Error::Other(format!(
             "invalid priority '{s}': expected high, normal, or low"
@@ -517,7 +517,7 @@ fn parse_priority(s: &str) -> Result<Priority, Error> {
 }
 
 /// Format a Unix timestamp as a human-readable date/time string.
-fn format_timestamp(ts: i64) -> String {
+pub fn format_timestamp(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| ts.to_string())
