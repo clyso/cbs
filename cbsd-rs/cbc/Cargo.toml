@@ -8,6 +8,7 @@ description = "CBS build service CLI client"
 
 [dependencies]
 cbsd-proto = { path = "../cbsd-proto" }
+chrono.workspace = true
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde.workspace = true
