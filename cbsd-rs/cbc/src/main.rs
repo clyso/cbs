@@ -16,6 +16,7 @@ mod config;
 mod error;
 pub mod logs;
 pub mod periodic;
+pub mod worker;
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -56,6 +57,8 @@ enum Commands {
     Build(Box<builds::BuildArgs>),
     /// Manage periodic (cron-scheduled) build tasks
     Periodic(periodic::PeriodicArgs),
+    /// Worker administration: list, register, deregister, token rotation
+    Worker(worker::WorkerArgs),
 }
 
 #[derive(Deserialize)]
@@ -81,6 +84,7 @@ async fn run(cli: Cli) -> Result<(), Error> {
         Commands::Whoami => cmd_whoami(cli.config.as_deref(), cli.debug).await,
         Commands::Build(args) => builds::run(*args, cli.config.as_deref(), cli.debug).await,
         Commands::Periodic(args) => periodic::run(args, cli.config.as_deref(), cli.debug).await,
+        Commands::Worker(args) => worker::run(args, cli.config.as_deref(), cli.debug).await,
     }
 }
 
