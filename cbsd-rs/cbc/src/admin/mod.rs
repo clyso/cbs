@@ -10,10 +10,11 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
-//! Admin commands: role management and build queue status.
+//! Admin commands: role management, user management, and build queue status.
 
 pub mod queue;
 pub mod roles;
+pub mod users;
 
 use clap::{Args, Subcommand};
 
@@ -33,6 +34,8 @@ pub struct AdminArgs {
 enum AdminCommands {
     /// Role management
     Roles(roles::RolesArgs),
+    /// User management and role assignments
+    Users(users::UsersArgs),
     /// Build queue status
     Queue,
 }
@@ -48,6 +51,7 @@ pub async fn run(
 ) -> Result<(), Error> {
     match args.command {
         AdminCommands::Roles(a) => roles::run(a, config_path, debug).await,
+        AdminCommands::Users(a) => users::run(a, config_path, debug).await,
         AdminCommands::Queue => queue::run(config_path, debug).await,
     }
 }
