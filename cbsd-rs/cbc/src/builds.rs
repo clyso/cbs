@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::client::CbcClient;
 use crate::config::Config;
 use crate::error::Error;
+use crate::logs::LogsArgs;
 
 // ---------------------------------------------------------------------------
 // CLI argument types
@@ -45,6 +46,8 @@ enum BuildCommands {
     Revoke(BuildRevokeArgs),
     /// List available build components
     Components,
+    /// View build logs (tail, follow, download)
+    Logs(LogsArgs),
 }
 
 /// Options for constructing a `BuildDescriptor`.
@@ -197,6 +200,7 @@ pub async fn run(
         BuildCommands::Get(a) => cmd_get(a, config_path, debug).await,
         BuildCommands::Revoke(a) => cmd_revoke(a, config_path, debug).await,
         BuildCommands::Components => cmd_components(config_path, debug).await,
+        BuildCommands::Logs(a) => crate::logs::run(a, config_path, debug).await,
     }
 }
 
