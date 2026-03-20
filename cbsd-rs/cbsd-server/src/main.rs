@@ -103,10 +103,16 @@ async fn main() {
             .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
     );
 
-    // Load Google OAuth configuration from secrets file
-    let oauth = auth::oauth::load_oauth_config(&config.oauth.secrets_file)
-        .expect("failed to load OAuth secrets");
-    tracing::info!("loaded OAuth configuration");
+    // Load Google OAuth configuration (skipped in dev mode).
+    let oauth = if config.dev.enabled {
+        tracing::info!("dev mode: skipping OAuth secrets loading");
+        auth::oauth::OAuthState::dummy()
+    } else {
+        let o = auth::oauth::load_oauth_config(&config.oauth.secrets_file)
+            .expect("failed to load OAuth secrets");
+        tracing::info!("loaded OAuth configuration");
+        o
+    };
 
     // Create API key LRU cache (capacity: 512)
     let api_key_cache = auth::api_keys::ApiKeyCache::new(512);
