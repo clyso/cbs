@@ -1,10 +1,13 @@
 # cbsd-rs — CBS Build Service Daemon (Rust)
 
 Rust rewrite of `cbsd/`. Replaces the FastAPI + Celery + Redis stack with
-axum + SQLite + WebSocket. Two binaries:
+axum + SQLite + WebSocket. Three binaries:
 
-- **cbsd-server** — REST API, build queue, WebSocket endpoint for workers
+- **cbsd-server** — REST API, build queue, periodic build scheduler,
+  SSE log streaming, WebSocket endpoint for workers, Google OAuth + RBAC
 - **cbsd-worker** — WebSocket client, cbscore build subprocess bridge
+- **cbc** — CLI client for the build service (login, submit builds, stream
+  logs, admin operations)
 
 ## Building
 
@@ -61,7 +64,8 @@ image management. It requires two external files — a Google OAuth2 client
 secrets JSON and a cbscore `cbs-build.config.yaml` — that are not committed
 to the repository.
 
-**Dev quickstart** (pre-configured worker API key, no REST API call needed):
+**Dev quickstart** (pre-configured worker API key, OAuth bypass — no Google
+credentials or REST API calls needed):
 
 ```bash
 ./do-cbsd-rs-compose.sh prepare --dev \
@@ -70,6 +74,11 @@ to the repository.
     --seed-admin you@example.com
 ./do-cbsd-rs-compose.sh up --dev
 ```
+
+In dev mode the server bypasses Google OAuth entirely — the login endpoint
+returns a token for the seed admin without contacting Google. The
+`--google-client-secrets` file is still required by the helper script but
+its contents are not used.
 
 **Staging / prod-like compose** (workers registered via REST API after first
 server start):
