@@ -67,7 +67,16 @@ git -c commit.gpgsign=false commit -s
 
 - DCO sign-off (`-s`) required on every commit
 - Never GPG-sign commits autonomously
-- No Co-Authored-By lines
+- Autonomous commits where Claude made changes MUST include exactly one
+  `Co-authored-by` trailer after the message body. Never stack multiples.
+  Use the model name matching the active Claude instance, e.g.:
+
+  ```
+  Co-authored-by: Claude Sonnet 4.6 <noreply@anthropic.com>
+  ```
+
+  This applies to all commits under `cbsd-rs/`, including subprojects,
+  documentation, and tooling (`.claude/skills/`, etc.).
 - Separate `git add` and `git commit` commands (not chained)
 - Ceph project commit message style
 
