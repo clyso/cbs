@@ -82,12 +82,16 @@ Key properties:
 | [Authentication, Permissions & User-Facing API](2026-03-13-cbsd-auth-permissions-design.md) | Google SSO OAuth flow (SQLite-backed sessions, client_type propagation, domain restriction), PASETO tokens (SHA-256, max_token_ttl), API keys (argon2 + LRU verification cache, 12-char random prefix, self-service), RBAC with per-assignment scopes (user_role_scopes table, scope-dependent validation), endpoint gating (RequireCap + :own/:any ownership enforcement), SQLite schema (auth + builds + descriptor_version), whoami response spec, signed_off_by server override, token/key revocation (self + bulk), first-startup bootstrapping sequence, last-admin guard (5 mutation paths, builtin cap protection), user deactivation (bulk-revoke), migration plan (tokens, API paths, breaking changes, release ordering) |
 
 | [Project Structure & Crate Organization](2026-03-14-cbsd-project-structure.md) | Cargo workspace layout (3 crates: cbsd-proto, cbsd-server, cbsd-worker), dependency profiles, sqlx migration mechanism |
+| [Worker Registration](2026-03-16-worker-registration.md) | Worker WebSocket registration, server-assigned connection handles, heartbeat protocol |
+| [Config Keys: kebab-case](2026-03-17-kebab-case-config.md) | YAML config keys use kebab-case, serde `rename_all` at deserialization boundary |
+| [Compile-Time Checked SQL Queries](2026-03-17-sqlx-compile-time-queries.md) | Migration from `sqlx::query("...")` to `sqlx::query!("...")` macros, `.sqlx/` offline cache |
+| [cbscore Wrapper](2026-03-18-cbscore-wrapper.md) | Python subprocess bridge for cbscore, process-group management |
+| [Periodic Builds](2026-03-18-periodic-builds.md) | Cron scheduling, tag interpolation, retry logic, periodic task REST API |
+| [Dev Mode OAuth Bypass](2026-03-20-dev-oauth-bypass.md) | Skip Google OAuth round-trip in dev mode using `seed.seed-admin` as email identity, ~40 LoC server change |
 
 ### Planned documents
 
-| Topic | Status |
-|-------|--------|
-| Periodic builds | Not started — cron scheduling, persistence, management API |
+None — all identified topics have design documents.
 
 ## REST API Surface
 
@@ -185,13 +189,17 @@ Note: `/admin/` prefix avoids axum routing conflicts and signals admin-only
 semantics. `admin:queue:view` returns the full global queue for debugging —
 only the `admin` role should be granted this capability.
 
-### Periodic Builds — post-v1
+### Periodic Builds
 
-Periodic builds (cron-scheduled) are **deferred to post-v1**. The current
-Python implementation has significant semantics (tag_format substitution,
-exponential backoff, enabled/disabled state machine) that require their own
-design document before endpoints can be specified. No endpoint stubs are
-included in v1 to avoid declaring an API contract with no backing design.
+| Method | Path | Auth | Cap | Description |
+|--------|------|------|-----|-------------|
+| POST | `/periodic` | Required | `periodic:create` + `builds:create` (scoped) | Create periodic task |
+| GET | `/periodic` | Required | `periodic:view` | List periodic tasks |
+| GET | `/periodic/{id}` | Required | `periodic:view` | Get periodic task details |
+| PUT | `/periodic/{id}` | Required | `periodic:manage` (+ `builds:create` if descriptor changed) | Update periodic task |
+| DELETE | `/periodic/{id}` | Required | `periodic:manage` | Delete periodic task |
+| PUT | `/periodic/{id}/enable` | Required | `periodic:manage` | Enable periodic task |
+| PUT | `/periodic/{id}/disable` | Required | `periodic:manage` | Disable periodic task |
 
 ## Capabilities Reference (v1)
 
@@ -213,8 +221,9 @@ included in v1 to avoid declaring an API contract with no backing design.
 Capability strings are validated at the API layer. Unknown strings are rejected
 with 400 to prevent silent typos.
 
-Periodic build capabilities (`periodic:create`, `periodic:manage`,
-`periodic:view`) are deferred to post-v1.
+| `periodic:create` | Create periodic build tasks | No |
+| `periodic:view` | View periodic build tasks | No |
+| `periodic:manage` | Update, delete, enable, disable periodic tasks | No |
 
 ## Decided Questions
 
@@ -346,9 +355,6 @@ Consolidated from all design documents:
 - **Build artifact tracking.** Images are pushed to registries by cbscore/podman
   inside the build container. Should the server track which images were produced?
   Relevant for auditing and GC.
-- **Periodic builds.** Needs its own design document covering scheduling,
-  persistence, cron management API, interaction with build priorities, submitting
-  user identity, and re-arming on server restart. Deferred to post-v1.
 - **Component management API.** Currently components are filesystem-managed on
   the server. Future work to enable CRUD via REST API and web UI. Needs schema
   decisions: are components versioned? Is there a content-addressed store?

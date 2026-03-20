@@ -109,8 +109,9 @@ fn default_client() -> String {
 
 #[derive(Deserialize)]
 pub struct CallbackQuery {
-    code: String,
+    code: Option<String>,
     state: String,
+    dev_email: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -178,6 +179,20 @@ async fn login(
         })?;
     }
 
+    // Dev mode: skip Google, redirect to callback with seed_admin email.
+    if state.config.dev.enabled {
+        let email = state.config.seed.seed_admin.as_ref().ok_or_else(|| {
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "dev mode requires seed-admin in config",
+            )
+        })?;
+        let url = format!(
+            "/api/auth/callback?state={oauth_nonce}&dev_email={email}"
+        );
+        return Ok(Redirect::temporary(&url).into_response());
+    }
+
     // Use first allowed domain as hd hint if there is exactly one
     let hd = if state.config.oauth.allowed_domains.len() == 1 {
         Some(state.config.oauth.allowed_domains[0].as_str())
@@ -230,38 +245,50 @@ async fn callback(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
     })?;
 
-    // Exchange authorization code for user info
-    let user_info = oauth::exchange_code_for_userinfo(&state.oauth, &params.code)
-        .await
-        .map_err(|e| {
-            tracing::error!("OAuth code exchange failed: {e}");
-            auth_error(
-                StatusCode::BAD_GATEWAY,
-                "failed to authenticate with Google",
-            )
+    // Resolve user info — dev mode or Google exchange.
+    let user_info = if state.config.dev.enabled && params.dev_email.is_some() {
+        let email = params.dev_email.unwrap();
+        let name = email.split('@').next().unwrap_or(&email).to_string();
+        oauth::GoogleUserInfo { email, name }
+    } else {
+        let code = params.code.ok_or_else(|| {
+            auth_error(StatusCode::BAD_REQUEST, "missing authorization code")
         })?;
 
-    // Check domain restriction
-    if !state.config.oauth.allow_any_google_account {
-        let domain = user_info
-            .email
-            .rsplit_once('@')
-            .map(|(_, d)| d)
-            .unwrap_or("");
+        let info = oauth::exchange_code_for_userinfo(&state.oauth, &code)
+            .await
+            .map_err(|e| {
+                tracing::error!("OAuth code exchange failed: {e}");
+                auth_error(
+                    StatusCode::BAD_GATEWAY,
+                    "failed to authenticate with Google",
+                )
+            })?;
 
-        if !state
-            .config
-            .oauth
-            .allowed_domains
-            .iter()
-            .any(|d| d == domain)
-        {
-            return Err(auth_error(
-                StatusCode::FORBIDDEN,
-                "email domain not allowed",
-            ));
+        // Check domain restriction (production only).
+        if !state.config.oauth.allow_any_google_account {
+            let domain = info
+                .email
+                .rsplit_once('@')
+                .map(|(_, d)| d)
+                .unwrap_or("");
+
+            if !state
+                .config
+                .oauth
+                .allowed_domains
+                .iter()
+                .any(|d| d == domain)
+            {
+                return Err(auth_error(
+                    StatusCode::FORBIDDEN,
+                    "email domain not allowed",
+                ));
+            }
         }
-    }
+
+        info
+    };
 
     // Create or update user in DB
     let _user = db::users::create_or_update_user(&state.pool, &user_info.email, &user_info.name)

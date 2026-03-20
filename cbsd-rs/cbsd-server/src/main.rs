@@ -89,9 +89,11 @@ async fn main() {
         .expect("HKDF expand failed for session key");
     let session_key = tower_sessions::cookie::Key::from(&session_key_bytes);
 
-    // Session layer with signed cookies and 10-minute expiry (OAuth flows only)
+    // Session layer with signed cookies and 10-minute expiry (OAuth flows only).
+    // In dev mode, disable the Secure flag so cookies work over plain HTTP.
     let session_layer = tower_sessions::SessionManagerLayer::new(session_store.clone())
         .with_signed(session_key)
+        .with_secure(!config.dev.enabled)
         .with_expiry(tower_sessions::Expiry::OnInactivity(
             time::Duration::minutes(10),
         ));
@@ -103,10 +105,16 @@ async fn main() {
             .continuously_delete_expired(tokio::time::Duration::from_secs(60)),
     );
 
-    // Load Google OAuth configuration from secrets file
-    let oauth = auth::oauth::load_oauth_config(&config.oauth.secrets_file)
-        .expect("failed to load OAuth secrets");
-    tracing::info!("loaded OAuth configuration");
+    // Load Google OAuth configuration (skipped in dev mode).
+    let oauth = if config.dev.enabled {
+        tracing::info!("dev mode: skipping OAuth secrets loading");
+        auth::oauth::OAuthState::dummy()
+    } else {
+        let o = auth::oauth::load_oauth_config(&config.oauth.secrets_file)
+            .expect("failed to load OAuth secrets");
+        tracing::info!("loaded OAuth configuration");
+        o
+    };
 
     // Create API key LRU cache (capacity: 512)
     let api_key_cache = auth::api_keys::ApiKeyCache::new(512);

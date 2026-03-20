@@ -27,6 +27,18 @@ pub struct OAuthState {
     pub redirect_uri: String,
 }
 
+impl OAuthState {
+    /// Create a dummy OAuthState for dev mode. The values are never
+    /// used — dev mode bypasses Google entirely.
+    pub fn dummy() -> Self {
+        Self {
+            client_id: String::new(),
+            client_secret: String::new(),
+            redirect_uri: String::new(),
+        }
+    }
+}
+
 /// User information returned by Google's userinfo endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GoogleUserInfo {

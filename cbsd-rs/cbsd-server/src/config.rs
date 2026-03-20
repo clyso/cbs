@@ -228,7 +228,11 @@ fn default_log_level() -> String {
 impl ServerConfig {
     /// Validate configuration invariants. Panics on invalid config.
     pub fn validate(&self) {
-        if self.oauth.allowed_domains.is_empty() && !self.oauth.allow_any_google_account {
+        // Skip OAuth validation in dev mode — Google is never contacted.
+        if !self.dev.enabled
+            && self.oauth.allowed_domains.is_empty()
+            && !self.oauth.allow_any_google_account
+        {
             panic!(
                 "config error: oauth.allowed_domains is empty and \
                  oauth.allow_any_google_account is not true — \
