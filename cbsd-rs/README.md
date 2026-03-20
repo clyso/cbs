@@ -118,6 +118,31 @@ dev:
 The worker's `worker.yaml` is generated with the matching `api-key` and
 `arch` so the two containers connect automatically.
 
+### Logging
+
+Application logging is controlled by two mechanisms:
+
+| Mechanism | Controls | Scope |
+|-----------|----------|-------|
+| `CBSD_DEV=1` env var | Console (stdout) output | Both server and worker |
+| `logging.log-file` in YAML config | File output | Per-binary |
+
+**Development mode** (`CBSD_DEV=1`): Console output is always enabled.
+File output is additionally enabled when `logging.log-file` is configured.
+The compose `--dev` profile sets `CBSD_DEV=1` automatically.
+
+**Production mode** (no `CBSD_DEV`): Console output is disabled. The
+`logging.log-file` config is **required** — the binary refuses to start
+without it.
+
+`CBSD_DEV` is independent from `dev.enabled` in `server.yaml`. The server
+config `dev.enabled` controls OAuth bypass and worker seeding. Setting
+`dev.enabled: true` without `CBSD_DEV=1` gives OAuth bypass but file-only
+logging. The compose `--dev` flag sets both.
+
+Log rotation and compression for production deployments is handled by
+`logrotate` on the host (see the systemd deployment section).
+
 ### Useful commands
 
 ```bash

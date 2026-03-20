@@ -15,6 +15,31 @@ use std::path::PathBuf;
 use base64::Engine;
 use serde::Deserialize;
 
+/// Logging configuration for the worker binary.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct LoggingConfig {
+    /// Log level (e.g., "info", "debug", "trace").
+    #[serde(default = "default_log_level")]
+    pub level: String,
+
+    /// Log file path. Required when `CBSD_DEV` is not set (production).
+    pub log_file: Option<PathBuf>,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".to_string(),
+            log_file: None,
+        }
+    }
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
 /// Worker configuration loaded from a YAML file.
 ///
 /// Identity fields (`api_key`, `arch`) can be provided individually or
@@ -66,6 +91,10 @@ pub struct WorkerConfig {
     /// Ceiling for reconnection backoff in seconds (default: 30).
     #[serde(default)]
     pub reconnect_backoff_ceiling_secs: Option<u64>,
+
+    /// Logging configuration.
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 /// Resolved worker configuration with all identity fields guaranteed present.
@@ -112,6 +141,41 @@ impl WorkerConfig {
             return Err(ConfigError::Validation(
                 "server_url must not be empty".to_string(),
             ));
+        }
+
+        // Logging validation: production mode requires a log file.
+        let is_dev = std::env::var("CBSD_DEV")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        if !is_dev && self.logging.log_file.is_none() {
+            return Err(ConfigError::Validation(
+                "logging.log-file is required when CBSD_DEV is not set — \
+                 in production mode there is no console output, so a log \
+                 file path must be configured"
+                    .to_string(),
+            ));
+        }
+        if let Some(ref path) = self.logging.log_file {
+            if !path.is_absolute() {
+                return Err(ConfigError::Validation(format!(
+                    "logging.log-file must be an absolute path, got '{}'",
+                    path.display()
+                )));
+            }
+            if path.file_name().is_none() {
+                return Err(ConfigError::Validation(format!(
+                    "logging.log-file has no filename component: '{}'",
+                    path.display()
+                )));
+            }
+            if let Some(dir) = path.parent() {
+                if !dir.as_os_str().is_empty() && !dir.exists() {
+                    return Err(ConfigError::Validation(format!(
+                        "logging.log-file parent directory does not exist: '{}'",
+                        dir.display()
+                    )));
+                }
+            }
         }
 
         // Try env var first

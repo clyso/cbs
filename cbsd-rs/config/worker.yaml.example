@@ -68,3 +68,27 @@ cbscore-config-path: /cbs/config/cbs-build.config.yaml
 # Must be less than the server's liveness-grace-period-secs (default: 90).
 # Default: 30
 # reconnect-backoff-ceiling-secs: 30
+
+# --------------------------------------------------------------------------
+# Logging
+#
+# Console output (stdout) is controlled by the CBSD_DEV environment variable:
+#   - CBSD_DEV=1  → console output enabled (development mode)
+#   - unset       → console output disabled (production mode)
+#
+# In production mode (no CBSD_DEV), log-file is REQUIRED — the worker will
+# refuse to start without it. In dev mode, log-file is optional (console
+# is always available).
+#
+# Log rotation is handled by logrotate on the host, not by the application.
+# --------------------------------------------------------------------------
+
+logging:
+  # Log level for structured output: trace, debug, info, warn, error.
+  # Can be overridden at runtime with the RUST_LOG environment variable.
+  # Default: info
+  level: info
+
+  # Path to write application logs. Must be an absolute path.
+  # Required in production (no CBSD_DEV). Optional in dev mode.
+  log-file: /cbs/logs/worker.log

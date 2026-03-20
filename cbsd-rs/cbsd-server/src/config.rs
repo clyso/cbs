@@ -187,8 +187,7 @@ pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
 
-    /// Optional log file path (in addition to stdout).
-    #[allow(dead_code)]
+    /// Log file path. Required when `CBSD_DEV` is not set (production).
     pub log_file: Option<PathBuf>,
 }
 
@@ -256,6 +255,40 @@ impl ServerConfig {
                 "config error: dev.seed_workers is configured but dev.enabled is false — \
                  set dev.enabled: true or remove dev.seed_workers"
             );
+        }
+
+        // Logging validation: production mode requires a log file.
+        let is_dev = std::env::var("CBSD_DEV")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        if !is_dev && self.logging.log_file.is_none() {
+            panic!(
+                "config error: logging.log-file is required when CBSD_DEV is not set — \
+                 in production mode there is no console output, so a log file path \
+                 must be configured"
+            );
+        }
+        if let Some(ref path) = self.logging.log_file {
+            if !path.is_absolute() {
+                panic!(
+                    "config error: logging.log-file must be an absolute path, got '{}'",
+                    path.display()
+                );
+            }
+            if path.file_name().is_none() {
+                panic!(
+                    "config error: logging.log-file has no filename component: '{}'",
+                    path.display()
+                );
+            }
+            if let Some(dir) = path.parent() {
+                if !dir.as_os_str().is_empty() && !dir.exists() {
+                    panic!(
+                        "config error: logging.log-file parent directory does not exist: '{}'",
+                        dir.display()
+                    );
+                }
+            }
         }
 
         for (i, w) in self.dev.seed_workers.iter().enumerate() {

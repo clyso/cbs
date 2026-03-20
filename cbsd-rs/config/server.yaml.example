@@ -137,6 +137,16 @@ log-retention:
 
 # --------------------------------------------------------------------------
 # Logging
+#
+# Console output (stdout) is controlled by the CBSD_DEV environment variable:
+#   - CBSD_DEV=1  → console output enabled (development mode)
+#   - unset       → console output disabled (production mode)
+#
+# In production mode (no CBSD_DEV), log-file is REQUIRED — the server will
+# refuse to start without it. In dev mode, log-file is optional (console
+# is always available).
+#
+# Log rotation is handled by logrotate on the host, not by the application.
 # --------------------------------------------------------------------------
 
 logging:
@@ -145,5 +155,6 @@ logging:
   # Default: info
   level: info
 
-  # Optional path to write logs to a file in addition to stdout.
-  # log-file: /cbs/logs/server.log
+  # Path to write application logs. Must be an absolute path.
+  # Required in production (no CBSD_DEV). Optional in dev mode.
+  log-file: /cbs/logs/server.log

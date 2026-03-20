@@ -111,6 +111,7 @@ services:
       - label=disable
     environment:
       RUST_LOG: debug
+      CBSD_DEV: "1"
 
   worker-dev:
     profiles: [dev]
@@ -142,6 +143,7 @@ services:
       - seccomp=unconfined
     environment:
       RUST_LOG: debug
+      CBSD_DEV: "1"
     depends_on:
       - server-dev
 
