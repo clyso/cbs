@@ -47,12 +47,19 @@ permissions_router = APIRouter(prefix="/auth/permissions")
     "/login",
     summary="Start login process",
 )
-async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
+async def auth_login(
+    oauth: CBSOAuth,
+    req: Request,
+    next: str | None = None
+) -> RedirectResponse:
     """Start the login process, redirecting the user to google's SSO."""
     logger.debug(f"req base url: {req.base_url}")
     redirect_uri = req.url_for("auth_callback")  # takes function name
     logger.debug(f"redirect uri: {redirect_uri}")
     redirect_uri_str = str(redirect_uri)
+
+    if next:
+        req.session["auth_next"] = next
 
     google = cast(oauth.oauth2_client_cls, oauth.google)
     auth_uri = await google.create_authorization_url(
@@ -80,6 +87,7 @@ async def auth_login(oauth: CBSOAuth, req: Request) -> RedirectResponse:
     responses={
         401: {"description": "User not authorized", "model": BaseErrorModel},
         200: {"description": "Authorized user", "model": UserConfig},
+        302: {"description": "Redirect to web UI"},
     },
 )
 async def auth_callback(
@@ -114,6 +122,21 @@ async def auth_callback(
         ) from e
 
     user = await users.create(user_info.email, user_info.name)
+
+    next_url = req.session.pop("auth_next", None)
+    if next_url and next_url.startswith("/"):
+        # UI login: redirect the user instead of the file download
+        response = RedirectResponse(url=next_url, status_code=302)
+        response.set_cookie(
+            key="cbs_token",
+            value=user.token.get_secret_value(),
+            httponly=False,
+            secure=True,
+            samesite="lax",
+            max_age=3600 * 24
+        )
+        return response
+
     user_config = UserConfig(host=str(req.base_url), login_info=user)
 
     return Response(
