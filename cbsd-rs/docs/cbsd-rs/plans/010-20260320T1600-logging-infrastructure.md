@@ -178,8 +178,8 @@ Add implementation review documents produced after commits
 
 | # | Commit | Status |
 |---|--------|--------|
-| 1 | Design, plan, reviews | Pending |
-| 2 | Fix build log path | Pending |
-| 3 | File logging + CBSD_DEV + configs + docs | Pending |
-| 4 | Logrotate systemd | Pending |
+| 1 | Design, plan, reviews | Done |
+| 2 | Fix build log path | Done |
+| 3 | File logging + CBSD_DEV + configs + docs | Done |
+| 4 | Logrotate systemd | Done |
 | 5 | Implementation reviews | Pending |
