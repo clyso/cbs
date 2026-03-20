@@ -14,8 +14,8 @@
 treats `*` as scope-dependent) confirmed applied.
 
 **Evaluated against:**
-- Plans: `phase-4-dispatch-logs.md`, `phase-5-worker.md`, `phase-6-integration.md`
-- Design documents in `_docs/cbsd-rs/design/`
+- Plans: `002-20260318T1411-03-dispatch-logs.md`, `002-20260318T1411-04-worker.md`, `002-20260318T1411-05-integration.md`
+- Design documents in `cbsd-rs/docs/cbsd-rs/design/`
 
 ---
 

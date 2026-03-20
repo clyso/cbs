@@ -1,7 +1,7 @@
 # Design Review: Dev Mode OAuth Bypass
 
 **Document:**
-`docs/cbsd-rs/design/2026-03-20-dev-oauth-bypass.md`
+`docs/cbsd-rs/design/009-20260320T0750-dev-oauth-bypass.md`
 
 **Cross-referenced against:**
 - `cbsd-server/src/routes/auth.rs`

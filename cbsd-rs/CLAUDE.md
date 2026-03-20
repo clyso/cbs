@@ -13,6 +13,8 @@ Always consult these skills during implementation:
   boundaries. Ceph project conventions.
 - **`/git-autonomous-commits`** — Autonomous git operations: staging,
   pre-commit checks, self-review, commit strategy.
+- **`/cbsd-rs-docs`** — Where to place and how to name design documents,
+  plans, and review documents for cbc and cbsd-rs packages.
 
 ## Workspace Layout
 
@@ -89,13 +91,15 @@ but never so small that it's meaningless in isolation.
 
 ## Design & Plans
 
-- **Design documents (authoritative):** `_docs/cbsd-rs/design/`
+- **Design documents (authoritative):** `cbsd-rs/docs/cbsd-rs/design/`
   - Architecture & task queue, auth & permissions, project structure
   - If code and design disagree, **fix the code**
-- **Implementation plans:** `_docs/cbsd-rs/plans/`
+- **Implementation plans:** `cbsd-rs/docs/cbsd-rs/plans/`
   - Phased commit plan with progress tracking tables
   - **Update plan progress tables after completing each commit**
-  - See `_docs/cbsd-rs/plans/CLAUDE.md` for instructions
+  - See `cbsd-rs/docs/cbsd-rs/plans/README.md` for instructions
+- **`cbc` docs:** `cbsd-rs/docs/cbc/`
+- See `/cbsd-rs-docs` skill for file naming and directory conventions.
 
 ## Key Reference Files
 

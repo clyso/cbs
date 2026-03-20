@@ -4,7 +4,7 @@
 `docs/cbsd-rs/plans/20260320T0800-dev-oauth-bypass.md`
 
 **Design:**
-`docs/cbsd-rs/design/2026-03-20-dev-oauth-bypass.md` (v2)
+`docs/cbsd-rs/design/009-20260320T0750-dev-oauth-bypass.md` (v2)
 
 ---
 

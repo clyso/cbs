@@ -1,8 +1,8 @@
 # Design & Plan Review: Compile-Time Checked SQL Queries (Phase 8)
 
 **Documents reviewed:**
-- `_docs/cbsd-rs/design/2026-03-17-sqlx-compile-time-queries.md`
-- `_docs/cbsd-rs/plans/phase-8-sqlx-macros.md`
+- `cbsd-rs/docs/cbsd-rs/design/006-20260317T0732-sqlx-compile-time-queries.md`
+- `cbsd-rs/docs/cbsd-rs/plans/006-20260317T1028-sqlx-macros.md`
 
 **Cross-referenced against:** actual `sqlx::query(` counts in the codebase.
 

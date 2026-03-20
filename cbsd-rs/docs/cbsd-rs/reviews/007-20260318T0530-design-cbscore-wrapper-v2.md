@@ -1,7 +1,7 @@
 # Design Review: cbscore Wrapper v2 — Python Subprocess Bridge
 
 **Document reviewed:**
-- `_docs/cbsd-rs/design/2026-03-18-cbscore-wrapper.md` (revised)
+- `cbsd-rs/docs/cbsd-rs/design/007-20260318T0716-cbscore-wrapper.md` (revised)
 
 **Cross-referenced against:**
 - `cbsd-rs/cbsd-worker/src/build/executor.rs`

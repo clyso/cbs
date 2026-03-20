@@ -4,7 +4,7 @@
 - `ab96acc` — implement cbscore-wrapper.py build bridge (180+, 19−, 2 files)
 
 **Evaluated against:**
-- Design: `_docs/cbsd-rs/design/2026-03-18-cbscore-wrapper.md`
+- Design: `cbsd-rs/docs/cbsd-rs/design/007-20260318T0716-cbscore-wrapper.md`
 
 ---
 

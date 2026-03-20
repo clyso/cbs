@@ -1,10 +1,10 @@
 # Plan Review: cbsd-rs Implementation Plans v2 (Phases 0–6)
 
 **Plans reviewed:**
-- `_docs/cbsd-rs/plans/README.md` through `phase-6-integration.md` (all 9 files)
+- `cbsd-rs/docs/cbsd-rs/plans/README.md` through `002-20260318T1411-05-integration.md` (all 9 files)
 
 **Cross-referenced against:**
-- `_docs/cbsd-rs/design/README.md` and all 3 design documents
+- `cbsd-rs/docs/cbsd-rs/design/README.md` and all 3 design documents
 
 ---
 

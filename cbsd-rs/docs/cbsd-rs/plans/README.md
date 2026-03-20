@@ -5,7 +5,7 @@
 Phased implementation plan for the Rust rewrite of the CBS daemon (`cbsd/`).
 The Rust workspace lives at `cbsd-rs/` in the repository root.
 
-**Design documents:** `_docs/cbsd-rs/design/`
+**Design documents:** `cbsd-rs/docs/cbsd-rs/design/`
 
 ## Implementation Status
 

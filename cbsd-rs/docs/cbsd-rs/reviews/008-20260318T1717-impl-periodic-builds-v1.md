@@ -4,7 +4,7 @@
 - `d061131` — add periodic build scheduling (~2000 LOC, 14 source files)
 
 **Evaluated against:**
-- Design: `_docs/cbsd-rs/design/2026-03-18-periodic-builds.md` (v3, approved)
+- Design: `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3, approved)
 
 ---
 

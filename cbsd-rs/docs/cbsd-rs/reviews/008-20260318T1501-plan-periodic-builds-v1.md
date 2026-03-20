@@ -1,10 +1,10 @@
 # Plan Review: Phase 10 — Periodic Builds
 
 **Plan reviewed:**
-- `_docs/cbsd-rs/plans/phase-10-periodic-builds.md`
+- `cbsd-rs/docs/cbsd-rs/plans/008-20260318T1713-periodic-builds.md`
 
 **Evaluated against:**
-- Design: `_docs/cbsd-rs/design/2026-03-18-periodic-builds.md` (v3, approved)
+- Design: `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3, approved)
 - Current codebase: `routes/builds.rs`, `app.rs`, `main.rs`, `permissions.rs`
 
 ---

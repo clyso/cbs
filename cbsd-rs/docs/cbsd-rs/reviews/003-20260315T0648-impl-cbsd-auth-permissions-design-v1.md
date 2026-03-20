@@ -4,8 +4,8 @@
 - `f98c88f` — cbsd-rs/server: add OAuth, API key management, and auth routes
 
 **Evaluated against:**
-- Plan: `_docs/cbsd-rs/plans/phase-2-authentication.md` (Commit 4 section)
-- Design: `_docs/cbsd-rs/design/2026-03-13-cbsd-auth-permissions-design.md`
+- Plan: `cbsd-rs/docs/cbsd-rs/plans/003-20260318T1411-authentication.md` (Commit 4 section)
+- Design: `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
 
 ---
 

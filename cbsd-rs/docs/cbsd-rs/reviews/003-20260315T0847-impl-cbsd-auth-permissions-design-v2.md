@@ -13,9 +13,9 @@ split versions. Commit 4 fixes (HKDF, rate limiting, `load_authed_user`,
 default `"cli"`) were fixup'd into the split commits.
 
 **Evaluated against:**
-- Plan: `_docs/cbsd-rs/plans/phase-2-authentication.md` (Commit 4)
-- Plan: `_docs/cbsd-rs/plans/phase-3-permissions-builds.md` (Commits 5–6)
-- Design: `_docs/cbsd-rs/design/2026-03-13-cbsd-auth-permissions-design.md`
+- Plan: `cbsd-rs/docs/cbsd-rs/plans/003-20260318T1411-authentication.md` (Commit 4)
+- Plan: `cbsd-rs/docs/cbsd-rs/plans/002-20260318T1411-02-permissions-builds.md` (Commits 5–6)
+- Design: `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
 
 ---
 

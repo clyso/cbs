@@ -9,7 +9,7 @@
 - `5626829` — apply cargo fmt across workspace (225 lines)
 
 **Evaluated against:**
-- Design: `_docs/cbsd-rs/design/2026-03-16-worker-registration.md`
+- Design: `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md`
 
 ---
 

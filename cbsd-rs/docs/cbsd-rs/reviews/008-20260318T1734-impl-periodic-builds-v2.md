@@ -4,7 +4,7 @@
 - `76c2e27` — add periodic build scheduling (amended from `d061131`)
 
 **Evaluated against:**
-- Design: `_docs/cbsd-rs/design/2026-03-18-periodic-builds.md` (v3)
+- Design: `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3)
 - Prior review: `20260318T1717-impl-phase10-periodic-builds.md`
 
 ---

@@ -1,6 +1,6 @@
 # Phase 7: Worker Registration
 
-**Design document:** `_docs/cbsd-rs/design/2026-03-16-worker-registration.md`
+**Design document:** `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md`
 
 ## Progress
 

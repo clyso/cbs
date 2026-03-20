@@ -1,7 +1,7 @@
 # Design Review: Periodic Builds
 
 **Document reviewed:**
-- `_docs/cbsd-rs/design/2026-03-18-periodic-builds.md`
+- `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md`
 
 **Cross-referenced against:**
 - `cbsd-rs/cbsd-server/src/routes/builds.rs` (build submission, scope checks)

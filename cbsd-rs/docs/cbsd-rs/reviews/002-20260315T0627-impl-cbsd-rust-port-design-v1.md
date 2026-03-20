@@ -7,8 +7,8 @@
 - `2ac5383` — Phase 2 Commit 3: PASETO tokens, user/token DB, AuthUser extractor
 
 **Evaluated against:**
-- Design documents in `_docs/cbsd-rs/design/`
-- Implementation plans in `_docs/cbsd-rs/plans/`
+- Design documents in `cbsd-rs/docs/cbsd-rs/design/`
+- Implementation plans in `cbsd-rs/docs/cbsd-rs/plans/`
 
 ---
 

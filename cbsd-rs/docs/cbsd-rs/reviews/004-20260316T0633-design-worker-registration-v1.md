@@ -1,8 +1,8 @@
 # Design & Plan Review: Worker Registration (Phase 7)
 
 **Documents reviewed:**
-- `_docs/cbsd-rs/design/2026-03-16-worker-registration.md`
-- `_docs/cbsd-rs/plans/phase-7-worker-registration.md`
+- `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md`
+- `cbsd-rs/docs/cbsd-rs/plans/004-20260316T1018-01-worker-registration.md`
 
 **Cross-referenced against:**
 - Design README, arch doc, auth doc
