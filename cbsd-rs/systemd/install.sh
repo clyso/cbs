@@ -268,6 +268,53 @@ fi
   }
 }
 
+# Install logrotate config and timer (once per deployment)
+if [[ ! -e "${deployment_data_dir}/logrotate.conf" ]]; then
+
+  cp "${our_dir}/templates/config/logrotate.conf.in" \
+    "${deployment_data_dir}/logrotate.conf" || {
+    echo "error: failed to install logrotate config for ${deployment}" >&2
+    exit 1
+  }
+
+  sed -i "s|{{deployment}}|${deployment}|g;
+    s|{{cbsd_rs_data}}|${data_dir}|g" \
+    "${deployment_data_dir}/logrotate.conf" || {
+    echo "error: failed to configure logrotate config for ${deployment}" >&2
+    exit 1
+  }
+
+fi
+
+if [[ ! -e "${systemd_dir}/cbsd-rs-logrotate@.timer" ]]; then
+
+  cp "${our_dir}/templates/systemd/cbsd-rs-logrotate@.timer" \
+    "${systemd_dir}/cbsd-rs-logrotate@.timer" || {
+    echo "error: failed to install logrotate timer" >&2
+    exit 1
+  }
+
+  cp "${our_dir}/templates/systemd/cbsd-rs-logrotate@.service" \
+    "${systemd_dir}/cbsd-rs-logrotate@.service" || {
+    echo "error: failed to install logrotate service" >&2
+    exit 1
+  }
+
+  sed -i "s|{{cbsd_rs_data}}|${data_dir}|g" \
+    "${systemd_dir}/cbsd-rs-logrotate@.service" || {
+    echo "error: failed to configure logrotate service" >&2
+    exit 1
+  }
+
+  echo -e "${_INFOMARK} enabling logrotate timer for deployment '${deployment}'..."
+  systemctl --user enable "cbsd-rs-logrotate@${deployment}.timer" || {
+    echo "error: unable to enable logrotate timer for deployment '${deployment}'" >&2
+    exit 1
+  }
+  echo -e "${_CHECKMARK} logrotate timer enabled for deployment '${deployment}'"
+
+fi
+
 enable_service() {
   svc_name="${1}"
   systemctl --user enable "cbsd-rs-${deployment}@${svc_name}.service" || {

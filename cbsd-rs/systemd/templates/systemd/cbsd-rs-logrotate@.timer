@@ -1,0 +1,21 @@
+# CBS build service daemon (cbsd-rs) — log rotation timer
+# Copyright (C) 2026  Clyso
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Runs logrotate daily for the '%i' deployment. Persistent=true ensures
+# missed runs (e.g. host was off at midnight) are caught up on boot.
+
+[Unit]
+Description=Rotate cbsd-rs logs for '%i' deployment
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
