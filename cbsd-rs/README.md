@@ -36,6 +36,101 @@ git add .sqlx/
 From the repository root, `./do-cbsd-rs-compose.sh sqlx-prepare` automates
 the database setup and migration steps.
 
+## Development
+
+### Prerequisites
+
+- **Rust toolchain** — install via [rustup](https://rustup.rs/). The
+  workspace uses the 2024 edition.
+- **Podman** and **podman-compose** — the dev environment runs server and
+  worker in containers.
+- **cargo-sqlx** — only needed when adding or modifying `query!()` macros
+  or SQL migrations. Install with:
+  ```bash
+  cargo install sqlx-cli --no-default-features --features sqlite
+  ```
+- **A cbscore config file** (`cbs-build.config.yaml`) — the worker container
+  needs this to run builds. Use an existing one from your host or create a
+  minimal placeholder.
+- **A Google OAuth secrets JSON** — the `prepare` script requires this file,
+  but in dev mode its contents are ignored (the server bypasses OAuth). An
+  empty JSON object `{}` saved to a file is sufficient.
+
+### Bringing up the dev environment
+
+All commands below are run from the **repository root** (not `cbsd-rs/`).
+
+1. **Prepare configuration** — generates server and worker YAML configs
+   under `_local/cbsd-rs/`:
+
+   ```bash
+   ./do-cbsd-rs-compose.sh prepare --dev \
+       --google-client-secrets ~/client_secret.json \
+       --cbscore-config ~/cbs-build.config.yaml \
+       --seed-admin you@example.com
+   ```
+
+   The `--dev` flag enables two things in the generated config:
+   - **Dev mode** (`dev.enabled: true`) — the server bypasses Google OAuth
+     and auto-authenticates as the seed admin on login.
+   - **Seed workers** — a worker with a pre-shared API key is seeded into
+     the database at startup, so no manual registration is required.
+
+2. **Start the stack**:
+
+   ```bash
+   ./do-cbsd-rs-compose.sh up --dev
+   ```
+
+   This builds and starts two containers (`server-dev`, `worker-dev`) with
+   cargo-watch. Rust source changes on the host trigger an incremental
+   rebuild and restart inside the container.
+
+3. **Verify**:
+
+   ```bash
+   # Login (returns a PASETO token — dev mode, no browser needed)
+   curl -s http://localhost:8080/api/auth/login?client=cli
+
+   # Or use the cbc CLI
+   cd cbsd-rs && cargo run --bin cbc -- login http://localhost:8080
+   ```
+
+### Dev mode config options
+
+The `prepare --dev` script generates a `server.yaml` with the following
+dev-specific section (see `config/server.yaml.example` for full reference):
+
+```yaml
+dev:
+  enabled: true
+  seed-workers:
+    - name: dev-worker-x86
+      arch: x86_64
+      api-key: "cbsk_<generated-hex>"
+```
+
+| Option | Effect |
+|--------|--------|
+| `dev.enabled` | Bypasses Google OAuth — login returns a token for the seed admin. Skips OAuth config validation at startup. |
+| `dev.seed-workers` | Pre-registers workers with the given API keys at startup. The worker config uses the matching `api-key` to connect without a registration token. |
+
+The worker's `worker.yaml` is generated with the matching `api-key` and
+`arch` so the two containers connect automatically.
+
+### Useful commands
+
+```bash
+# Rebuild images from scratch (after Cargo.toml or dependency changes)
+./do-cbsd-rs-compose.sh up --dev --rebuild
+
+# Stop the stack
+./do-cbsd-rs-compose.sh down --dev
+
+# Regenerate sqlx offline cache (after query or migration changes)
+./do-cbsd-rs-compose.sh sqlx-prepare
+```
+
 ## Configuration
 
 All YAML configuration keys use **kebab-case** throughout (e.g. `listen-addr`,
