@@ -22,6 +22,7 @@ use axum::{Json, Router};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tower_governor::GovernorLayer;
+use tower_governor::errors::GovernorError;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_sessions::Session;
 
@@ -42,6 +43,28 @@ pub fn router() -> Router<AppState> {
         GovernorConfigBuilder::default()
             .per_second(60)
             .burst_size(10)
+            .error_handler(|err| {
+                tracing::error!("rate limiter: {err}");
+                // Return JSON error matching the API's ErrorDetail
+                // format instead of tower_governor's plain-text default.
+                let (status, message) = match &err {
+                    GovernorError::TooManyRequests { .. } => {
+                        (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
+                    }
+                    GovernorError::UnableToExtractKey => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "unable to extract client IP")
+                    }
+                    GovernorError::Other { .. } => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "rate limiter error")
+                    }
+                };
+                let body = serde_json::json!({"error": message});
+                axum::http::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap()
+            })
             .finish()
             .expect("failed to build governor config"),
     );
