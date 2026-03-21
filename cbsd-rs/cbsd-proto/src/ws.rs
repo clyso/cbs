@@ -102,6 +102,8 @@ pub enum WorkerMessage {
         status: BuildFinishedStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        build_report: Option<serde_json::Value>,
     },
 
     /// Worker is shutting down gracefully (protocol v2). The server identifies
@@ -254,9 +256,11 @@ mod tests {
             build_id: BuildId(42),
             status: BuildFinishedStatus::Failure,
             error: Some("RPM build failed".to_string()),
+            build_report: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""error":"RPM build failed""#));
+        assert!(!json.contains("build_report"));
     }
 
     #[test]
@@ -265,9 +269,47 @@ mod tests {
             build_id: BuildId(42),
             status: BuildFinishedStatus::Success,
             error: None,
+            build_report: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(!json.contains("error"));
+        assert!(!json.contains("build_report"));
+    }
+
+    #[test]
+    fn worker_message_build_finished_with_report() {
+        let report = serde_json::json!({
+            "report_version": 1,
+            "version": "19.2.3",
+            "skipped": false,
+        });
+        let msg = WorkerMessage::BuildFinished {
+            build_id: BuildId(42),
+            status: BuildFinishedStatus::Success,
+            error: None,
+            build_report: Some(report),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("build_report"));
+        assert!(json.contains("report_version"));
+        let parsed: WorkerMessage = serde_json::from_str(&json).unwrap();
+        if let WorkerMessage::BuildFinished { build_report, .. } = parsed {
+            assert!(build_report.is_some());
+        } else {
+            panic!("expected BuildFinished");
+        }
+    }
+
+    #[test]
+    fn worker_message_build_finished_missing_report_defaults_none() {
+        // Older workers won't send the build_report field.
+        let json = r#"{"type":"build_finished","build_id":42,"status":"success"}"#;
+        let parsed: WorkerMessage = serde_json::from_str(json).unwrap();
+        if let WorkerMessage::BuildFinished { build_report, .. } = parsed {
+            assert!(build_report.is_none());
+        } else {
+            panic!("expected BuildFinished");
+        }
     }
 
     #[test]

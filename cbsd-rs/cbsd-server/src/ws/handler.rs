@@ -530,6 +530,7 @@ async fn handle_worker_message(
             build_id,
             status,
             ref error,
+            ref build_report,
         } => {
             let status_str = match status {
                 BuildFinishedStatus::Success => "success",
@@ -544,6 +545,9 @@ async fn handle_worker_message(
                 error.as_deref(),
             )
             .await;
+
+            // Build report will be stored in commit 4.
+            let _ = build_report;
 
             // Update last_seen on build_finished (proof-of-life).
             if let Err(e) = db::workers::update_last_seen(&state.pool, registered_worker_id).await {

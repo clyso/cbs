@@ -30,11 +30,16 @@ const BATCH_MAX_LINES: usize = 50;
 /// Maximum time to accumulate lines before flushing.
 const BATCH_FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 
+/// Maximum size (in bytes) of the serialized `build_report` JSON.
+/// Reports exceeding this limit are logged and discarded.
+const MAX_REPORT_SIZE: usize = 65_536;
+
 /// Parsed result from the wrapper's structured output line.
 #[derive(Debug)]
 struct WrapperResult {
     exit_code: i32,
     error: Option<String>,
+    build_report: Option<serde_json::Value>,
 }
 
 /// Errors during output streaming.
@@ -67,13 +72,14 @@ impl std::error::Error for OutputError {
 /// Stream output from the build subprocess stdout, batching lines for
 /// efficiency.
 ///
-/// Returns the final `(status, error)` extracted from the wrapper's structured
-/// result line if present, or `(Failure, None)` if no result line was found.
+/// Returns the final `(status, error, build_report)` extracted from the
+/// wrapper's structured result line if present, or `(Failure, None, None)` if
+/// no result line was found.
 pub async fn stream_output(
     stdout: ChildStdout,
     build_id: BuildId,
     sender: &mpsc::Sender<WorkerMessage>,
-) -> Result<(BuildFinishedStatus, Option<String>), OutputError> {
+) -> Result<(BuildFinishedStatus, Option<String>, Option<serde_json::Value>), OutputError> {
     let reader = BufReader::new(stdout);
     let mut lines_iter = reader.lines();
 
@@ -95,6 +101,30 @@ pub async fn stream_output(
                             || line.starts_with(r#"{"type": "result""#)
                         {
                             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&line) {
+                                let mut report = parsed
+                                    .get("build_report")
+                                    .cloned();
+
+                                // Enforce 64 KB size limit on build_report.
+                                if let Some(ref r) = report {
+                                    let size = serde_json::to_string(r)
+                                        .map(|s| s.len())
+                                        .unwrap_or(0);
+                                    if size > MAX_REPORT_SIZE {
+                                        tracing::warn!(
+                                            %build_id,
+                                            size,
+                                            "build report exceeds 64 KB, discarding"
+                                        );
+                                        report = None;
+                                    }
+                                }
+
+                                // Filter out JSON null — treat as absent.
+                                if report.as_ref().is_some_and(serde_json::Value::is_null) {
+                                    report = None;
+                                }
+
                                 wrapper_result = Some(WrapperResult {
                                     exit_code: parsed
                                         .get("exit_code")
@@ -104,6 +134,7 @@ pub async fn stream_output(
                                         .get("error")
                                         .and_then(|v| v.as_str())
                                         .map(String::from),
+                                    build_report: report,
                                 });
                             }
                             // Don't include the result line in output.
@@ -157,11 +188,11 @@ pub async fn stream_output(
     match wrapper_result {
         Some(wr) => {
             let status = super::executor::classify_exit_code(Some(wr.exit_code));
-            Ok((status, wr.error))
+            Ok((status, wr.error, wr.build_report))
         }
         None => {
             // No structured result line — treat as failure.
-            Ok((BuildFinishedStatus::Failure, None))
+            Ok((BuildFinishedStatus::Failure, None, None))
         }
     }
 }

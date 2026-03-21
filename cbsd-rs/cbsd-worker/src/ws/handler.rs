@@ -305,6 +305,7 @@ pub async fn run_connection(
                                         build_id,
                                         status: BuildFinishedStatus::Failure,
                                         error: Some(format!("spawn failed: {err}")),
+                                        build_report: None,
                                     },
                                 ).await?;
                                 continue;
@@ -326,11 +327,12 @@ pub async fn run_connection(
                         tokio::spawn(async move {
                             if let Some(stdout) = stdout {
                                 match output::stream_output(stdout, build_id, &bg_tx).await {
-                                    Ok((status, error)) => {
+                                    Ok((status, error, build_report)) => {
                                         let _ = bg_tx.send(WorkerMessage::BuildFinished {
                                             build_id,
                                             status,
                                             error,
+                                            build_report,
                                         }).await;
                                     }
                                     Err(err) => {
@@ -343,6 +345,7 @@ pub async fn run_connection(
                                             build_id,
                                             status: BuildFinishedStatus::Failure,
                                             error: Some(format!("output streaming error: {err}")),
+                                            build_report: None,
                                         }).await;
                                     }
                                 }
@@ -355,6 +358,7 @@ pub async fn run_connection(
                                     build_id,
                                     status: BuildFinishedStatus::Failure,
                                     error: Some("no stdout on subprocess".to_string()),
+                                    build_report: None,
                                 }).await;
                             }
                         });
@@ -397,6 +401,7 @@ pub async fn run_connection(
                                     build_id,
                                     status: BuildFinishedStatus::Revoked,
                                     error: None,
+                                    build_report: None,
                                 },
                             ).await?;
                         }
