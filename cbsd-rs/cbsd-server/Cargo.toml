@@ -29,6 +29,7 @@ sha2 = "0.10"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros"] }
 tar = "0.4"
 time = "0.3"
+tower-http = { version = "0.6", features = ["trace", "request-id", "sensitive-headers"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
