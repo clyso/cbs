@@ -7,15 +7,16 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
-# Stages (production):
-#   rust-builder       compile both binaries in release mode
+# Stages:
+#   worker-base        Python 3.13 + uv + cbscore + podman (shared by workers)
+#   rust-builder       compile both binaries in release mode (pinned toolchain)
 #   cbsd-rs-server     minimal server image (binary + ca-certs)
-#   cbsd-rs-worker     worker image (binary + Python + podman for cbscore)
+#   cbsd-rs-worker     production worker (binary + cbscore + podman)
+#   cbsd-rs-dev-server dev server (cargo-watch, source bind-mounted)
+#   cbsd-rs-dev-worker dev worker (cargo-watch + cbscore + podman)
 #
-# Stages (development — cargo-watch, source bind-mounted at /cbs/src):
-#   dev-base           Rust toolchain + cargo-watch + build deps
-#   cbsd-rs-dev-server dev server (cargo-watch on cbsd-server)
-#   cbsd-rs-dev-worker dev worker (cargo-watch on cbsd-worker + Python + podman)
+# Rust toolchain version is pinned via RUST_VERSION and shared between
+# the production builder and development images.
 #
 # Build requirements:
 #   Production builds require the sqlx offline query cache to be present
@@ -28,23 +29,82 @@
 #   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-dev-server .
 #   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-dev-worker .
 
+# Pinned Rust toolchain version — used by both rust-builder and dev images.
+ARG RUST_VERSION=1.93.0
+
 # ==========================================================================
-# Production build stage
+# Worker base: Python 3.13 + cbscore + podman
+#
+# Shared by both production and development worker images. Installing
+# cbscore here means both environments run the same Python dependencies
+# built against the same musl.
 # ==========================================================================
 
-FROM rust:1-alpine3.21 AS rust-builder
+FROM python:3.13-alpine3.21 AS worker-base
+
+# podman:          container runtime for cbscore build execution
+# ca-certificates: TLS peer verification
+# curl:            podman helper scripts + uv install
+# hadolint ignore=DL3018
+RUN apk add --no-cache podman ca-certificates curl
+
+# Install uv (Python package manager).
+# hadolint ignore=DL4006
+RUN curl -LsSf https://astral.sh/uv/install.sh | \
+  UV_INSTALL_DIR=/usr/bin \
+  UV_DISABLE_UPDATE=1 \
+  UV_NO_MODIFY_PATH=1 \
+  /bin/sh
+
+# Install cbscore and its dependencies.
+WORKDIR /cbs/cbscore-install
+COPY ./pyproject.toml ./
+COPY ./cbscore/ ./cbscore/
+
+# hadolint ignore=DL3059
+RUN ( find . \( -type d -name __pycache__ -o -type f -iname '*.pyc' \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+# hadolint ignore=DL3059
+RUN ( find . \( -type f -name uv.lock \) -exec rm -fr '{}' ';' || true ) 2>/dev/null
+
+RUN uv add --workspace --no-cache ./cbscore
+RUN uv sync --all-packages --no-cache --no-dev
+
+# Activate the venv so that `python3` resolves to the venv's
+# interpreter with cbscore importable.
+ENV VIRTUAL_ENV=/cbs/cbscore-install/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+
+# cbscore package root for the wrapper's bind-mount into build
+# containers. Points to the directory containing pyproject.toml,
+# not the inner package dir.
+ENV CBSCORE_PATH=/cbs/cbscore-install/cbscore
+
+WORKDIR /
+
+# ==========================================================================
+# Production build stage (Rust compiler only — no Python needed)
+# ==========================================================================
+
+FROM alpine:3.21 AS rust-builder
+
+ARG RUST_VERSION
 
 # musl-dev: C stdlib headers for crates that compile C code (sqlx/sqlite)
+# curl:     downloading rustup
 # hadolint ignore=DL3018
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev curl gcc
+
+# Install pinned Rust toolchain via rustup.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /build
 
-# Copy only the Rust workspace (build context is the repository root)
+# Copy only the Rust workspace (build context is the repository root).
 COPY cbsd-rs/ .
 
-# Use the committed sqlx offline query cache — no live DB needed at build time.
-# Ensure cbsd-rs/.sqlx/ is populated before building this image.
+# Use the committed sqlx offline query cache — no live DB needed.
 ENV SQLX_OFFLINE=true
 
 RUN cargo build --release --workspace
@@ -53,7 +113,7 @@ RUN cargo build --release --workspace
 # Production server image
 # ==========================================================================
 
-FROM python:3.13-alpine3.20 AS cbsd-rs-server
+FROM python:3.13-alpine3.21 AS cbsd-rs-server
 
 # ca-certificates: needed by reqwest (rustls-tls) for TLS peer verification
 # hadolint ignore=DL3018
@@ -65,7 +125,6 @@ RUN chmod +x /entrypoint.sh
 
 VOLUME ["/cbs/config"]
 
-# CBSD_CONFIG: path to server.yaml inside the container
 ENV CBSD_CONFIG=/cbs/config/server.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "server"]
@@ -74,19 +133,9 @@ ENTRYPOINT ["/entrypoint.sh", "server"]
 # Production worker image
 # ==========================================================================
 
-FROM python:3.13-alpine3.20 AS cbsd-rs-worker
-
-# podman:          container runtime for cbscore build execution
-# ca-certificates: TLS peer verification
-# curl:            required by some podman helper scripts
-# hadolint ignore=DL3018
-RUN apk add --no-cache podman ca-certificates curl
+FROM worker-base AS cbsd-rs-worker
 
 COPY --from=rust-builder /build/target/release/cbsd-worker /usr/local/bin/cbsd-worker
-
-# cbscore-wrapper.py: Python bridge between cbsd-worker and cbscore library.
-# When cbscore is fully integrated, cbscore and its dependencies must also
-# be installed here (e.g. via uv).
 COPY cbsd-rs/scripts/cbscore-wrapper.py /opt/cbsd-rs/cbscore-wrapper.py
 
 COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
@@ -98,40 +147,36 @@ VOLUME ["/var/lib/containers"]
 VOLUME ["/cbs/components"]
 VOLUME ["/cbs/ccache"]
 
-# CBSD_CONFIG: path to worker.yaml inside the container
 ENV CBSD_CONFIG=/cbs/config/worker.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "worker"]
 
 # ==========================================================================
-# Development base stage (shared by server-dev and worker-dev)
+# Development server image
 # ==========================================================================
 
-FROM rust:1-alpine3.21 AS dev-base
+FROM alpine:3.21 AS cbsd-rs-dev-server
 
-# Same build deps as rust-builder, plus cargo-watch for auto-reload.
+ARG RUST_VERSION
+
 # hadolint ignore=DL3018
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev curl gcc
 
-# Install cargo-watch (compiled from source, cached in this layer).
+# Same pinned Rust toolchain as the production builder.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile default
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 RUN cargo install cargo-watch
 
 COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# ==========================================================================
-# Development server image
-# ==========================================================================
-
-FROM dev-base AS cbsd-rs-dev-server
-
-# Source is bind-mounted at runtime — see podman-compose.cbsd-rs.yaml.
 WORKDIR /cbs/src
 
 VOLUME ["/cbs/config"]
 VOLUME ["/cbs/src"]
 
-# CBSD_CONFIG: path to server.yaml inside the container
 ENV CBSD_CONFIG=/cbs/config/server.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "server-dev"]
@@ -140,12 +185,24 @@ ENTRYPOINT ["/entrypoint.sh", "server-dev"]
 # Development worker image
 # ==========================================================================
 
-FROM dev-base AS cbsd-rs-dev-worker
+FROM worker-base AS cbsd-rs-dev-worker
 
-# python3: required to run cbscore-wrapper.py during development
-# podman:  container runtime for cbscore build execution
+ARG RUST_VERSION
+
+# musl-dev: C stdlib headers for Rust compilation
+# gcc:      linker for Rust
 # hadolint ignore=DL3018
-RUN apk add --no-cache python3 podman curl
+RUN apk add --no-cache musl-dev curl gcc
+
+# Same pinned Rust toolchain as the production builder.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    sh -s -- -y --default-toolchain "${RUST_VERSION}" --profile default
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-watch
+
+COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Source is bind-mounted at runtime — see podman-compose.cbsd-rs.yaml.
 WORKDIR /cbs/src
@@ -157,7 +214,6 @@ VOLUME ["/var/lib/containers"]
 VOLUME ["/cbs/components"]
 VOLUME ["/cbs/ccache"]
 
-# CBSD_CONFIG: path to worker.yaml inside the container
 ENV CBSD_CONFIG=/cbs/config/worker.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "worker-dev"]
