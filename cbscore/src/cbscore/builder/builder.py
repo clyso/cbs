@@ -20,6 +20,12 @@ from cbscore.builder.prepare import (
     prepare_builder,
     prepare_components,
 )
+from cbscore.builder.report import (
+    BuildArtifactReport,
+    ComponentReport,
+    ContainerImageReport,
+    ReleaseDescriptorReport,
+)
 from cbscore.builder.rpmbuild import ComponentBuild, build_rpms
 from cbscore.builder.signing import sign_rpms
 from cbscore.builder.upload import s3_upload_rpms
@@ -99,7 +105,7 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg)
 
-    async def run(self) -> None:
+    async def run(self) -> BuildArtifactReport | None:
         logger.info("preparing builder")
         try:
             await prepare_builder()
@@ -110,10 +116,22 @@ class Builder:
 
         container_img_uri = get_container_canonical_uri(self.desc)
         if skopeo_image_exists(container_img_uri, self.secrets):
-            logger.info(f"image '{container_img_uri}' already exists -- do not build!")
-            return
-        else:
-            logger.info(f"image '{container_img_uri}' not found in registry, build")
+            logger.info("image '%s' already exists -- do not build!", container_img_uri)
+            report = BuildArtifactReport(
+                version=self.desc.version,
+                skipped=True,
+                container_image=ContainerImageReport(
+                    name=f"{self.desc.image.registry}/{self.desc.image.name}",
+                    tag=self.desc.image.tag,
+                    pushed=False,
+                ),
+                release_descriptor=None,
+                components=[],
+            )
+            self._write_report(report)
+            return report
+
+        logger.info("image '%s' not found in registry, build", container_img_uri)
 
         release_desc: ReleaseDesc | None = None
         if self.storage_config and self.storage_config.s3:
@@ -160,7 +178,7 @@ class Builder:
                 raise BuilderError(msg)
 
             logger.warning("not uploading, build done")
-            return
+            return None
 
         try:
             ctr_builder = ContainerBuilder(self.desc, release_desc, self.components)
@@ -176,7 +194,65 @@ class Builder:
             logger.error(msg)
             raise BuilderError(msg) from e
 
-    pass
+        report = self._build_report(release_desc)
+        self._write_report(report)
+        return report
+
+    def _build_report(self, release_desc: ReleaseDesc) -> BuildArtifactReport:
+        """Construct a ``BuildArtifactReport`` from a completed build."""
+        # Container image info.
+        container_image = ContainerImageReport(
+            name=f"{self.desc.image.registry}/{self.desc.image.name}",
+            tag=self.desc.image.tag,
+            pushed=True,
+        )
+
+        # Release descriptor S3 location.
+        release_descriptor: ReleaseDescriptorReport | None = None
+        if self.storage_config and self.storage_config.s3:
+            s3_path = f"{self.storage_config.s3.releases.loc}/{self.desc.version}.json"
+            release_descriptor = ReleaseDescriptorReport(
+                s3_path=s3_path,
+                bucket=self.storage_config.s3.releases.bucket,
+            )
+
+        # Components from the release descriptor's build entry.
+        components: list[ComponentReport] = []
+        for build_entry in release_desc.builds.values():
+            for comp_name, comp_ver in build_entry.components.items():
+                rpms_s3_path: str | None = None
+                if comp_ver.artifacts:
+                    rpms_s3_path = comp_ver.artifacts.loc
+                components.append(
+                    ComponentReport(
+                        name=comp_name,
+                        version=comp_ver.version,
+                        sha1=comp_ver.sha1,
+                        repo_url=comp_ver.repo_url,
+                        rpms_s3_path=rpms_s3_path,
+                    )
+                )
+
+        return BuildArtifactReport(
+            version=self.desc.version,
+            skipped=False,
+            container_image=container_image,
+            release_descriptor=release_descriptor,
+            components=components,
+        )
+
+    def _write_report(self, report: BuildArtifactReport) -> None:
+        """Write the build artifact report to the scratch volume."""
+        report_path = self.scratch_path / "build-report.json"
+        try:
+            report_path.write_text(report.model_dump_json())
+            logger.info("build artifact report written to '%s'", report_path)
+        except OSError as e:
+            logger.warning(
+                "failed to write build artifact report to '%s': %s",
+                report_path,
+                e,
+            )
 
     async def _build_release(self) -> ReleaseDesc | None:
         """

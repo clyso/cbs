@@ -11,15 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU Affero General Public License for more details.
 
-"""CBS core build wrapper for cbsd-rs worker.
-
-Bridge between the Rust worker subprocess interface (stdin JSON, stdout
-log lines, structured result on last line) and cbscore's async runner.
-
-See: _docs/cbsd-rs/design/2026-03-18-cbscore-wrapper.md
-"""
-
-from __future__ import annotations
+"""Bridge between the cbsd-rs worker subprocess protocol and cbscore."""
 
 import asyncio
 import json
@@ -28,27 +20,71 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import NoReturn, cast
 
 # Redirect stderr to stdout BEFORE any imports that may log.
 # Prevents pipe deadlock (Rust side sets stderr to Stdio::null, but
 # os.dup2 ensures any pre-null writes also go to stdout) and captures
 # all cbscore diagnostic logging in the build log.
-os.dup2(1, 2)
+_ = os.dup2(1, 2)
 
 
-def _emit_result(exit_code: int, error: str | None) -> None:
+def _emit_result(
+    exit_code: int,
+    error: str | None,
+    build_report: dict[str, object] | None = None,
+) -> NoReturn:
     """Print the structured result line and exit."""
-    result = {"type": "result", "exit_code": exit_code, "error": error}
+    result: dict[str, object] = {
+        "type": "result",
+        "exit_code": exit_code,
+        "error": error,
+        "build_report": build_report,
+    }
     print(json.dumps(result, separators=(",", ":")), flush=True)
     sys.exit(exit_code)
 
 
 def _parse_el_version(os_version: str) -> int:
-    """Extract integer from 'elN' string (e.g., 'el9' → 9)."""
+    """Extract integer from 'elN' string (e.g., 'el9' -> 9)."""
     m = re.match(r"^el(\d+)$", os_version)
     if not m:
         _emit_result(2, f"[infra] invalid os_version: '{os_version}'")
-    return int(m.group(1))  # type: ignore[union-attr]
+    return int(m.group(1))
+
+
+type JsonDict = dict[str, object]
+
+
+def _as_dict(d: object) -> JsonDict:
+    """Narrow an object to a JSON dict, or exit."""
+    if not isinstance(d, dict):
+        _emit_result(2, f"[infra] expected dict, got {type(d).__name__}")
+    return cast(JsonDict, d)
+
+
+def _get_str(d: JsonDict, key: str) -> str:
+    """Extract a string value from a parsed JSON dict."""
+    val = d.get(key)
+    if val is None:
+        _emit_result(2, f"[infra] missing key: {key}")
+    return str(val)
+
+
+def _get_dict(d: JsonDict, key: str) -> JsonDict:
+    """Extract a nested dict from a parsed JSON dict."""
+    val = d.get(key)
+    if not isinstance(val, dict):
+        _emit_result(2, f"[infra] expected dict for key '{key}'")
+    return cast(JsonDict, val)
+
+
+def _get_list(d: JsonDict, key: str) -> list[object]:
+    """Extract a list from a parsed JSON dict."""
+    val = d.get(key)
+    if not isinstance(val, list):
+        _emit_result(2, f"[infra] expected list for key '{key}'")
+    return cast(list[object], val)
 
 
 def main() -> None:
@@ -58,21 +94,26 @@ def main() -> None:
 
     # --- Read stdin ---
     try:
-        input_data = json.load(sys.stdin)
-        descriptor = input_data["descriptor"]
-        component_path = input_data["component_path"]
-        trace_id = input_data.get("trace_id", trace_id)
-    except (json.JSONDecodeError, KeyError) as e:
+        raw = cast(object, json.load(sys.stdin))
+    except json.JSONDecodeError as e:
         _emit_result(2, f"[infra] failed to parse stdin: {e}")
 
-    version = descriptor.get("version", "unknown")
+    input_data = _as_dict(raw)
+    descriptor = _get_dict(input_data, "descriptor")
+    component_path = _get_str(input_data, "component_path")
+    trace_id_val = input_data.get("trace_id")
+    if isinstance(trace_id_val, str):
+        trace_id = trace_id_val
+
+    version = _get_str(descriptor, "version")
     print(
         f"cbscore-wrapper: starting build {version} trace_id={trace_id}",
         flush=True,
     )
 
     # --- Validate dst_image.tag ---
-    dst_tag = descriptor.get("dst_image", {}).get("tag", "")
+    dst_image = _get_dict(descriptor, "dst_image")
+    dst_tag = _get_str(dst_image, "tag")
     if not dst_tag:
         _emit_result(2, "[infra] descriptor dst_image.tag is empty")
 
@@ -84,10 +125,11 @@ def main() -> None:
 
     try:
         from cbscore.config import Config, ConfigError
-
-        config = Config.load(Path(config_path_str))
     except ImportError as e:
         _emit_result(2, f"[infra] cbscore not installed: {e}")
+
+    try:
+        config = Config.load(Path(config_path_str))
     except ConfigError as e:
         _emit_result(2, f"[infra] config error: {e}")
     except Exception as e:
@@ -100,53 +142,77 @@ def main() -> None:
     config.paths.components = [Path(component_path)]
 
     # --- Parse os_version ---
-    el_version = _parse_el_version(descriptor["build"]["os_version"])
+    build_section = _get_dict(descriptor, "build")
+    el_version = _parse_el_version(_get_str(build_section, "os_version"))
 
     # --- Create VersionDescriptor ---
+    components_list = _get_list(descriptor, "components")
+    signed_off = _get_dict(descriptor, "signed_off_by")
+
     try:
         from cbscore.versions.create import version_create_helper
-
-        version_desc = version_create_helper(
-            version=descriptor["version"],
-            version_type_name=descriptor["version_type"],
-            component_refs={
-                c["name"]: c["ref"]  # JSON key is "ref" (Rust serde rename)
-                for c in descriptor["components"]
-            },
-            components_paths=config.paths.components,
-            component_uri_overrides={
-                c["name"]: c["repo"]
-                for c in descriptor["components"]
-                if c.get("repo") is not None
-            },
-            distro=descriptor["build"]["distro"],
-            el_version=el_version,
-            registry=config.storage.registry.url,
-            image_name=descriptor["dst_image"]["name"],
-            image_tag=descriptor["dst_image"]["tag"],
-            user_name=descriptor["signed_off_by"]["user"],
-            user_email=descriptor["signed_off_by"]["email"],
-        )
     except ImportError as e:
         _emit_result(2, f"[infra] cbscore not installed: {e}")
+
+    version_desc = version_create_helper(
+        version=_get_str(descriptor, "version"),
+        version_type_name=_get_str(descriptor, "version_type"),
+        component_refs={
+            _get_str(_as_dict(c), "name"): _get_str(_as_dict(c), "ref")
+            for c in components_list
+        },
+        components_paths=config.paths.components,
+        component_uri_overrides={
+            _get_str(_as_dict(c), "name"): _get_str(_as_dict(c), "repo")
+            for c in components_list
+            if _as_dict(c).get("repo") is not None
+        },
+        distro=_get_str(build_section, "distro"),
+        el_version=el_version,
+        registry=config.storage.registry.url,
+        image_name=_get_str(dst_image, "name"),
+        image_tag=_get_str(dst_image, "tag"),
+        user_name=_get_str(signed_off, "user"),
+        user_email=_get_str(signed_off, "email"),
+    )
 
     # --- Write descriptor to temp file ---
     fd, temp_path_str = tempfile.mkstemp(prefix="cbsd-wrapper-", suffix=".json")
     temp_path = Path(temp_path_str)
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(version_desc.model_dump_json())
+            _ = f.write(version_desc.model_dump_json())
 
-        # --- Resolve cbscore_path ---
+        # --- Resolve cbscore_path (package root with pyproject.toml) ---
         cbscore_path_str = os.environ.get("CBSCORE_PATH")
         if cbscore_path_str:
             cbscore_path = Path(cbscore_path_str)
         else:
-            import cbscore
+            import cbscore as _cbscore_pkg
 
-            cbscore_path = Path(cbscore.__file__).parent
+            candidate = Path(_cbscore_pkg.__file__).parent
+            found: Path | None = None
+            for _ in range(6):
+                if (candidate / "pyproject.toml").exists():
+                    found = candidate
+                    break
+                candidate = candidate.parent
+            if found is None:
+                _emit_result(
+                    2,
+                    "[infra] cannot locate cbscore package root"
+                    + " (no pyproject.toml found in parent dirs)",
+                )
+            cbscore_path = found
 
-        entrypoint = cbscore_path / "_tools" / "cbscore-entrypoint.sh"
+        # --- Verify entrypoint (inner package dir, not cbscore_path) ---
+        # runner.py derives the entrypoint from Path(__file__).parent,
+        # independent of cbscore_path. Mirror that here.
+        import cbscore as _cbscore_ep
+
+        entrypoint = (
+            Path(_cbscore_ep.__file__).parent / "_tools" / "cbscore-entrypoint.sh"
+        )
         if not entrypoint.exists():
             _emit_result(
                 2,
@@ -158,8 +224,6 @@ def main() -> None:
         run_name = f"cbs-{trace_id.replace('-', '')[:12]}"
 
         async def log_cb(msg: str) -> None:
-            # runner() normalizes lines with trailing \n — use end=""
-            # to avoid double newlines.
             print(msg, end="", flush=True)
 
         from cbscore.errors import MalformedVersionError
@@ -167,7 +231,7 @@ def main() -> None:
         from cbscore.versions.errors import VersionError
 
         try:
-            asyncio.run(
+            report = asyncio.run(
                 runner(
                     desc_file_path=temp_path,
                     cbscore_path=cbscore_path,
@@ -178,7 +242,10 @@ def main() -> None:
                     log_out_cb=log_cb,
                 )
             )
-            _emit_result(0, None)
+            report_dict: dict[str, object] | None = (
+                report.model_dump(mode="json") if report else None
+            )
+            _emit_result(0, None, build_report=report_dict)
         except (RunnerError, VersionError, MalformedVersionError) as e:
             _emit_result(1, str(e))
         except Exception as e:

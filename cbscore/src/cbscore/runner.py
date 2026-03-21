@@ -24,6 +24,7 @@ from typing import override
 
 import aiofiles
 
+from cbscore.builder.report import BuildArtifactReport
 from cbscore.config import Config, ConfigError, LoggingConfig
 from cbscore.errors import CESError
 from cbscore.logger import logger as root_logger
@@ -118,7 +119,7 @@ async def runner(
     log_out_cb: AsyncRunCmdOutCallback | None = None,
     skip_build: bool = False,
     force: bool = False,
-) -> None:
+) -> BuildArtifactReport | None:
     our_actual_loc = Path(__file__).parent
 
     entrypoint_path = (
@@ -278,6 +279,8 @@ async def runner(
 
     ctr_name = run_name if run_name else gen_run_name()
 
+    report_host_path = config.paths.scratch / "build-report.json"
+
     try:
         async with _log_callback(log_file_path, log_out_cb) as log_cb:
             rc, _, stderr = await podman_run(
@@ -310,10 +313,29 @@ async def runner(
     finally:
         _cleanup_components_dir(components_path)
 
+    # Read the build artifact report BEFORE the rc check so that partial
+    # reports are captured when RPMs uploaded but container push failed.
+    report: BuildArtifactReport | None = None
+    try:
+        if report_host_path.exists():
+            raw = report_host_path.read_text()
+            report = BuildArtifactReport.model_validate_json(raw)
+            logger.info("read build artifact report from '%s'", report_host_path)
+    except Exception as e:
+        logger.warning(
+            "failed to read build artifact report from '%s': %s",
+            report_host_path,
+            e,
+        )
+    finally:
+        report_host_path.unlink(missing_ok=True)
+
     if rc != 0:
         msg = f"error running build (rc={rc}): {stderr}"
         logger.error(msg)
         raise RunnerError(msg)
+
+    return report
 
 
 async def stop(*, name: str | None = None, timeout: int = 1) -> None:
