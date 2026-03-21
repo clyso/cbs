@@ -198,8 +198,8 @@ compile independently.
 
 | # | Commit | Status |
 |---|--------|--------|
-| 1 | docs: design, plan, reviews | Pending |
-| 2 | cbscore: models + builder + runner + wrapper | Pending |
-| 3 | cbsd-rs: proto + worker report forwarding | Pending |
-| 4 | cbsd-rs/server: storage + API | Pending |
-| 5 | docs: implementation reviews | Pending |
+| 1 | docs: design, plan, reviews | Done |
+| 2 | cbscore: models + builder + runner + wrapper | Done |
+| 3 | cbsd-rs: proto + worker report forwarding | Done |
+| 4 | cbsd-rs/server: storage + API | Done |
+| 5 | docs: implementation reviews | Done |
