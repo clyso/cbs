@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n                id            AS \"id!\",\n                descriptor    AS \"descriptor!\",\n                descriptor_version AS \"descriptor_version!\",\n                user_email    AS \"user_email!\",\n                priority      AS \"priority!\",\n                state         AS \"state!\",\n                worker_id,\n                trace_id,\n                error,\n                submitted_at  AS \"submitted_at!\",\n                queued_at     AS \"queued_at!\",\n                started_at,\n                finished_at\n         FROM builds WHERE id = ?",
+  "query": "SELECT\n                id            AS \"id!\",\n                descriptor    AS \"descriptor!\",\n                descriptor_version AS \"descriptor_version!\",\n                user_email    AS \"user_email!\",\n                priority      AS \"priority!\",\n                state         AS \"state!\",\n                worker_id,\n                trace_id,\n                error,\n                submitted_at  AS \"submitted_at!\",\n                queued_at     AS \"queued_at!\",\n                started_at,\n                finished_at,\n                build_report\n         FROM builds WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -67,6 +67,11 @@
         "name": "finished_at",
         "ordinal": 12,
         "type_info": "Integer"
+      },
+      {
+        "name": "build_report",
+        "ordinal": 13,
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -85,8 +90,9 @@
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "7dd22d08b79bb25ed944dcbd8d9680f018f55da5dc322d98e114c07d17c6db6b"
+  "hash": "97c40d84f97515d61a3d622db8329cd9e4e5fc4b1a63989506ecd8b328c82a75"
 }

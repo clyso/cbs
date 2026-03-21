@@ -223,7 +223,7 @@ async fn list_builds(
     State(state): State<AppState>,
     user: AuthUser,
     Query(params): Query<ListBuildsQuery>,
-) -> Result<Json<Vec<db::builds::BuildRecord>>, (StatusCode, Json<ErrorDetail>)> {
+) -> Result<Json<Vec<db::builds::BuildListRecord>>, (StatusCode, Json<ErrorDetail>)> {
     let can_list_any = user.has_cap("builds:list:any");
     let can_list_own = user.has_cap("builds:list:own");
 

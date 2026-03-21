@@ -13,11 +13,38 @@
 //! Database operations for build records and build log metadata.
 
 use serde::Serialize;
+use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
 /// A build record as stored in the database.
+///
+/// The `build_report` field contains the structured artifact report produced
+/// by cbscore after a successful build. It is stored as TEXT in SQLite but
+/// deserialized to `serde_json::Value` so the API returns a nested JSON object.
+/// The list endpoint excludes this field for performance.
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildRecord {
+    pub id: i64,
+    pub descriptor: String,
+    pub descriptor_version: i64,
+    pub user_email: String,
+    pub priority: String,
+    pub state: String,
+    pub worker_id: Option<String>,
+    pub trace_id: Option<String>,
+    pub error: Option<String>,
+    pub submitted_at: i64,
+    pub queued_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_report: Option<Value>,
+}
+
+/// A build record for list responses. Identical to `BuildRecord` but
+/// without the potentially large `build_report` field.
+#[derive(Debug, Clone, Serialize)]
+pub struct BuildListRecord {
     pub id: i64,
     pub descriptor: String,
     pub descriptor_version: i64,
@@ -73,37 +100,48 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
                 submitted_at  AS "submitted_at!",
                 queued_at     AS "queued_at!",
                 started_at,
-                finished_at
+                finished_at,
+                build_report
          FROM builds WHERE id = ?"#,
         id,
     )
     .fetch_optional(pool)
     .await?;
 
-    Ok(row.map(|r| BuildRecord {
-        id: r.id,
-        descriptor: r.descriptor,
-        descriptor_version: r.descriptor_version,
-        user_email: r.user_email,
-        priority: r.priority,
-        state: r.state,
-        worker_id: r.worker_id,
-        trace_id: r.trace_id,
-        error: r.error,
-        submitted_at: r.submitted_at,
-        queued_at: r.queued_at,
-        started_at: r.started_at,
-        finished_at: r.finished_at,
+    Ok(row.map(|r| {
+        let build_report = r
+            .build_report
+            .and_then(|s| serde_json::from_str(&s).ok());
+        BuildRecord {
+            id: r.id,
+            descriptor: r.descriptor,
+            descriptor_version: r.descriptor_version,
+            user_email: r.user_email,
+            priority: r.priority,
+            state: r.state,
+            worker_id: r.worker_id,
+            trace_id: r.trace_id,
+            error: r.error,
+            submitted_at: r.submitted_at,
+            queued_at: r.queued_at,
+            started_at: r.started_at,
+            finished_at: r.finished_at,
+            build_report,
+        }
     }))
 }
 
 /// List builds with optional filters on user email and state.
+///
+/// The list query intentionally omits `build_report` to avoid expensive
+/// responses when hundreds of builds each carry KB of report JSON.
 pub async fn list_builds(
     pool: &SqlitePool,
     user_filter: Option<&str>,
     state_filter: Option<&str>,
-) -> Result<Vec<BuildRecord>, sqlx::Error> {
+) -> Result<Vec<BuildListRecord>, sqlx::Error> {
     // Build the query dynamically based on filters.
+    // NOTE: build_report is intentionally excluded from the list query.
     let base = "SELECT id, descriptor, descriptor_version, user_email, priority, state,
                        worker_id, trace_id, error, submitted_at, queued_at, started_at, finished_at
                 FROM builds";
@@ -132,7 +170,7 @@ pub async fn list_builds(
     }
 
     let rows = query.fetch_all(pool).await?;
-    Ok(rows.into_iter().map(row_to_build_record).collect())
+    Ok(rows.into_iter().map(row_to_build_list_record).collect())
 }
 
 /// Update a build's state. Optionally sets the error message.
@@ -209,19 +247,21 @@ pub async fn set_build_started(pool: &SqlitePool, id: i64) -> Result<bool, sqlx:
 }
 
 /// Mark a build as finished (success, failure, or revoked) and set finished_at.
-/// Optionally records an error message.
+/// Optionally records an error message and a build artifact report.
 /// Returns `true` if a row was updated.
 pub async fn set_build_finished(
     pool: &SqlitePool,
     id: i64,
     state: &str,
     error: Option<&str>,
+    build_report: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
     let result = sqlx::query!(
-        "UPDATE builds SET state = ?, finished_at = unixepoch(), error = COALESCE(?, error)
+        "UPDATE builds SET state = ?, finished_at = unixepoch(), error = COALESCE(?, error), build_report = ?
          WHERE id = ?",
         state,
         error,
+        build_report,
         id,
     )
     .execute(pool)
@@ -252,11 +292,12 @@ pub async fn set_build_log_finished(pool: &SqlitePool, build_id: i64) -> Result<
     Ok(())
 }
 
-/// Map a sqlx Row to a BuildRecord.
+/// Map a sqlx Row to a `BuildListRecord`.
 ///
 /// Used by `list_builds` which constructs dynamic SQL and returns untyped rows.
-fn row_to_build_record(r: sqlx::sqlite::SqliteRow) -> BuildRecord {
-    BuildRecord {
+/// Does NOT read `build_report` — the list query omits it for performance.
+fn row_to_build_list_record(r: sqlx::sqlite::SqliteRow) -> BuildListRecord {
+    BuildListRecord {
         id: r.get("id"),
         descriptor: r.get("descriptor"),
         descriptor_version: r.get("descriptor_version"),

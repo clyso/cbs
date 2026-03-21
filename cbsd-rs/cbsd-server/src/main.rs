@@ -444,6 +444,7 @@ async fn run_drain_shutdown(state: &app::AppState) {
             *build_id,
             "failure",
             Some("server decommissioned"),
+            None,
         )
         .await
         {

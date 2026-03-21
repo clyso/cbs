@@ -331,15 +331,19 @@ pub async fn handle_build_started(state: &AppState, build_id: i64) {
 /// Updates DB state (success/failure/revoked), removes from `queue.active`,
 /// drops the watch sender from `log_watchers`, and attempts to dispatch the
 /// next queued build if the worker is now idle.
+///
+/// `build_report` is the serialized JSON report produced by cbscore. Only
+/// the success path provides a report; all other paths pass `None`.
 pub async fn handle_build_finished(
     state: &AppState,
     connection_id: &str,
     build_id: i64,
     status: &str,
     error: Option<&str>,
+    build_report: Option<&str>,
 ) {
     // Update DB.
-    match db::builds::set_build_finished(&state.pool, build_id, status, error).await {
+    match db::builds::set_build_finished(&state.pool, build_id, status, error, build_report).await {
         Ok(true) => {
             tracing::info!(build_id = build_id, status = status, "build finished");
         }
@@ -404,7 +408,8 @@ pub async fn handle_build_rejected(
         );
 
         if let Err(e) =
-            db::builds::set_build_finished(&state.pool, build_id, "failure", Some(reason)).await
+            db::builds::set_build_finished(&state.pool, build_id, "failure", Some(reason), None)
+                .await
         {
             tracing::error!(
                 build_id = build_id,
@@ -561,9 +566,14 @@ pub async fn handle_revoke_timeout(state: &AppState, build_id: i64) {
     );
 
     // Mark finished as revoked.
-    if let Err(e) =
-        db::builds::set_build_finished(&state.pool, build_id, "revoked", Some("revoke ack timeout"))
-            .await
+    if let Err(e) = db::builds::set_build_finished(
+        &state.pool,
+        build_id,
+        "revoked",
+        Some("revoke ack timeout"),
+        None,
+    )
+    .await
     {
         tracing::error!(build_id = build_id, "failed to mark build revoked: {e}");
     }

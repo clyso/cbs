@@ -537,17 +537,25 @@ async fn handle_worker_message(
                 BuildFinishedStatus::Failure => "failure",
                 BuildFinishedStatus::Revoked => "revoked",
             };
+
+            // Only pass the report for success builds.
+            let report_json = if status == BuildFinishedStatus::Success {
+                build_report
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok())
+            } else {
+                None
+            };
+
             dispatch::handle_build_finished(
                 state,
                 connection_id,
                 build_id.0,
                 status_str,
                 error.as_deref(),
+                report_json.as_deref(),
             )
             .await;
-
-            // Build report will be stored in commit 4.
-            let _ = build_report;
 
             // Update last_seen on build_finished (proof-of-life).
             if let Err(e) = db::workers::update_last_seen(&state.pool, registered_worker_id).await {
@@ -793,6 +801,7 @@ pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
                     build_id,
                     "revoked",
                     Some("worker dead during revoke"),
+                    None,
                 )
                 .await
                 {
@@ -823,7 +832,8 @@ pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
 /// Mark a build as FAILURE, clean up active map and log watchers.
 async fn fail_build(state: &AppState, build_id: i64, reason: &str) {
     if let Err(e) =
-        crate::db::builds::set_build_finished(&state.pool, build_id, "failure", Some(reason)).await
+        crate::db::builds::set_build_finished(&state.pool, build_id, "failure", Some(reason), None)
+            .await
     {
         tracing::error!(build_id = build_id, "failed to mark build failed: {e}");
     }
