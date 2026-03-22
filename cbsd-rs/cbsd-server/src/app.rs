@@ -168,5 +168,5 @@ pub fn build_router(
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok"}))
+    Json(serde_json::json!({"status": "ok", "version": crate::VERSION}))
 }

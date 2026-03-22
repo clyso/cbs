@@ -26,10 +26,17 @@ use crate::config::WorkerConfig;
 use crate::signal::{ShutdownState, install_signal_handler};
 use crate::ws::connection::reconnect_loop;
 
+/// Extended version: cargo version + git SHA from production build.
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "+",
+    env!("CBS_BUILD_META"),
+);
+
 /// CBS build worker — connects to the CBS server via WebSocket and executes
 /// build jobs.
 #[derive(Parser)]
-#[command(name = "cbsd-worker", version, about)]
+#[command(name = "cbsd-worker", version = VERSION, about)]
 struct Cli {
     /// Path to the worker configuration YAML file.
     #[arg(short, long, default_value = "worker.yaml")]

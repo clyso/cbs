@@ -33,9 +33,16 @@ use tower_sessions_sqlx_store::SqliteStore;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
+/// Extended version: cargo version + git SHA from production build.
+pub const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "+",
+    env!("CBS_BUILD_META"),
+);
+
 /// CBS build service daemon (Rust).
 #[derive(Parser)]
-#[command(name = "cbsd-server", about = "CBS build service daemon")]
+#[command(name = "cbsd-server", version = VERSION, about = "CBS build service daemon")]
 struct Cli {
     /// Path to server config YAML file.
     #[arg(short, long)]
