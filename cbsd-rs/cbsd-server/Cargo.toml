@@ -10,8 +10,8 @@ description = "CBS build service daemon — server binary"
 cbsd-proto = { path = "../cbsd-proto" }
 argon2 = { version = "0.5", features = ["std"] }
 base64 = "0.22"
-axum = { version = "0.7", features = ["ws"] }
-axum-extra = { version = "0.9", features = ["typed-header"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.12", features = ["typed-header"] }
 chrono.workspace = true
 clap = { version = "4", features = ["derive"] }
 croner = "3"
@@ -34,9 +34,9 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
 async-stream = "0.3"
-tower_governor = "0.4"
-tower-sessions = { version = "0.13", features = ["signed"] }
-tower-sessions-sqlx-store = { version = "0.14", features = ["sqlite"] }
+tower_governor = "0.8"
+tower-sessions = { version = "0.14", features = ["signed"] }
+tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"

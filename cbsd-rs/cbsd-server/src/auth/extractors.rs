@@ -167,7 +167,6 @@ async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, Au
     })
 }
 
-#[axum::async_trait]
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AuthError;
 
