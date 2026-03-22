@@ -28,6 +28,7 @@ pub enum WorkerState {
         arch: Arch,
         cores_total: u32,
         ram_total_mb: u64,
+        version: Option<String>,
     },
     /// Worker disconnected; within the grace period for reconnection.
     Disconnected {

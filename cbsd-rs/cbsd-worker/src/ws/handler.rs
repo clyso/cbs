@@ -56,6 +56,7 @@ pub async fn run_connection(
         arch: config.arch,
         cores_total: 0,  // TODO: populate from sysinfo
         ram_total_mb: 0, // TODO: populate from sysinfo
+        version: Some(crate::VERSION.to_string()),
     };
     let hello_json = serde_json::to_string(&hello).map_err(HandlerError::Serialize)?;
     sender

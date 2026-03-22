@@ -72,6 +72,8 @@ struct WorkerInfo {
     name: String,
     arch: String,
     status: String,
+    #[serde(default)]
+    version: Option<String>,
     last_seen: Option<i64>,
     current_build_id: Option<i64>,
 }
@@ -179,10 +181,11 @@ async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<
     }
 
     println!(
-        "  {name:<18} {arch:<10} {status:<14} {build:<7} LAST SEEN",
+        "  {name:<18} {arch:<10} {status:<14} {ver:<20} {build:<7} LAST SEEN",
         name = "NAME",
         arch = "ARCH",
         status = "STATUS",
+        ver = "VERSION",
         build = "BUILD",
     );
 
@@ -197,9 +200,14 @@ async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<
             .map(format_timestamp)
             .unwrap_or_else(|| "-".to_string());
 
+        let ver = w
+            .version
+            .as_deref()
+            .unwrap_or("-");
+
         println!(
-            "  {:<18} {:<10} {:<14} {:<7} {}",
-            w.name, w.arch, w.status, build, last_seen,
+            "  {:<18} {:<10} {:<14} {:<20} {:<7} {}",
+            w.name, w.arch, w.status, ver, build, last_seen,
         );
     }
 

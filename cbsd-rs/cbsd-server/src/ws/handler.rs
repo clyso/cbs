@@ -120,12 +120,13 @@ async fn handle_connection(
     };
 
     // Step 2: Validate protocol version and arch.
-    let (arch, cores_total, ram_total_mb) = match hello {
+    let (arch, cores_total, ram_total_mb, worker_version) = match hello {
         WorkerMessage::Hello {
             protocol_version,
             arch,
             cores_total,
             ram_total_mb,
+            version,
         } => {
             if protocol_version != 2 {
                 let reason =
@@ -200,7 +201,7 @@ async fn handle_connection(
                 return;
             }
 
-            (arch, cores_total, ram_total_mb)
+            (arch, cores_total, ram_total_mb, version)
         }
         other => {
             let reason = format!("expected hello, got {:?}", message_type_name(&other));
@@ -231,8 +232,28 @@ async fn handle_connection(
         arch = %arch,
         cores = cores_total,
         ram_mb = ram_total_mb,
+        worker_version = worker_version.as_deref().unwrap_or("unknown"),
         "worker connected"
     );
+
+    // Check version skew between worker and server.
+    match worker_version {
+        Some(ref wv) if wv != crate::VERSION => {
+            tracing::warn!(
+                worker_name = %worker_name,
+                worker_version = %wv,
+                server_version = crate::VERSION,
+                "worker/server version mismatch"
+            );
+        }
+        None => {
+            tracing::debug!(
+                worker_name = %worker_name,
+                "worker did not report version"
+            );
+        }
+        _ => {}
+    }
 
     // Step 2b: Update last_seen.
     if let Err(e) = db::workers::update_last_seen(&state.pool, &registered_worker_id).await {
@@ -279,6 +300,7 @@ async fn handle_connection(
                 arch,
                 cores_total,
                 ram_total_mb,
+                version: worker_version,
             },
         );
 

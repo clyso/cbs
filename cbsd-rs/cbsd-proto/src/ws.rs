@@ -69,6 +69,9 @@ pub enum WorkerMessage {
         arch: crate::arch::Arch,
         cores_total: u32,
         ram_total_mb: u64,
+        /// Worker binary version (e.g., "0.1.0+g3a7f2b1").
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
 
     /// Sent on reconnect ONLY if the worker is currently executing a build.
@@ -205,14 +208,16 @@ mod tests {
             arch: Arch::Aarch64,
             cores_total: 16,
             ram_total_mb: 65536,
+            version: Some("0.1.0+gtest123".to_string()),
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""type":"hello""#));
         assert!(json.contains(r#""arch":"aarch64""#));
         assert!(!json.contains("worker_id"));
         let parsed: WorkerMessage = serde_json::from_str(&json).unwrap();
-        if let WorkerMessage::Hello { arch, .. } = parsed {
+        if let WorkerMessage::Hello { arch, version, .. } = parsed {
             assert_eq!(arch, Arch::Aarch64);
+            assert_eq!(version.as_deref(), Some("0.1.0+gtest123"));
         } else {
             panic!("expected Hello");
         }
@@ -220,10 +225,12 @@ mod tests {
 
     #[test]
     fn worker_message_hello_arm64_alias() {
+        // No version field in JSON — tests backwards compat via serde(default).
         let json = r#"{"type":"hello","protocol_version":2,"arch":"arm64","cores_total":8,"ram_total_mb":32768}"#;
         let parsed: WorkerMessage = serde_json::from_str(json).unwrap();
-        if let WorkerMessage::Hello { arch, .. } = parsed {
+        if let WorkerMessage::Hello { arch, version, .. } = parsed {
             assert_eq!(arch, Arch::Aarch64);
+            assert_eq!(version, None);
         } else {
             panic!("expected Hello");
         }

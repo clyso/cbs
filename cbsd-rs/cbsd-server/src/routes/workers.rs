@@ -39,6 +39,7 @@ struct WorkerInfoResponse {
     name: String,
     arch: Arch,
     status: String,
+    version: Option<String>,
     last_seen: Option<i64>,
     created_by: String,
     created_at: i64,
@@ -68,7 +69,7 @@ async fn list_workers(
     })?;
 
     // 2. Snapshot in-memory status: registered_worker_id -> (status, build_id).
-    let status_map: HashMap<String, (String, Option<i64>)> = {
+    let status_map: HashMap<String, (String, Option<i64>, Option<String>)> = {
         let queue = state.queue.lock().await;
         let mut map = HashMap::new();
 
@@ -83,20 +84,24 @@ async fn list_workers(
                 .find(|ab| ab.connection_id == *cid)
                 .map(|ab| ab.build_id);
 
-            let status = match ws {
-                WorkerState::Connected { .. } => {
-                    if active_build_id.is_some() {
+            let (status, version) = match ws {
+                WorkerState::Connected { version, .. } => {
+                    let s = if active_build_id.is_some() {
                         "building"
                     } else {
                         "connected"
-                    }
+                    };
+                    (s, version.clone())
                 }
-                WorkerState::Stopping { .. } => "stopping",
-                WorkerState::Disconnected { .. } => "disconnected",
-                WorkerState::Dead => "dead",
+                WorkerState::Stopping { .. } => ("stopping", None),
+                WorkerState::Disconnected { .. } => ("disconnected", None),
+                WorkerState::Dead => ("dead", None),
             };
 
-            map.insert(reg_id.to_string(), (status.to_string(), active_build_id));
+            map.insert(
+                reg_id.to_string(),
+                (status.to_string(), active_build_id, version),
+            );
         }
 
         map
@@ -106,10 +111,10 @@ async fn list_workers(
     let result: Vec<WorkerInfoResponse> = db_workers
         .into_iter()
         .map(|row| {
-            let (status, current_build_id) = status_map
+            let (status, current_build_id, version) = status_map
                 .get(&row.id)
                 .cloned()
-                .unwrap_or_else(|| ("offline".to_string(), None));
+                .unwrap_or_else(|| ("offline".to_string(), None, None));
 
             let arch = match row.arch.as_str() {
                 "x86_64" => Arch::X86_64,
@@ -129,6 +134,7 @@ async fn list_workers(
                 name: row.name,
                 arch,
                 status,
+                version,
                 last_seen: row.last_seen,
                 created_by: row.created_by,
                 created_at: row.created_at,
