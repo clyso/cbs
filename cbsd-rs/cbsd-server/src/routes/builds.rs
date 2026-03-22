@@ -424,6 +424,11 @@ async fn logs_tail(
     let contents = match tokio::fs::read_to_string(&log_path).await {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(
+                build_id = id,
+                log_path = %log_path.display(),
+                "build log file not found"
+            );
             return Err(auth_error(StatusCode::NOT_FOUND, "no logs yet"));
         }
         Err(e) => {
@@ -469,6 +474,7 @@ async fn logs_full(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorDetail>)> {
+    tracing::debug!("logs_full: received request for build {id} logs");
     // Check build exists.
     db::builds::get_build(&state.pool, id)
         .await
@@ -482,6 +488,11 @@ async fn logs_full(
     let log_path = state.config.log_dir.join(format!("builds/{id}.log"));
     let file = tokio::fs::File::open(&log_path).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
+            tracing::warn!(
+                build_id = id,
+                log_path = %log_path.display(),
+                "build log file not found"
+            );
             auth_error(StatusCode::NOT_FOUND, "no logs yet")
         } else {
             tracing::error!("failed to open log file for build {id}: {e}");

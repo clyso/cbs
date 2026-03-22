@@ -62,7 +62,13 @@ pub async fn sse_follow(
             format!("database error: {e}"),
         )
     })?;
-    let log_row = log_row.ok_or((StatusCode::NOT_FOUND, "no logs yet".to_string()))?;
+    let log_row = log_row.ok_or_else(|| {
+        tracing::warn!(
+            build_id,
+            "no build_logs row for existing build"
+        );
+        (StatusCode::NOT_FOUND, "no logs yet".to_string())
+    })?;
 
     // Determine log file path.
     let log_file_path = state.config.log_dir.join(&log_row.log_path);
