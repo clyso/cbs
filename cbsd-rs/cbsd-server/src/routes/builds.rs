@@ -187,6 +187,13 @@ pub async fn insert_build_internal(
     .await
     .map_err(|e| format!("failed to insert build: {e}"))?;
 
+    // Insert build_logs row at submission time so the SSE follow
+    // endpoint can find it immediately (not only after dispatch).
+    let log_path = format!("builds/{build_id}.log");
+    db::builds::insert_build_log_row(&state.pool, build_id, &log_path)
+        .await
+        .map_err(|e| format!("failed to insert build_logs row: {e}"))?;
+
     let queued_at = chrono::Utc::now().timestamp();
     let queued_build = QueuedBuild {
         build_id: BuildId(build_id),

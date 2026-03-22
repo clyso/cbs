@@ -194,7 +194,8 @@ pub async fn update_build_state(
     Ok(result.rows_affected() > 0)
 }
 
-/// Insert a build log metadata row (for dispatch in Phase 4).
+/// Insert a build log metadata row. Called at submission time so the
+/// SSE follow endpoint can find the row before dispatch.
 pub async fn insert_build_log_row(
     pool: &SqlitePool,
     build_id: i64,

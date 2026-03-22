@@ -110,11 +110,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
         .await
         .map_err(DispatchError::Database)?;
 
-        // Insert build log row.
-        let log_path = format!("builds/{}.log", build.build_id.0);
-        db::builds::insert_build_log_row(&state.pool, build.build_id.0, &log_path)
-            .await
-            .map_err(DispatchError::Database)?;
+        // build_logs row already inserted at submission time.
 
         // Step 7: Create watch channel for log notifications.
         let (watch_tx, _watch_rx) = tokio::sync::watch::channel(());

@@ -47,6 +47,14 @@ pub async fn run_startup_recovery(
         )
         .execute(pool)
         .await?;
+
+        // Finalize the build log so SSE streams close cleanly.
+        sqlx::query!(
+            "UPDATE build_logs SET finished = 1, updated_at = unixepoch() WHERE build_id = ?",
+            id,
+        )
+        .execute(pool)
+        .await?;
     }
 
     // 2. Finalize revoking builds.
