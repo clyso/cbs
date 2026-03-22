@@ -15,6 +15,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import re
 import sys
@@ -27,6 +28,15 @@ from typing import NoReturn, cast
 # os.dup2 ensures any pre-null writes also go to stdout) and captures
 # all cbscore diagnostic logging in the build log.
 _ = os.dup2(1, 2)
+
+# Set up logging so cbscore output appears in the build log.
+# cbscore emits most of its useful output at DEBUG level.
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(levelname)s:%(name)s:%(message)s",
+    stream=sys.stdout,
+)
+logging.getLogger("cbscore").setLevel(logging.DEBUG)
 
 
 def _emit_result(
