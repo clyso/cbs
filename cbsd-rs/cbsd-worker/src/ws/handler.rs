@@ -328,6 +328,21 @@ pub async fn run_connection(
                             if let Some(stdout) = stdout {
                                 match output::stream_output(stdout, build_id, &bg_tx).await {
                                     Ok((status, error, build_report)) => {
+                                        if let Some(ref err_msg) = error {
+                                            tracing::warn!(
+                                                %build_id,
+                                                error = %err_msg,
+                                                ?status,
+                                                "build wrapper reported error"
+                                            );
+                                        } else if status == BuildFinishedStatus::Success {
+                                            let has_report = build_report.is_some();
+                                            tracing::info!(
+                                                %build_id,
+                                                has_report,
+                                                "build completed successfully"
+                                            );
+                                        }
                                         let _ = bg_tx.send(WorkerMessage::BuildFinished {
                                             build_id,
                                             status,
@@ -428,9 +443,11 @@ pub async fn run_connection(
                     if let Some(mut ab) = active_build.take() {
                         // Wait for the subprocess to fully exit.
                         let exit_code = ab.executor.wait().await;
+                        let status = executor::classify_exit_code(exit_code);
                         tracing::info!(
                             build_id = %ab.build_id,
                             ?exit_code,
+                            ?status,
                             "build subprocess exited"
                         );
                         component::cleanup(&ab.component_dir);

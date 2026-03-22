@@ -191,7 +191,13 @@ pub async fn stream_output(
             Ok((status, wr.error, wr.build_report))
         }
         None => {
-            // No structured result line — treat as failure.
+            // No structured result line — the wrapper crashed or was
+            // killed before emitting its protocol terminator.
+            tracing::warn!(
+                %build_id,
+                "no result line from wrapper — subprocess may have \
+                 crashed or been OOM-killed"
+            );
             Ok((BuildFinishedStatus::Failure, None, None))
         }
     }
