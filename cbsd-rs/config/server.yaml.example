@@ -42,9 +42,9 @@ secrets:
   # Generate with: openssl rand -hex 32
   token-secret-key: "REPLACE_WITH_64_HEX_CHARS"
 
-  # Maximum allowed token TTL in seconds. Omit (or set to null) to allow
-  # tokens with unlimited lifetimes.
-  # max-token-ttl-seconds: 86400
+  # Token lifetime in seconds. Also controls the PASETO-level expiry claim.
+  # Default: 15552000 (6 months / 180 days).
+  # max-token-ttl-seconds: 15552000
 
 # --------------------------------------------------------------------------
 # Google OAuth 2.0

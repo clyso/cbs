@@ -178,6 +178,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
             .map_err(|_| {
+                tracing::warn!("auth reject: missing or invalid Authorization header");
                 auth_error(
                     StatusCode::UNAUTHORIZED,
                     "missing or invalid Authorization header",
@@ -185,6 +186,11 @@ impl FromRequestParts<AppState> for AuthUser {
             })?;
 
         let token_str = bearer.token();
+        tracing::warn!(
+            token_prefix = &token_str[..token_str.len().min(20)],
+            token_len = token_str.len(),
+            "auth: processing token"
+        );
 
         // API key path
         if token_str.starts_with("cbsk_") {
@@ -192,6 +198,7 @@ impl FromRequestParts<AppState> for AuthUser {
                 crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token_str)
                     .await
                     .map_err(|e| {
+                        tracing::warn!("auth reject: API key error: {e}");
                         auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
                     })?;
 
@@ -200,12 +207,27 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // PASETO token path
         let payload = paseto::token_decode(token_str, &state.config.secrets.token_secret_key)
-            .map_err(|e| auth_error(StatusCode::UNAUTHORIZED, &format!("invalid token: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    token_prefix = &token_str[..token_str.len().min(20)],
+                    "auth reject: PASETO decode failed"
+                );
+                auth_error(StatusCode::UNAUTHORIZED, &format!("invalid token: {e}"))
+            })?;
 
         let hash = paseto::token_hash(token_str);
+        tracing::warn!(
+            user = %payload.user,
+            expires = ?payload.expires,
+            hash_prefix = &hash[..16],
+            "auth: PASETO decoded successfully"
+        );
+
         let revoked = db::tokens::is_token_revoked(&state.pool, &hash)
             .await
-            .map_err(|_| {
+            .map_err(|e| {
+                tracing::warn!("auth reject: DB error checking revocation: {e}");
                 auth_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "failed to check token status",
@@ -213,9 +235,15 @@ impl FromRequestParts<AppState> for AuthUser {
             })?;
 
         if revoked {
+            tracing::warn!(
+                user = %payload.user,
+                hash_prefix = &hash[..16],
+                "auth reject: token revoked or unknown"
+            );
             return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
         }
 
+        tracing::warn!(user = %payload.user, "auth: token valid, loading user");
         load_authed_user(&state.pool, &payload.user).await
     }
 }

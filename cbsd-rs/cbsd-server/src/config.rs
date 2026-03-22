@@ -74,8 +74,9 @@ pub struct SecretsConfig {
     /// 64-byte hex key for PASETO tokens and session key derivation (HKDF).
     pub token_secret_key: String,
 
-    /// Maximum token TTL in seconds. `None` = infinite allowed.
-    pub max_token_ttl_seconds: Option<u64>,
+    /// Maximum token TTL in seconds. Default: 6 months (15552000).
+    #[serde(default = "default_max_token_ttl")]
+    pub max_token_ttl_seconds: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +221,11 @@ fn default_components_dir() -> PathBuf {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+/// 6 months in seconds (180 days).
+fn default_max_token_ttl() -> u64 {
+    15_552_000
 }
 
 // -- validation --

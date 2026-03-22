@@ -289,18 +289,13 @@ async fn callback(
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to create user")
         })?;
 
-    // Token lifetime is controlled solely by max-token-ttl-seconds.
-    // When absent (default), tokens never expire.
-    let expires_at: Option<i64> = state
-        .config
-        .secrets
-        .max_token_ttl_seconds
-        .map(|max| chrono::Utc::now().timestamp() + max as i64);
+    // Token lifetime matches max-token-ttl-seconds (default: 6 months).
+    let max_ttl = state.config.secrets.max_token_ttl_seconds;
+    let expires_at = Some(chrono::Utc::now().timestamp() + max_ttl as i64);
 
     let (raw_token, token_hash) = paseto::token_create(
         &user_info.email,
-        expires_at,
-        state.config.secrets.max_token_ttl_seconds,
+        max_ttl,
         &state.config.secrets.token_secret_key,
     )
     .map_err(|e| {
