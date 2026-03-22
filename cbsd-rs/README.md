@@ -164,20 +164,23 @@ All YAML configuration keys use **kebab-case** throughout (e.g. `listen-addr`,
 - `cbsd-rs/config/server.yaml.example`
 - `cbsd-rs/config/worker.yaml.example`
 
-## Compose deployment (development / staging)
+## Compose deployment (development only)
 
-The `podman-compose.cbsd-rs.yaml` file is primarily intended for **development
-and staging**. It builds images locally from source and bind-mounts
-configuration from `_local/cbsd-rs/`. For production, use the systemd-based
-setup instead (see [Production deployment](#production-deployment-systemd)
-below).
+The `podman-compose.cbsd-rs.yaml` file is for **development only**. It builds
+images locally from source and bind-mounts configuration from `_local/cbsd-rs/`.
 
-Two compose profiles are available:
+For production images, use the dedicated build script:
 
-| Profile | Command flag | Description |
-|---------|-------------|-------------|
-| `dev`   | `--dev`     | cargo-watch auto-reload; source bind-mounted at `/cbs/src` |
-| `prod`  | _(default)_ | pre-built local binaries; suitable for staging |
+```bash
+./container/build-cbsd-rs.sh server    # build server image
+./container/build-cbsd-rs.sh worker    # build worker image
+./container/build-cbsd-rs.sh all       # build both
+./container/build-cbsd-rs.sh all --tag v0.1.0 --push  # tag and push
+```
+
+The build script embeds the current git commit SHA into the binaries. The
+health endpoint (`/api/health`) reports the version, and workers report
+their version to the server on connect.
 
 The `do-cbsd-rs-compose.sh` helper script automates config generation and
 image management. It requires two external files — a Google OAuth2 client

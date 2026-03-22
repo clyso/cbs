@@ -88,6 +88,7 @@ WORKDIR /
 FROM alpine:3.21 AS rust-builder
 
 ARG RUST_VERSION
+ARG GIT_VERSION=unknown
 
 # musl-dev: C stdlib headers for crates that compile C code (sqlx/sqlite)
 # curl:     downloading rustup
@@ -103,6 +104,10 @@ WORKDIR /build
 
 # Copy only the Rust workspace (build context is the repository root).
 COPY cbsd-rs/ .
+
+# Write git version for build.rs to embed in binaries.
+# The file exists only in this builder stage — never in final images.
+RUN echo "${GIT_VERSION}" > .git-version
 
 # Use the committed sqlx offline query cache — no live DB needed.
 ENV SQLX_OFFLINE=true

@@ -7,9 +7,10 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
+# Development only. For production images, use container/build-cbsd-rs.sh.
+#
 # Usage:
-#   Production:   podman-compose -f podman-compose.cbsd-rs.yaml --profile prod up
-#   Development:  podman-compose -f podman-compose.cbsd-rs.yaml --profile dev  up
+#   podman-compose -f podman-compose.cbsd-rs.yaml --profile dev up
 #
 # Config layout expected under ./_local/cbsd-rs/:
 #   config/server/server.yaml    — server configuration (see cbsd-rs/config/server.yaml.example)
@@ -31,60 +32,6 @@
 #      populate the .sqlx/ offline query cache (required by cargo build).
 
 services:
-
-  # ==========================================================================
-  # Production services
-  # ==========================================================================
-
-  server:
-    profiles: [prod]
-    build:
-      context: .
-      dockerfile: container/ContainerFile.cbsd-rs
-      target: cbsd-rs-server
-    container_name: cbsd-rs-server
-    ports:
-      - "8080:8080"
-    restart: "no"
-    volumes:
-      - ./_local/cbsd-rs/config/server:/cbs/config:ro
-      - ./_local/cbsd-rs/data:/cbs/data:Z
-      - ./_local/cbsd-rs/logs:/cbs/logs:Z
-      - ./components:/cbs/components:ro
-    security_opt:
-      - label=disable
-    environment:
-      RUST_LOG: info
-
-  worker:
-    profiles: [prod]
-    build:
-      context: .
-      dockerfile: container/ContainerFile.cbsd-rs
-      target: cbsd-rs-worker
-    container_name: cbsd-rs-worker
-    privileged: true
-    volumes:
-      - ./_local/cbsd-rs/config/worker:/cbs/config:ro
-      - ./_local/cbsd-rs/scratch:/cbs/scratch:Z
-      - ./_local/cbsd-rs/scratch/containers:/var/lib/containers:Z
-      - ./_local/cbsd-rs/scratch/ccache:/cbs/ccache:Z
-      - ./components:/cbs/components:ro
-      - /dev/fuse:/dev/fuse:rw
-    cap_add:
-      - MKNOD
-      - SYS_ADMIN
-    security_opt:
-      - label=disable
-      - seccomp=unconfined
-    environment:
-      RUST_LOG: info
-    depends_on:
-      - server
-
-  # ==========================================================================
-  # Development services  (cargo-watch, source bind-mounted)
-  # ==========================================================================
 
   server-dev:
     profiles: [dev]
