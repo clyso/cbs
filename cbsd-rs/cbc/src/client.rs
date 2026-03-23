@@ -122,7 +122,7 @@ impl CbcClient {
 
             let message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
-                .and_then(|v| v.get("error")?.as_str().map(String::from))
+                .and_then(|v| v.get("detail")?.as_str().map(String::from))
                 .unwrap_or(text);
 
             Err(Error::Api {
@@ -200,7 +200,7 @@ impl CbcClient {
             // Try to extract a structured error message.
             let message = serde_json::from_str::<serde_json::Value>(&text)
                 .ok()
-                .and_then(|v| v.get("error")?.as_str().map(String::from))
+                .and_then(|v| v.get("detail")?.as_str().map(String::from))
                 .unwrap_or(text);
 
             Err(Error::Api {
