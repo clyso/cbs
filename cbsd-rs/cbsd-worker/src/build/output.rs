@@ -125,19 +125,35 @@ pub async fn stream_output(
                                     report = None;
                                 }
 
+                                let error = parsed
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+
+                                // Write the error to the build log so it
+                                // appears when tailing the log file.
+                                if let Some(ref err) = error {
+                                    if !err.is_empty() {
+                                        if batch.is_empty() {
+                                            batch_start_seq = line_count;
+                                        }
+                                        batch.push(
+                                            format!("[cbsd] build failed: {err}"),
+                                        );
+                                        line_count += 1;
+                                    }
+                                }
+
                                 wrapper_result = Some(WrapperResult {
                                     exit_code: parsed
                                         .get("exit_code")
                                         .and_then(|v| v.as_i64())
                                         .unwrap_or(-1) as i32,
-                                    error: parsed
-                                        .get("error")
-                                        .and_then(|v| v.as_str())
-                                        .map(String::from),
+                                    error,
                                     build_report: report,
                                 });
                             }
-                            // Don't include the result line in output.
+                            // Don't include the raw result JSON in output.
                             continue;
                         }
 
