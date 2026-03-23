@@ -125,6 +125,10 @@ struct BuildListArgs {
 struct BuildGetArgs {
     /// Build ID
     id: i64,
+
+    /// Output as compact JSON for tool consumption
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -150,7 +154,7 @@ struct SubmitBuildResponse {
     warning: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct BuildRecord {
     id: i64,
     descriptor: String,
@@ -159,13 +163,13 @@ struct BuildRecord {
     state: String,
     worker_id: Option<String>,
     trace_id: Option<String>,
-    #[allow(dead_code)]
     error: Option<String>,
     submitted_at: i64,
-    #[allow(dead_code)]
     queued_at: i64,
     started_at: Option<i64>,
     finished_at: Option<i64>,
+    #[serde(default)]
+    build_report: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -362,7 +366,36 @@ async fn cmd_get(
 
     let build: BuildRecord = client.get(&format!("builds/{}", args.id)).await?;
 
-    // Try to parse the descriptor JSON for display.
+    // --json: compact JSON with {info, report} structure.
+    if args.json {
+        let desc: Option<serde_json::Value> =
+            serde_json::from_str(&build.descriptor).ok();
+        let output = serde_json::json!({
+            "info": {
+                "id": build.id,
+                "state": build.state,
+                "user_email": build.user_email,
+                "priority": build.priority,
+                "descriptor": desc,
+                "worker_id": build.worker_id,
+                "trace_id": build.trace_id,
+                "error": build.error,
+                "submitted_at": build.submitted_at,
+                "queued_at": build.queued_at,
+                "started_at": build.started_at,
+                "finished_at": build.finished_at,
+            },
+            "report": build.build_report,
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&output)
+                .map_err(|e| Error::Other(format!("JSON serialization error: {e}")))?
+        );
+        return Ok(());
+    }
+
+    // Human-readable output.
     let desc: Option<BuildDescriptor> = serde_json::from_str(&build.descriptor).ok();
 
     println!("      id: {}", build.id);
@@ -404,6 +437,47 @@ async fn cmd_get(
     }
     if let Some(ts) = build.finished_at {
         println!("finished: {}", format_timestamp(ts));
+    }
+
+    // Artifact report (only for completed builds with a report).
+    if let Some(ref report) = build.build_report {
+        println!();
+        println!("  report:");
+
+        if let Some(img) = report.get("container_image") {
+            let name = img.get("name").and_then(|v| v.as_str()).unwrap_or("-");
+            let tag = img.get("tag").and_then(|v| v.as_str()).unwrap_or("-");
+            let pushed = img.get("pushed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let pushed_str = if pushed { "pushed" } else { "not pushed" };
+            println!("    image: {name}:{tag} ({pushed_str})");
+        }
+
+        if let Some(comps) = report.get("components").and_then(|v| v.as_array()) {
+            if !comps.is_empty() {
+                println!("    components:");
+                for c in comps {
+                    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("-");
+                    let ver = c.get("version").and_then(|v| v.as_str()).unwrap_or("-");
+                    let sha = c.get("sha1").and_then(|v| v.as_str()).unwrap_or("-");
+                    let sha_short = if sha.len() > 7 { &sha[..7] } else { sha };
+                    println!("      {name} {ver} ({sha_short})");
+
+                    if let Some(rpms) = c.get("rpms_s3_path").and_then(|v| v.as_str()) {
+                        println!("        rpms: {rpms}");
+                    }
+                }
+            }
+        }
+
+        if let Some(rel) = report.get("release_descriptor") {
+            let bucket = rel.get("bucket").and_then(|v| v.as_str()).unwrap_or("-");
+            let path = rel.get("s3_path").and_then(|v| v.as_str()).unwrap_or("-");
+            println!("    release: s3://{bucket}/{path}");
+        }
+
+        if report.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+            println!("    (skipped — image already existed)");
+        }
     }
 
     Ok(())
