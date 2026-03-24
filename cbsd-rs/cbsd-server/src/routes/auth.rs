@@ -428,12 +428,18 @@ async fn revoke_token(
 // ---------------------------------------------------------------------------
 
 /// Revoke all tokens for a user. Requires the target user to exist.
-/// Full permission check (permissions:manage) is added in Commit 5.
 async fn revoke_all_tokens(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Json(body): Json<RevokeAllBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("permissions:manage") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: permissions:manage",
+        ));
+    }
+
     // Verify target user exists
     let target = db::users::get_user(&state.pool, &body.user_email)
         .await
@@ -468,6 +474,13 @@ async fn create_api_key_handler(
     user: AuthUser,
     Json(body): Json<CreateApiKeyBody>,
 ) -> Result<(StatusCode, Json<CreateApiKeyResponse>), (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("apikeys:create:own") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: apikeys:create:own",
+        ));
+    }
+
     // Reject reserved prefix — worker keys are managed via /api/admin/workers
     if body.name.starts_with("worker:") {
         return Err(auth_error(
@@ -511,6 +524,13 @@ async fn list_api_keys_handler(
     State(state): State<AppState>,
     user: AuthUser,
 ) -> Result<Json<Vec<ApiKeyItem>>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("apikeys:create:own") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: apikeys:create:own",
+        ));
+    }
+
     let keys = db::api_keys::list_api_keys_for_user(&state.pool, &user.email)
         .await
         .map_err(|e| {
@@ -540,6 +560,13 @@ async fn revoke_api_key_handler(
     user: AuthUser,
     Path(prefix): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("apikeys:create:own") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: apikeys:create:own",
+        ));
+    }
+
     let revoked = db::api_keys::revoke_api_key_by_prefix(&state.pool, &user.email, &prefix)
         .await
         .map_err(|e| {

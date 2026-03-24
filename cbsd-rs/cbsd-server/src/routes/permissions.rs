@@ -33,7 +33,6 @@ const KNOWN_CAPS: &[&str] = &[
     "permissions:view",
     "permissions:manage",
     "apikeys:create:own",
-    "components:manage",
     "workers:view",
     "workers:manage",
     "periodic:create",
