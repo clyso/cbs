@@ -56,17 +56,17 @@ enum BuildCommands {
 /// (named `--version`). Does NOT include the version field.
 #[derive(Args, Clone)]
 pub struct BuildDescriptorArgs {
-    /// Release channel
+    /// Release channel (omit to use server default)
     #[arg(short = 'p', long)]
-    pub channel: String,
+    pub channel: Option<String>,
 
     /// Component in `name@gitref` format (repeat for multiple)
     #[arg(short, long = "component", num_args = 1..)]
     pub components: Vec<String>,
 
-    /// Version type: release, dev, test, ci
-    #[arg(short = 't', long = "type", default_value = "dev")]
-    pub version_type: String,
+    /// Version type: release, dev, test, ci (omit to use channel default)
+    #[arg(short = 't', long = "type")]
+    pub version_type: Option<String>,
 
     /// Base distribution
     #[arg(long, default_value = "rockylinux")]
@@ -229,8 +229,13 @@ async fn cmd_new(
     // Parse --repo-override values: "name=url". Apply to matching components.
     let components = apply_repo_overrides(components, &args.descriptor.repo_override)?;
 
-    // Parse --type into VersionType.
-    let version_type = parse_version_type(&args.descriptor.version_type)?;
+    // Parse --type into VersionType (None if omitted → server uses channel default).
+    let version_type = args
+        .descriptor
+        .version_type
+        .as_deref()
+        .map(parse_version_type)
+        .transpose()?;
 
     // Parse --arch into Arch.
     let arch = parse_arch(&args.descriptor.arch)?;
@@ -245,7 +250,7 @@ async fn cmd_new(
 
     let descriptor = BuildDescriptor {
         version: args.version.clone(),
-        channel: Some(args.descriptor.channel.clone()),
+        channel: args.descriptor.channel.clone(),
         version_type,
         signed_off_by: BuildSignedOffBy {
             user: whoami.name,
@@ -280,8 +285,8 @@ async fn cmd_new(
     println!(
         "  version: {}\n  channel: {}\n     type: {}\n    image: {}:{}\n    comps: {}\n   distro: {} {}",
         args.version,
-        args.descriptor.channel,
-        args.descriptor.version_type,
+        args.descriptor.channel.as_deref().unwrap_or("-"),
+        args.descriptor.version_type.as_deref().unwrap_or("-"),
         args.descriptor.image_name,
         image_tag,
         comps_display.join(", "),
@@ -405,12 +410,16 @@ async fn cmd_get(
 
     if let Some(ref d) = desc {
         println!(" version: {}", d.version);
-        println!(" channel: {}", d.channel.as_deref().unwrap_or(""));
+        println!(" channel: {}", d.channel.as_deref().unwrap_or("-"));
         println!(
             "    type: {}",
-            serde_json::to_string(&d.version_type)
-                .unwrap_or_default()
-                .trim_matches('"')
+            d.version_type
+                .as_ref()
+                .map(|vt| serde_json::to_string(vt)
+                    .unwrap_or_default()
+                    .trim_matches('"')
+                    .to_string())
+                .unwrap_or_else(|| "-".to_string())
         );
 
         println!("   image: {}:{}", d.dst_image.name, d.dst_image.tag);

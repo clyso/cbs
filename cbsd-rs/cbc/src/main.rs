@@ -12,6 +12,7 @@
 
 pub mod admin;
 pub mod builds;
+pub mod channels;
 mod client;
 mod config;
 mod error;
@@ -65,6 +66,8 @@ enum Commands {
     Worker(worker::WorkerArgs),
     /// RBAC administration: roles, users, build queue
     Admin(admin::AdminArgs),
+    /// List channels and their types
+    Channel(channels::ChannelArgs),
 }
 
 #[derive(Deserialize)]
@@ -92,6 +95,7 @@ async fn run(cli: Cli) -> Result<(), Error> {
         Commands::Periodic(args) => periodic::run(args, cli.config.as_deref(), cli.debug).await,
         Commands::Worker(args) => worker::run(args, cli.config.as_deref(), cli.debug).await,
         Commands::Admin(args) => admin::run(args, cli.config.as_deref(), cli.debug).await,
+        Commands::Channel(args) => channels::run(args, cli.config.as_deref(), cli.debug).await,
     }
 }
 

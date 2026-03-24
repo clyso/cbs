@@ -265,8 +265,13 @@ async fn cmd_new(
     // Parse --repo-override values: "name=url". Apply to matching components.
     let components = apply_repo_overrides(components, &args.descriptor.repo_override)?;
 
-    // Parse --type into VersionType.
-    let version_type = parse_version_type(&args.descriptor.version_type)?;
+    // Parse --type into VersionType (None if omitted).
+    let version_type = args
+        .descriptor
+        .version_type
+        .as_deref()
+        .map(parse_version_type)
+        .transpose()?;
 
     // Parse --arch into Arch.
     let arch = parse_arch(&args.descriptor.arch)?;
@@ -282,7 +287,7 @@ async fn cmd_new(
 
     let descriptor = BuildDescriptor {
         version: args.version.clone(),
-        channel: Some(args.descriptor.channel.clone()),
+        channel: args.descriptor.channel.clone(),
         version_type,
         signed_off_by: BuildSignedOffBy {
             user: whoami.name,
@@ -599,14 +604,16 @@ async fn cmd_update(
                 .to_string()
         });
 
-        let version_type_str = args.version_type.unwrap_or_else(|| {
+        let version_type_str = args.version_type.or_else(|| {
             existing_desc
                 .get("version_type")
                 .and_then(|v| v.as_str())
-                .unwrap_or("dev")
-                .to_string()
+                .map(|s| s.to_string())
         });
-        let version_type = parse_version_type(&version_type_str)?;
+        let version_type = version_type_str
+            .as_deref()
+            .map(parse_version_type)
+            .transpose()?;
 
         let distro = args.distro.unwrap_or_else(|| {
             existing_desc
@@ -674,9 +681,15 @@ async fn cmd_update(
         let repo_overrides = args.repo_override.unwrap_or_default();
         let components = apply_repo_overrides(components, &repo_overrides)?;
 
+        let channel_opt = if channel.is_empty() {
+            None
+        } else {
+            Some(channel)
+        };
+
         let descriptor = BuildDescriptor {
             version,
-            channel: Some(channel),
+            channel: channel_opt,
             version_type,
             signed_off_by: BuildSignedOffBy {
                 user: whoami.name,

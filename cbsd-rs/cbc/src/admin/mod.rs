@@ -10,8 +10,10 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
-//! Admin commands: role management, user management, and build queue status.
+//! Admin commands: role management, user management, channel management,
+//! and build queue status.
 
+pub mod channels;
 pub mod queue;
 pub mod roles;
 pub mod users;
@@ -38,6 +40,18 @@ enum AdminCommands {
     Users(users::UsersArgs),
     /// Build queue status
     Queue,
+    /// Channel and type management
+    Channel(channels::ChannelAdminArgs),
+    /// Set a user's default channel
+    UserSetDefaultChannel(UserSetDefaultChannelArgs),
+}
+
+#[derive(Args)]
+struct UserSetDefaultChannelArgs {
+    /// User email
+    email: String,
+    /// Channel ID
+    channel_id: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -53,5 +67,9 @@ pub async fn run(
         AdminCommands::Roles(a) => roles::run(a, config_path, debug).await,
         AdminCommands::Users(a) => users::run(a, config_path, debug).await,
         AdminCommands::Queue => queue::run(config_path, debug).await,
+        AdminCommands::Channel(a) => channels::run(a, config_path, debug).await,
+        AdminCommands::UserSetDefaultChannel(a) => {
+            channels::set_user_default_channel(config_path, debug, &a.email, a.channel_id).await
+        }
     }
 }
