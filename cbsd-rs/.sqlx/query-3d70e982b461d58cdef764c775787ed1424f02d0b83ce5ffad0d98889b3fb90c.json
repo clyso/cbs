@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE channel_types SET project = ?, prefix_template = ?, updated_at = unixepoch()\n         WHERE id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "3d70e982b461d58cdef764c775787ed1424f02d0b83ce5ffad0d98889b3fb90c"
+}

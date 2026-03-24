@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n                id            AS \"id!\",\n                descriptor    AS \"descriptor!\",\n                descriptor_version AS \"descriptor_version!\",\n                user_email    AS \"user_email!\",\n                priority      AS \"priority!\",\n                state         AS \"state!\",\n                worker_id,\n                trace_id,\n                error,\n                submitted_at  AS \"submitted_at!\",\n                queued_at     AS \"queued_at!\",\n                started_at,\n                finished_at,\n                build_report\n         FROM builds WHERE id = ?",
+  "query": "SELECT\n                b.id            AS \"id!\",\n                b.descriptor    AS \"descriptor!\",\n                b.descriptor_version AS \"descriptor_version!\",\n                b.user_email    AS \"user_email!\",\n                b.priority      AS \"priority!\",\n                b.state         AS \"state!\",\n                b.worker_id,\n                b.trace_id,\n                b.error,\n                b.submitted_at  AS \"submitted_at!\",\n                b.queued_at     AS \"queued_at!\",\n                b.started_at,\n                b.finished_at,\n                b.build_report,\n                b.channel_id,\n                b.channel_type_id,\n                c.name          AS \"channel_name?\",\n                ct.type_name    AS \"channel_type_name?\"\n         FROM builds b\n         LEFT JOIN channels c ON c.id = b.channel_id\n         LEFT JOIN channel_types ct ON ct.id = b.channel_type_id\n         WHERE b.id = ?",
   "describe": {
     "columns": [
       {
@@ -72,6 +72,26 @@
         "name": "build_report",
         "ordinal": 13,
         "type_info": "Text"
+      },
+      {
+        "name": "channel_id",
+        "ordinal": 14,
+        "type_info": "Integer"
+      },
+      {
+        "name": "channel_type_id",
+        "ordinal": 15,
+        "type_info": "Integer"
+      },
+      {
+        "name": "channel_name?",
+        "ordinal": 16,
+        "type_info": "Text"
+      },
+      {
+        "name": "channel_type_name?",
+        "ordinal": 17,
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -91,8 +111,12 @@
       false,
       true,
       true,
+      true,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "97c40d84f97515d61a3d622db8329cd9e4e5fc4b1a63989506ecd8b328c82a75"
+  "hash": "bc70fe70fae17ea3f3741c7eee50143b9c5c5c294cdb633aace6bdb8a61cd7ec"
 }

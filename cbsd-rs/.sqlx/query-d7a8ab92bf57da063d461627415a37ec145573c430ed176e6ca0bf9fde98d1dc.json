@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE users SET default_channel_id = ?, updated_at = unixepoch()\n         WHERE email = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d7a8ab92bf57da063d461627415a37ec145573c430ed176e6ca0bf9fde98d1dc"
+}

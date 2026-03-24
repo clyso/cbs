@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE channels SET default_type_id = NULL, updated_at = unixepoch()\n             WHERE default_type_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1465c3182417b5f06c3d82806f00b9dce803a0bb22988c04c770a6905aa72dd3"
+}

@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", channel_id AS \"channel_id!\", type_name AS \"type_name!\",\n                  project AS \"project!\", prefix_template AS \"prefix_template!\",\n                  created_at AS \"created_at!\", updated_at AS \"updated_at!\"\n         FROM channel_types WHERE channel_id = ? AND deleted_at IS NULL\n         ORDER BY type_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "channel_id!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      },
+      {
+        "name": "type_name!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "project!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "prefix_template!",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at!",
+        "ordinal": 6,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "373f4bf5be457b6e5c2b2744417d089783f8b13a6636818147d1752bc9909632"
+}

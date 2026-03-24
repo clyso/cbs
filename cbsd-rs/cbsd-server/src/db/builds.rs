@@ -39,6 +39,12 @@ pub struct BuildRecord {
     pub finished_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_report: Option<Value>,
+    pub channel_id: Option<i64>,
+    pub channel_type_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_type_name: Option<String>,
 }
 
 /// A build record for list responses. Identical to `BuildRecord` but
@@ -58,25 +64,37 @@ pub struct BuildListRecord {
     pub queued_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    pub channel_id: Option<i64>,
+    pub channel_type_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_type_name: Option<String>,
 }
 
 /// Insert a new build in QUEUED state. Returns the auto-generated build ID.
 /// `periodic_task_id` is set for scheduler-triggered builds, `None` for manual.
+/// `channel_id` and `channel_type_id` track the resolved channel/type mapping.
 pub async fn insert_build(
     pool: &SqlitePool,
     descriptor_json: &str,
     user_email: &str,
     priority: &str,
     periodic_task_id: Option<&str>,
+    channel_id: Option<i64>,
+    channel_type_id: Option<i64>,
 ) -> Result<i64, sqlx::Error> {
     let row = sqlx::query!(
-        r#"INSERT INTO builds (descriptor, user_email, priority, state, periodic_task_id)
-         VALUES (?, ?, ?, 'queued', ?)
+        r#"INSERT INTO builds (descriptor, user_email, priority, state, periodic_task_id,
+                               channel_id, channel_type_id)
+         VALUES (?, ?, ?, 'queued', ?, ?, ?)
          RETURNING id AS "id!""#,
         descriptor_json,
         user_email,
         priority,
         periodic_task_id,
+        channel_id,
+        channel_type_id,
     )
     .fetch_one(pool)
     .await?;
@@ -84,25 +102,32 @@ pub async fn insert_build(
     Ok(row.id)
 }
 
-/// Get a single build by ID.
+/// Get a single build by ID, with channel/type names via LEFT JOIN.
 pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>, sqlx::Error> {
     let row = sqlx::query!(
         r#"SELECT
-                id            AS "id!",
-                descriptor    AS "descriptor!",
-                descriptor_version AS "descriptor_version!",
-                user_email    AS "user_email!",
-                priority      AS "priority!",
-                state         AS "state!",
-                worker_id,
-                trace_id,
-                error,
-                submitted_at  AS "submitted_at!",
-                queued_at     AS "queued_at!",
-                started_at,
-                finished_at,
-                build_report
-         FROM builds WHERE id = ?"#,
+                b.id            AS "id!",
+                b.descriptor    AS "descriptor!",
+                b.descriptor_version AS "descriptor_version!",
+                b.user_email    AS "user_email!",
+                b.priority      AS "priority!",
+                b.state         AS "state!",
+                b.worker_id,
+                b.trace_id,
+                b.error,
+                b.submitted_at  AS "submitted_at!",
+                b.queued_at     AS "queued_at!",
+                b.started_at,
+                b.finished_at,
+                b.build_report,
+                b.channel_id,
+                b.channel_type_id,
+                c.name          AS "channel_name?",
+                ct.type_name    AS "channel_type_name?"
+         FROM builds b
+         LEFT JOIN channels c ON c.id = b.channel_id
+         LEFT JOIN channel_types ct ON ct.id = b.channel_type_id
+         WHERE b.id = ?"#,
         id,
     )
     .fetch_optional(pool)
@@ -127,6 +152,10 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
             started_at: r.started_at,
             finished_at: r.finished_at,
             build_report,
+            channel_id: r.channel_id,
+            channel_type_id: r.channel_type_id,
+            channel_name: r.channel_name,
+            channel_type_name: r.channel_type_name,
         }
     }))
 }
@@ -135,6 +164,7 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
 ///
 /// The list query intentionally omits `build_report` to avoid expensive
 /// responses when hundreds of builds each carry KB of report JSON.
+/// Includes channel/type names via LEFT JOIN.
 pub async fn list_builds(
     pool: &SqlitePool,
     user_filter: Option<&str>,
@@ -142,22 +172,26 @@ pub async fn list_builds(
 ) -> Result<Vec<BuildListRecord>, sqlx::Error> {
     // Build the query dynamically based on filters.
     // NOTE: build_report is intentionally excluded from the list query.
-    let base = "SELECT id, descriptor, descriptor_version, user_email, priority, state,
-                       worker_id, trace_id, error, submitted_at, queued_at, started_at, finished_at
-                FROM builds";
+    let base = "SELECT b.id, b.descriptor, b.descriptor_version, b.user_email, b.priority, b.state,
+                       b.worker_id, b.trace_id, b.error, b.submitted_at, b.queued_at,
+                       b.started_at, b.finished_at, b.channel_id, b.channel_type_id,
+                       c.name AS channel_name, ct.type_name AS channel_type_name
+                FROM builds b
+                LEFT JOIN channels c ON c.id = b.channel_id
+                LEFT JOIN channel_types ct ON ct.id = b.channel_type_id";
 
     let mut conditions: Vec<String> = Vec::new();
     if user_filter.is_some() {
-        conditions.push("user_email = ?".to_string());
+        conditions.push("b.user_email = ?".to_string());
     }
     if state_filter.is_some() {
-        conditions.push("state = ?".to_string());
+        conditions.push("b.state = ?".to_string());
     }
 
     let query_str = if conditions.is_empty() {
-        format!("{base} ORDER BY id DESC")
+        format!("{base} ORDER BY b.id DESC")
     } else {
-        format!("{base} WHERE {} ORDER BY id DESC", conditions.join(" AND "))
+        format!("{base} WHERE {} ORDER BY b.id DESC", conditions.join(" AND "))
     };
 
     let mut query = sqlx::query(&query_str);
@@ -312,5 +346,9 @@ fn row_to_build_list_record(r: sqlx::sqlite::SqliteRow) -> BuildListRecord {
         queued_at: r.get("queued_at"),
         started_at: r.get("started_at"),
         finished_at: r.get("finished_at"),
+        channel_id: r.get("channel_id"),
+        channel_type_id: r.get("channel_type_id"),
+        channel_name: r.get("channel_name"),
+        channel_type_name: r.get("channel_type_name"),
     }
 }

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO channel_types (channel_id, type_name, project, prefix_template)\n         VALUES (?, ?, ?, ?)\n         RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b98860c037568711a837fbf859afbb42e32b23ac8083c1539c703206117d2f44"
+}

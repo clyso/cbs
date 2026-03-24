@@ -183,6 +183,8 @@ pub async fn insert_build_internal(
         user_email,
         priority_str,
         periodic_task_id,
+        None,
+        None,
     )
     .await
     .map_err(|e| format!("failed to insert build: {e}"))?;

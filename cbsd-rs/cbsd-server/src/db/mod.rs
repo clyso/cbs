@@ -12,6 +12,8 @@
 
 pub mod api_keys;
 pub mod builds;
+#[allow(dead_code)]
+pub mod channels;
 pub mod periodic;
 pub mod roles;
 pub mod seed;

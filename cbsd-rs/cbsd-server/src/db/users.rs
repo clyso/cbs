@@ -16,6 +16,8 @@ pub struct UserRecord {
     pub email: String,
     pub name: String,
     pub active: bool,
+    #[allow(dead_code)]
+    pub default_channel_id: Option<i64>,
 }
 
 /// Create a new user or update the name of an existing user.
@@ -39,7 +41,8 @@ pub async fn create_or_update_user(
 /// Get a user by email.
 pub async fn get_user(pool: &SqlitePool, email: &str) -> Result<Option<UserRecord>, sqlx::Error> {
     let row = sqlx::query!(
-        r#"SELECT email AS "email!", name AS "name!", active FROM users WHERE email = ?"#,
+        r#"SELECT email AS "email!", name AS "name!", active, default_channel_id
+         FROM users WHERE email = ?"#,
         email,
     )
     .fetch_optional(pool)
@@ -49,6 +52,7 @@ pub async fn get_user(pool: &SqlitePool, email: &str) -> Result<Option<UserRecor
         email: r.email,
         name: r.name,
         active: r.active != 0,
+        default_channel_id: r.default_channel_id,
     }))
 }
 
@@ -60,4 +64,23 @@ pub async fn is_user_active(pool: &SqlitePool, email: &str) -> Result<bool, sqlx
         .await?;
 
     Ok(row.is_some_and(|r| r.active != 0))
+}
+
+/// Set a user's default channel. Pass `None` to clear.
+#[allow(dead_code)]
+pub async fn set_default_channel(
+    pool: &SqlitePool,
+    email: &str,
+    channel_id: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "UPDATE users SET default_channel_id = ?, updated_at = unixepoch()
+         WHERE email = ?",
+        channel_id,
+        email,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
 }
