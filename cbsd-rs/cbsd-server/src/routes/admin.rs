@@ -17,7 +17,8 @@ use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::app::AppState;
 use crate::auth::api_keys;
@@ -35,6 +36,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/workers/{id}/regenerate-token",
             post(regenerate_worker_token),
+        )
+        .route(
+            "/users/{email}/default-channel",
+            put(set_user_default_channel),
         )
 }
 
@@ -614,6 +619,69 @@ async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
             "force-disconnected worker"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/admin/users/{email}/default-channel
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetDefaultChannelBody {
+    channel_id: i64,
+}
+
+/// Set a user's default channel for build submission.
+async fn set_user_default_channel(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(email): Path<String>,
+    Json(body): Json<SetDefaultChannelBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("permissions:manage") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: permissions:manage",
+        ));
+    }
+
+    // Verify target user exists.
+    db::users::get_user(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to look up user '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "user not found"))?;
+
+    // Verify channel exists.
+    db::channels::get_channel_by_id(&state.pool, body.channel_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to look up channel {}: {e}", body.channel_id);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "channel not found"))?;
+
+    db::users::set_default_channel(&state.pool, &email, Some(body.channel_id))
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to set default channel for '{email}': {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to set default channel",
+            )
+        })?;
+
+    tracing::info!(
+        "user {} set default channel for '{}' to {}",
+        user.email,
+        email,
+        body.channel_id,
+    );
+
+    Ok(Json(serde_json::json!({
+        "detail": format!("default channel set to {}", body.channel_id),
+    })))
 }
 
 /// Check if a sqlx error is a UNIQUE constraint violation.

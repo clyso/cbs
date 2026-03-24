@@ -103,6 +103,7 @@ pub async fn run_first_startup_seed(
             "builds:list:any",
             "apikeys:create:own",
             "workers:view",
+            "channels:view",
         ],
     )
     .await?;

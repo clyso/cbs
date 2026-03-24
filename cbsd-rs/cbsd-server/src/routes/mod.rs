@@ -13,6 +13,7 @@
 pub mod admin;
 pub mod auth;
 pub mod builds;
+pub mod channels;
 pub mod components;
 pub mod periodic;
 pub mod permissions;

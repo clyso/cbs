@@ -88,7 +88,8 @@ pub fn build_router(
         .nest("/builds", routes::builds::router())
         .nest("/components", routes::components::router())
         .nest("/workers", routes::workers::router())
-        .nest("/periodic", routes::periodic::router());
+        .nest("/periodic", routes::periodic::router())
+        .nest("/channels", routes::channels::router());
 
     // Request/response tracing: logs method, URI, status, and latency
     // for every HTTP request. The request ID is generated per-request

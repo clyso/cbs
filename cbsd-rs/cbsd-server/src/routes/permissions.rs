@@ -39,6 +39,8 @@ const KNOWN_CAPS: &[&str] = &[
     "periodic:create",
     "periodic:view",
     "periodic:manage",
+    "channels:manage",
+    "channels:view",
     "*",
 ];
 
@@ -179,6 +181,23 @@ async fn last_admin_guard(pool: &sqlx::SqlitePool) -> Result<(), (StatusCode, Js
             StatusCode::CONFLICT,
             "operation would remove the last admin — at least one active user must hold the wildcard (*) capability",
         ));
+    }
+    Ok(())
+}
+
+/// Validate scope entries. Channel scope patterns must contain `/` to
+/// enforce the `channel/type` format (e.g. `ces/dev`, `ces/*`).
+fn validate_scopes(scopes: &[ScopeBody]) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+    for scope in scopes {
+        if scope.scope_type == "channel" && !scope.pattern.contains('/') && scope.pattern != "*" {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "channel scope pattern '{}' must contain '/' (e.g. 'ces/dev' or 'ces/*')",
+                    scope.pattern
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -623,6 +642,9 @@ async fn replace_user_roles(
                 ),
             ));
         }
+
+        // Validate channel scope patterns contain '/'.
+        validate_scopes(&assignment.scopes)?;
     }
 
     // Convert to DB types
@@ -726,6 +748,9 @@ async fn add_user_role(
             ),
         ));
     }
+
+    // Validate channel scope patterns contain '/'.
+    validate_scopes(&body.scopes)?;
 
     // Add the role assignment
     db::roles::add_user_role(&state.pool, &email, &body.role)

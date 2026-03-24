@@ -16,7 +16,6 @@ pub struct UserRecord {
     pub email: String,
     pub name: String,
     pub active: bool,
-    #[allow(dead_code)]
     pub default_channel_id: Option<i64>,
 }
 
@@ -57,7 +56,6 @@ pub async fn get_user(pool: &SqlitePool, email: &str) -> Result<Option<UserRecor
 }
 
 /// Check if a user is active.
-#[allow(dead_code)]
 pub async fn is_user_active(pool: &SqlitePool, email: &str) -> Result<bool, sqlx::Error> {
     let row = sqlx::query!("SELECT active FROM users WHERE email = ?", email)
         .fetch_optional(pool)
@@ -67,7 +65,6 @@ pub async fn is_user_active(pool: &SqlitePool, email: &str) -> Result<bool, sqlx
 }
 
 /// Set a user's default channel. Pass `None` to clear.
-#[allow(dead_code)]
 pub async fn set_default_channel(
     pool: &SqlitePool,
     email: &str,
