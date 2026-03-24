@@ -27,6 +27,7 @@ use crate::db;
 
 /// Scope types for per-assignment scope checking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ScopeType {
     Channel,
     Registry,

@@ -97,12 +97,16 @@ pub async fn trigger_periodic_build(
     };
 
     // 9. Submit build via the shared internal function.
+    // Channel resolution not yet wired up for periodic builds — passes None.
+    // Commit 6 adds full resolution with scope re-validation.
     let (build_id, _) = crate::routes::builds::insert_build_internal(
         state,
         descriptor,
         &user.email,
         priority,
         Some(&task.id),
+        None,
+        None,
     )
     .await
     .map_err(TriggerError::Transient)?;

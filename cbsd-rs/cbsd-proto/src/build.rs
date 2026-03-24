@@ -135,14 +135,6 @@ pub struct BuildDescriptor {
     pub build: BuildTarget,
 }
 
-impl BuildDescriptor {
-    /// Extract registry hostname from `dst_image.name`.
-    /// e.g., `harbor.clyso.com/ces-devel/ceph` -> `harbor.clyso.com`
-    pub fn registry_host(&self) -> Option<&str> {
-        self.dst_image.name.split('/').next()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,12 +188,6 @@ mod tests {
         let desc: BuildDescriptor = serde_json::from_str(json).unwrap();
         assert_eq!(desc.build.arch, Arch::Aarch64);
         assert_eq!(desc.build.artifact_type, "rpm");
-    }
-
-    #[test]
-    fn registry_host_extraction() {
-        let desc = sample_descriptor();
-        assert_eq!(desc.registry_host(), Some("harbor.clyso.com"));
     }
 
     #[test]

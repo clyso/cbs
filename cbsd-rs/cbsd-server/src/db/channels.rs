@@ -42,7 +42,6 @@ pub struct ChannelTypeRecord {
 }
 
 /// Result of resolving a channel/type pair for build submission.
-#[allow(dead_code)]
 pub struct ResolvedChannelType {
     pub channel_id: i64,
     pub channel_type_id: i64,
@@ -98,7 +97,6 @@ pub async fn get_channel_by_id(
 }
 
 /// Get a channel by name (active only).
-#[allow(dead_code)]
 pub async fn get_channel_by_name(
     pool: &SqlitePool,
     name: &str,
@@ -358,7 +356,6 @@ pub async fn set_default_type(
 
 /// Resolve a channel/type pair by name. Returns the IDs, project,
 /// and prefix template for a given (channel_name, type_name) combination.
-#[allow(dead_code)]
 pub async fn resolve_channel_type(
     pool: &SqlitePool,
     channel_name: &str,

@@ -12,6 +12,7 @@
 
 mod app;
 mod auth;
+mod channels;
 mod components;
 mod config;
 mod db;

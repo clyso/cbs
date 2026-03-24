@@ -93,45 +93,53 @@ async fn submit_build(
         }
     }
 
-    // Build scope checks from descriptor
+    // Repository scope checks from component repo overrides
     let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
-
-    // Channel scope
-    scope_checks.push((
-        ScopeType::Channel,
-        body.descriptor.channel.clone().unwrap_or_default(),
-    ));
-
-    // Registry scope from dst_image
-    if let Some(host) = body.descriptor.registry_host() {
-        scope_checks.push((ScopeType::Registry, host.to_string()));
-    }
-
-    // Repository scopes from component repo overrides
     for comp in &body.descriptor.components {
         if let Some(ref repo) = comp.repo {
             scope_checks.push((ScopeType::Repository, repo.clone()));
         }
     }
 
-    // Convert to borrowed slice for require_scopes_all
-    let scope_refs: Vec<(ScopeType, &str)> =
-        scope_checks.iter().map(|(t, v)| (*t, v.as_str())).collect();
-
-    user.require_scopes_all(&state.pool, &scope_refs).await?;
+    if !scope_checks.is_empty() {
+        let scope_refs: Vec<(ScopeType, &str)> =
+            scope_checks.iter().map(|(t, v)| (*t, v.as_str())).collect();
+        user.require_scopes_all(&state.pool, &scope_refs).await?;
+    }
 
     // Overwrite signed_off_by from the authenticated user record
     let mut descriptor = body.descriptor;
     descriptor.signed_off_by.user = user.name.clone();
     descriptor.signed_off_by.email = user.email.clone();
 
-    let (build_id, pending_count) =
-        insert_build_internal(&state, descriptor, &user.email, body.priority, None)
+    // Resolve channel/type mapping and rewrite dst_image.name
+    let user_record = db::users::get_user(&state.pool, &user.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get user record: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "user record not found"))?;
+
+    let resolved =
+        crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user_record)
             .await
-            .map_err(|e| {
-                tracing::error!("failed to submit build: {e}");
-                auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
-            })?;
+            .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e))?;
+
+    let (build_id, pending_count) = insert_build_internal(
+        &state,
+        descriptor,
+        &user.email,
+        body.priority,
+        None,
+        Some(resolved.channel_id),
+        Some(resolved.channel_type_id),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to submit build: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
+    })?;
 
     let warning = if pending_count > 1 {
         Some(format!("{pending_count} build(s) in queue"))
@@ -170,6 +178,8 @@ pub async fn insert_build_internal(
     user_email: &str,
     priority: Priority,
     periodic_task_id: Option<&str>,
+    channel_id: Option<i64>,
+    channel_type_id: Option<i64>,
 ) -> Result<(i64, usize), String> {
     let descriptor_json = serde_json::to_string(&descriptor)
         .map_err(|e| format!("failed to serialize descriptor: {e}"))?;
@@ -186,8 +196,8 @@ pub async fn insert_build_internal(
         user_email,
         priority_str,
         periodic_task_id,
-        None,
-        None,
+        channel_id,
+        channel_type_id,
     )
     .await
     .map_err(|e| format!("failed to insert build: {e}"))?;
