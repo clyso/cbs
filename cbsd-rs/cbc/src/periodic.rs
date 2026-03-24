@@ -282,7 +282,7 @@ async fn cmd_new(
 
     let descriptor = BuildDescriptor {
         version: args.version.clone(),
-        channel: args.descriptor.channel.clone(),
+        channel: Some(args.descriptor.channel.clone()),
         version_type,
         signed_off_by: BuildSignedOffBy {
             user: whoami.name,
@@ -676,7 +676,7 @@ async fn cmd_update(
 
         let descriptor = BuildDescriptor {
             version,
-            channel,
+            channel: Some(channel),
             version_type,
             signed_off_by: BuildSignedOffBy {
                 user: whoami.name,

@@ -128,7 +128,7 @@ fn resolve_placeholder(
         )),
         "version" => Some(descriptor.version.clone()),
         "base_tag" => Some(descriptor.dst_image.tag.clone()),
-        "channel" => Some(descriptor.channel.clone()),
+        "channel" => Some(descriptor.channel.clone().unwrap_or_default()),
         "user" => Some(descriptor.signed_off_by.user.clone()),
         "arch" => Some(descriptor.build.arch.to_string()),
         "distro" => Some(descriptor.build.distro.clone()),
@@ -183,8 +183,8 @@ mod tests {
     fn sample_descriptor() -> BuildDescriptor {
         BuildDescriptor {
             version: "19.2.3".to_string(),
-            channel: "ces-devel".to_string(),
-            version_type: VersionType::Dev,
+            channel: Some("ces-devel".to_string()),
+            version_type: Some(VersionType::Dev),
             signed_off_by: BuildSignedOffBy {
                 user: "Alice".to_string(),
                 email: "alice@clyso.com".to_string(),

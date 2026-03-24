@@ -147,8 +147,8 @@ mod tests {
             priority: Priority::High,
             descriptor: BuildDescriptor {
                 version: "19.2.3".to_string(),
-                channel: "ces".to_string(),
-                version_type: VersionType::Release,
+                channel: Some("ces".to_string()),
+                version_type: Some(VersionType::Release),
                 signed_off_by: BuildSignedOffBy {
                     user: "Alice".to_string(),
                     email: "alice@clyso.com".to_string(),

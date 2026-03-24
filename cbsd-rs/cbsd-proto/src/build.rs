@@ -125,8 +125,10 @@ fn default_arch() -> Arch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildDescriptor {
     pub version: String,
-    pub channel: String,
-    pub version_type: VersionType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_type: Option<VersionType>,
     pub signed_off_by: BuildSignedOffBy,
     pub dst_image: BuildDestImage,
     pub components: Vec<BuildComponent>,
@@ -148,8 +150,8 @@ mod tests {
     fn sample_descriptor() -> BuildDescriptor {
         BuildDescriptor {
             version: "19.2.3".to_string(),
-            channel: "ces-devel".to_string(),
-            version_type: VersionType::Dev,
+            channel: Some("ces-devel".to_string()),
+            version_type: Some(VersionType::Dev),
             signed_off_by: BuildSignedOffBy {
                 user: "Alice".to_string(),
                 email: "alice@clyso.com".to_string(),

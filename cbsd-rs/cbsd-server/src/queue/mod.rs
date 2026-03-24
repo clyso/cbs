@@ -238,8 +238,8 @@ mod tests {
     fn sample_descriptor() -> BuildDescriptor {
         BuildDescriptor {
             version: "19.2.3".to_string(),
-            channel: "ces-devel".to_string(),
-            version_type: VersionType::Dev,
+            channel: Some("ces-devel".to_string()),
+            version_type: Some(VersionType::Dev),
             signed_off_by: BuildSignedOffBy {
                 user: "Alice".to_string(),
                 email: "alice@clyso.com".to_string(),

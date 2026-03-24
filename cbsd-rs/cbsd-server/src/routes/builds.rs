@@ -97,7 +97,10 @@ async fn submit_build(
     let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
 
     // Channel scope
-    scope_checks.push((ScopeType::Channel, body.descriptor.channel.clone()));
+    scope_checks.push((
+        ScopeType::Channel,
+        body.descriptor.channel.clone().unwrap_or_default(),
+    ));
 
     // Registry scope from dst_image
     if let Some(host) = body.descriptor.registry_host() {

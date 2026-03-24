@@ -245,7 +245,7 @@ async fn cmd_new(
 
     let descriptor = BuildDescriptor {
         version: args.version.clone(),
-        channel: args.descriptor.channel.clone(),
+        channel: Some(args.descriptor.channel.clone()),
         version_type,
         signed_off_by: BuildSignedOffBy {
             user: whoami.name,
@@ -405,7 +405,7 @@ async fn cmd_get(
 
     if let Some(ref d) = desc {
         println!(" version: {}", d.version);
-        println!(" channel: {}", d.channel);
+        println!(" channel: {}", d.channel.as_deref().unwrap_or(""));
         println!(
             "    type: {}",
             serde_json::to_string(&d.version_type)
