@@ -49,10 +49,7 @@ pub async fn resolve_and_rewrite(
     user: &UserRecord,
 ) -> Result<ResolvedChannel, String> {
     // 1. Resolve channel.
-    let channel_name = descriptor
-        .channel
-        .as_deref()
-        .filter(|s| !s.is_empty());
+    let channel_name = descriptor.channel.as_deref().filter(|s| !s.is_empty());
 
     let channel = if let Some(name) = channel_name {
         db::channels::get_channel_by_name(pool, name)
@@ -167,9 +164,9 @@ async fn check_channel_scope(
         if a.scopes.is_empty() {
             return true;
         }
-        a.scopes.iter().any(|s| {
-            s.scope_type == "channel" && scope_pattern_matches(&s.pattern, scope_value)
-        })
+        a.scopes
+            .iter()
+            .any(|s| s.scope_type == "channel" && scope_pattern_matches(&s.pattern, scope_value))
     });
 
     Ok(ok)
@@ -222,10 +219,7 @@ mod tests {
 
     #[test]
     fn prefix_template_no_at() {
-        assert_eq!(
-            resolve_prefix_template("${username}", "admin"),
-            "admin"
-        );
+        assert_eq!(resolve_prefix_template("${username}", "admin"), "admin");
     }
 
     #[test]

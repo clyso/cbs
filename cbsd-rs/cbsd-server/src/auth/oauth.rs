@@ -63,19 +63,19 @@ struct GoogleWebSecrets {
 #[derive(Debug)]
 pub enum OAuthError {
     /// Failed to read or parse the secrets file.
-    ConfigError(String),
+    Config(String),
     /// HTTP request to Google failed.
-    RequestError(String),
+    Request(String),
     /// Google returned an error response.
-    GoogleError(String),
+    Google(String),
 }
 
 impl std::fmt::Display for OAuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ConfigError(e) => write!(f, "OAuth config error: {e}"),
-            Self::RequestError(e) => write!(f, "OAuth request error: {e}"),
-            Self::GoogleError(e) => write!(f, "Google OAuth error: {e}"),
+            Self::Config(e) => write!(f, "OAuth config error: {e}"),
+            Self::Request(e) => write!(f, "OAuth request error: {e}"),
+            Self::Google(e) => write!(f, "Google OAuth error: {e}"),
         }
     }
 }
@@ -85,17 +85,17 @@ impl std::error::Error for OAuthError {}
 /// Load Google OAuth configuration from a secrets JSON file.
 pub fn load_oauth_config(path: &Path) -> Result<OAuthState, OAuthError> {
     let contents = std::fs::read_to_string(path)
-        .map_err(|e| OAuthError::ConfigError(format!("failed to read {}: {e}", path.display())))?;
+        .map_err(|e| OAuthError::Config(format!("failed to read {}: {e}", path.display())))?;
 
     let secrets: GoogleSecretsFile = serde_json::from_str(&contents)
-        .map_err(|e| OAuthError::ConfigError(format!("failed to parse secrets JSON: {e}")))?;
+        .map_err(|e| OAuthError::Config(format!("failed to parse secrets JSON: {e}")))?;
 
     let redirect_uri = secrets
         .web
         .redirect_uris
         .into_iter()
         .next()
-        .ok_or_else(|| OAuthError::ConfigError("no redirect_uris in secrets file".to_string()))?;
+        .ok_or_else(|| OAuthError::Config("no redirect_uris in secrets file".to_string()))?;
 
     Ok(OAuthState {
         client_id: secrets.web.client_id,
@@ -151,13 +151,11 @@ pub async fn exchange_code_for_userinfo(
         ])
         .send()
         .await
-        .map_err(|e| OAuthError::RequestError(e.to_string()))?;
+        .map_err(|e| OAuthError::Request(e.to_string()))?;
 
     if !token_resp.status().is_success() {
         let body = token_resp.text().await.unwrap_or_default();
-        return Err(OAuthError::GoogleError(format!(
-            "token exchange failed: {body}"
-        )));
+        return Err(OAuthError::Google(format!("token exchange failed: {body}")));
     }
 
     #[derive(Deserialize)]
@@ -168,7 +166,7 @@ pub async fn exchange_code_for_userinfo(
     let token: TokenResponse = token_resp
         .json()
         .await
-        .map_err(|e| OAuthError::GoogleError(format!("failed to parse token response: {e}")))?;
+        .map_err(|e| OAuthError::Google(format!("failed to parse token response: {e}")))?;
 
     // Step 2: Fetch user info
     let userinfo_resp = client
@@ -176,11 +174,11 @@ pub async fn exchange_code_for_userinfo(
         .bearer_auth(&token.access_token)
         .send()
         .await
-        .map_err(|e| OAuthError::RequestError(e.to_string()))?;
+        .map_err(|e| OAuthError::Request(e.to_string()))?;
 
     if !userinfo_resp.status().is_success() {
         let body = userinfo_resp.text().await.unwrap_or_default();
-        return Err(OAuthError::GoogleError(format!(
+        return Err(OAuthError::Google(format!(
             "userinfo request failed: {body}"
         )));
     }
@@ -188,7 +186,7 @@ pub async fn exchange_code_for_userinfo(
     let user_info: GoogleUserInfo = userinfo_resp
         .json()
         .await
-        .map_err(|e| OAuthError::GoogleError(format!("failed to parse userinfo: {e}")))?;
+        .map_err(|e| OAuthError::Google(format!("failed to parse userinfo: {e}")))?;
 
     Ok(user_info)
 }

@@ -134,9 +134,7 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
     .await?;
 
     Ok(row.map(|r| {
-        let build_report = r
-            .build_report
-            .and_then(|s| serde_json::from_str(&s).ok());
+        let build_report = r.build_report.and_then(|s| serde_json::from_str(&s).ok());
         BuildRecord {
             id: r.id,
             descriptor: r.descriptor,
@@ -191,7 +189,10 @@ pub async fn list_builds(
     let query_str = if conditions.is_empty() {
         format!("{base} ORDER BY b.id DESC")
     } else {
-        format!("{base} WHERE {} ORDER BY b.id DESC", conditions.join(" AND "))
+        format!(
+            "{base} WHERE {} ORDER BY b.id DESC",
+            conditions.join(" AND ")
+        )
     };
 
     let mut query = sqlx::query(&query_str);

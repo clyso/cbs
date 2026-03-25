@@ -373,8 +373,7 @@ async fn cmd_get(
 
     // --json: compact JSON with {info, report} structure.
     if args.json {
-        let desc: Option<serde_json::Value> =
-            serde_json::from_str(&build.descriptor).ok();
+        let desc: Option<serde_json::Value> = serde_json::from_str(&build.descriptor).ok();
         let output = serde_json::json!({
             "info": {
                 "id": build.id,
@@ -461,19 +460,19 @@ async fn cmd_get(
             println!("    image: {name}:{tag} ({pushed_str})");
         }
 
-        if let Some(comps) = report.get("components").and_then(|v| v.as_array()) {
-            if !comps.is_empty() {
-                println!("    components:");
-                for c in comps {
-                    let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("-");
-                    let ver = c.get("version").and_then(|v| v.as_str()).unwrap_or("-");
-                    let sha = c.get("sha1").and_then(|v| v.as_str()).unwrap_or("-");
-                    let sha_short = if sha.len() > 7 { &sha[..7] } else { sha };
-                    println!("      {name} {ver} ({sha_short})");
+        if let Some(comps) = report.get("components").and_then(|v| v.as_array())
+            && !comps.is_empty()
+        {
+            println!("    components:");
+            for c in comps {
+                let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("-");
+                let ver = c.get("version").and_then(|v| v.as_str()).unwrap_or("-");
+                let sha = c.get("sha1").and_then(|v| v.as_str()).unwrap_or("-");
+                let sha_short = if sha.len() > 7 { &sha[..7] } else { sha };
+                println!("      {name} {ver} ({sha_short})");
 
-                    if let Some(rpms) = c.get("rpms_s3_path").and_then(|v| v.as_str()) {
-                        println!("        rpms: {rpms}");
-                    }
+                if let Some(rpms) = c.get("rpms_s3_path").and_then(|v| v.as_str()) {
+                    println!("        rpms: {rpms}");
                 }
             }
         }
@@ -484,7 +483,11 @@ async fn cmd_get(
             println!("    release: s3://{bucket}/{path}");
         }
 
-        if report.get("skipped").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if report
+            .get("skipped")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             println!("    (skipped — image already existed)");
         }
     }

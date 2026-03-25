@@ -200,10 +200,7 @@ async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<
             .map(format_timestamp)
             .unwrap_or_else(|| "-".to_string());
 
-        let ver = w
-            .version
-            .as_deref()
-            .unwrap_or("-");
+        let ver = w.version.as_deref().unwrap_or("-");
 
         println!(
             "  {:<18} {:<10} {:<14} {:<20} {:<7} {}",

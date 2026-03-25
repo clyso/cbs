@@ -305,13 +305,14 @@ impl ServerConfig {
                     path.display()
                 );
             }
-            if let Some(dir) = path.parent() {
-                if !dir.as_os_str().is_empty() && !dir.exists() {
-                    panic!(
-                        "config error: logging.log-file parent directory does not exist: '{}'",
-                        dir.display()
-                    );
-                }
+            if let Some(dir) = path.parent()
+                && !dir.as_os_str().is_empty()
+                && !dir.exists()
+            {
+                panic!(
+                    "config error: logging.log-file parent directory does not exist: '{}'",
+                    dir.display()
+                );
             }
         }
 

@@ -337,33 +337,33 @@ async fn update_task(
     }
 
     // Validate cron_expr if provided.
-    if let Some(ref cron_expr) = body.cron_expr {
-        if croner::Cron::from_str(cron_expr).is_err() {
-            return Err(auth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid cron expression",
-            ));
-        }
+    if let Some(ref cron_expr) = body.cron_expr
+        && croner::Cron::from_str(cron_expr).is_err()
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid cron expression",
+        ));
     }
 
     // Validate tag_format if provided.
-    if let Some(ref tf) = body.tag_format {
-        if let Err(unknown) = tag_format::validate_tag_format(tf) {
-            return Err(auth_error(
-                StatusCode::BAD_REQUEST,
-                &format!("unknown tag format variables: {}", unknown.join(", ")),
-            ));
-        }
+    if let Some(ref tf) = body.tag_format
+        && let Err(unknown) = tag_format::validate_tag_format(tf)
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            &format!("unknown tag format variables: {}", unknown.join(", ")),
+        ));
     }
 
     // Validate descriptor if provided.
-    if let Some(ref desc) = body.descriptor {
-        if !desc.is_object() {
-            return Err(auth_error(
-                StatusCode::BAD_REQUEST,
-                "descriptor must be a JSON object",
-            ));
-        }
+    if let Some(ref desc) = body.descriptor
+        && !desc.is_object()
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "descriptor must be a JSON object",
+        ));
     }
 
     // Fetch the current row to merge updates.
@@ -584,10 +584,10 @@ async fn validate_descriptor_scopes(
     let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
 
     // Channel scope (if present in descriptor).
-    if let Some(channel) = descriptor.get("channel").and_then(|v| v.as_str()) {
-        if !channel.is_empty() {
-            scope_checks.push((ScopeType::Channel, channel.to_string()));
-        }
+    if let Some(channel) = descriptor.get("channel").and_then(|v| v.as_str())
+        && !channel.is_empty()
+    {
+        scope_checks.push((ScopeType::Channel, channel.to_string()));
     }
 
     // Repository scopes from component repo overrides.

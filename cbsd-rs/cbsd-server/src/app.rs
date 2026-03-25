@@ -109,42 +109,28 @@ pub fn build_router(
             )
         })
         .on_response(
-            |response: &axum::http::Response<_>,
-             latency: Duration,
-             _span: &Span| {
+            |response: &axum::http::Response<_>, latency: Duration, _span: &Span| {
                 let status = response.status().as_u16();
                 let latency_ms = latency.as_millis();
                 if status >= 500 {
-                    tracing::error!(
-                        status, latency_ms, "response"
-                    );
+                    tracing::error!(status, latency_ms, "response");
                 } else if status >= 400 {
-                    tracing::warn!(
-                        status, latency_ms, "response"
-                    );
+                    tracing::warn!(status, latency_ms, "response");
                 } else {
-                    tracing::info!(
-                        status, latency_ms, "response"
-                    );
+                    tracing::info!(status, latency_ms, "response");
                 }
             },
         )
         .on_failure(
-            |error: ServerErrorsFailureClass,
-             latency: Duration,
-             _span: &Span| {
-                tracing::error!(
-                    latency_ms = latency.as_millis(),
-                    "request failed: {error}"
-                );
+            |error: ServerErrorsFailureClass, latency: Duration, _span: &Span| {
+                tracing::error!(latency_ms = latency.as_millis(), "request failed: {error}");
             },
         );
 
     // Redact Authorization header from debug-level logs to avoid
     // leaking tokens.
-    let sensitive_headers_layer = SetSensitiveRequestHeadersLayer::new([
-        axum::http::header::AUTHORIZATION,
-    ]);
+    let sensitive_headers_layer =
+        SetSensitiveRequestHeadersLayer::new([axum::http::header::AUTHORIZATION]);
 
     // Layer ordering (outermost → innermost):
     //   1. SetRequestId — assigns x-request-id before tracing sees it

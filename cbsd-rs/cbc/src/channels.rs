@@ -101,9 +101,7 @@ async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<
             println!("    (no types configured)");
         } else {
             for t in &channel.types {
-                let is_default = channel
-                    .default_type_id
-                    .is_some_and(|did| did == t.id);
+                let is_default = channel.default_type_id.is_some_and(|did| did == t.id);
                 let marker = if is_default { " [default]" } else { "" };
                 let prefix_display = if t.prefix_template.is_empty() {
                     String::new()

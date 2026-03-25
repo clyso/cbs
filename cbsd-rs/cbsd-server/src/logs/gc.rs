@@ -17,7 +17,7 @@
 //! builds older than the configured retention period. Build rows are retained
 //! as historical records.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
@@ -62,7 +62,7 @@ pub fn start_log_gc(
 /// Returns the number of log entries cleaned up.
 async fn run_gc_cycle(
     pool: &SqlitePool,
-    log_dir: &PathBuf,
+    log_dir: &Path,
     retention_days: u32,
 ) -> Result<usize, GcError> {
     // Calculate the cutoff timestamp (seconds since epoch).

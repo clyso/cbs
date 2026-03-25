@@ -121,9 +121,7 @@ pub async fn get_channel_by_name(
 }
 
 /// List all active channels.
-pub async fn list_active_channels(
-    pool: &SqlitePool,
-) -> Result<Vec<ChannelRecord>, sqlx::Error> {
+pub async fn list_active_channels(pool: &SqlitePool) -> Result<Vec<ChannelRecord>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT id AS "id!", name AS "name!", description AS "description!",
                   default_type_id, created_at AS "created_at!", updated_at AS "updated_at!"

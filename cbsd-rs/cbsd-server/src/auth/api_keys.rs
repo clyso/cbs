@@ -63,16 +63,16 @@ impl ApiKeyCache {
     /// Insert a verified key into the cache. Handles LRU eviction cleanup.
     pub fn insert(&mut self, sha256: [u8; 32], entry: CachedApiKey) {
         // If LRU evicts an old entry, clean up its reverse indexes.
-        if let Some((evicted_hash, evicted)) = self.by_sha256.push(sha256, entry.clone()) {
-            if evicted_hash != sha256 {
-                Self::remove_from_reverse_maps(
-                    &mut self.by_prefix,
-                    &mut self.by_owner,
-                    &evicted.key_prefix,
-                    &evicted.owner_email,
-                    &evicted_hash,
-                );
-            }
+        if let Some((evicted_hash, evicted)) = self.by_sha256.push(sha256, entry.clone())
+            && evicted_hash != sha256
+        {
+            Self::remove_from_reverse_maps(
+                &mut self.by_prefix,
+                &mut self.by_owner,
+                &evicted.key_prefix,
+                &evicted.owner_email,
+                &evicted_hash,
+            );
         }
 
         self.by_prefix
@@ -94,12 +94,12 @@ impl ApiKeyCache {
     pub fn remove_by_prefix(&mut self, prefix: &str) {
         if let Some(hashes) = self.by_prefix.remove(prefix) {
             for h in &hashes {
-                if let Some(entry) = self.by_sha256.pop(h) {
-                    if let Some(set) = self.by_owner.get_mut(&entry.owner_email) {
-                        set.remove(h);
-                        if set.is_empty() {
-                            self.by_owner.remove(&entry.owner_email);
-                        }
+                if let Some(entry) = self.by_sha256.pop(h)
+                    && let Some(set) = self.by_owner.get_mut(&entry.owner_email)
+                {
+                    set.remove(h);
+                    if set.is_empty() {
+                        self.by_owner.remove(&entry.owner_email);
                     }
                 }
             }
@@ -110,12 +110,12 @@ impl ApiKeyCache {
     pub fn remove_by_owner(&mut self, email: &str) {
         if let Some(hashes) = self.by_owner.remove(email) {
             for h in &hashes {
-                if let Some(entry) = self.by_sha256.pop(h) {
-                    if let Some(set) = self.by_prefix.get_mut(&entry.key_prefix) {
-                        set.remove(h);
-                        if set.is_empty() {
-                            self.by_prefix.remove(&entry.key_prefix);
-                        }
+                if let Some(entry) = self.by_sha256.pop(h)
+                    && let Some(set) = self.by_prefix.get_mut(&entry.key_prefix)
+                {
+                    set.remove(h);
+                    if set.is_empty() {
+                        self.by_prefix.remove(&entry.key_prefix);
                     }
                 }
             }
@@ -228,10 +228,10 @@ pub async fn verify_api_key(
         if let Some(cached) = guard.get(&sha256) {
             let cached = cached.clone();
             // Check expiry
-            if let Some(exp) = cached.expires_at {
-                if chrono::Utc::now().timestamp() > exp {
-                    return Err(ApiKeyError::Expired);
-                }
+            if let Some(exp) = cached.expires_at
+                && chrono::Utc::now().timestamp() > exp
+            {
+                return Err(ApiKeyError::Expired);
             }
             return Ok(cached);
         }
@@ -266,10 +266,10 @@ pub async fn verify_api_key(
     let entry = verified.ok_or(ApiKeyError::NotFound)?;
 
     // Check expiry
-    if let Some(exp) = entry.expires_at {
-        if chrono::Utc::now().timestamp() > exp {
-            return Err(ApiKeyError::Expired);
-        }
+    if let Some(exp) = entry.expires_at
+        && chrono::Utc::now().timestamp() > exp
+    {
+        return Err(ApiKeyError::Expired);
     }
 
     // Cache the verified key

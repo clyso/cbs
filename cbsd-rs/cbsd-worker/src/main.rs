@@ -27,11 +27,7 @@ use crate::signal::{ShutdownState, install_signal_handler};
 use crate::ws::connection::reconnect_loop;
 
 /// Extended version: cargo version + git SHA from production build.
-pub const VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "+",
-    env!("CBS_BUILD_META"),
-);
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("CBS_BUILD_META"),);
 
 /// CBS build worker — connects to the CBS server via WebSocket and executes
 /// build jobs.
@@ -56,8 +52,7 @@ fn setup_tracing(
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     let console_layer = if is_dev {
         Some(fmt::layer().with_ansi(true))
@@ -72,12 +67,15 @@ fn setup_tracing(
                 path.display()
             )
         });
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or_else(|| {
-            panic!(
-                "config error: logging.log-file has no filename component: '{}'",
-                path.display()
-            )
-        });
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "config error: logging.log-file has no filename component: '{}'",
+                    path.display()
+                )
+            });
         let appender = tracing_appender::rolling::never(dir, filename);
         let (writer, guard) = tracing_appender::non_blocking(appender);
         let layer = fmt::layer().with_ansi(false).with_writer(writer);

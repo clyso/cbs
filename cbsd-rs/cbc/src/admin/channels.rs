@@ -232,7 +232,9 @@ pub async fn run(
         ChannelAdminCommands::Update(a) => cmd_update(a, config_path, debug).await,
         ChannelAdminCommands::Delete(a) => cmd_delete(a, config_path, debug).await,
         ChannelAdminCommands::Type(a) => run_type(a, config_path, debug).await,
-        ChannelAdminCommands::SetDefaultType(a) => cmd_set_default_type(a, config_path, debug).await,
+        ChannelAdminCommands::SetDefaultType(a) => {
+            cmd_set_default_type(a, config_path, debug).await
+        }
     }
 }
 
@@ -313,9 +315,7 @@ async fn cmd_delete(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug)?;
 
-    let resp: DetailResponse = client
-        .delete(&format!("channels/{}", args.id))
-        .await?;
+    let resp: DetailResponse = client.delete(&format!("channels/{}", args.id)).await?;
 
     println!("{}", resp.detail);
     Ok(())
@@ -427,10 +427,7 @@ async fn cmd_set_default_type(
     };
 
     let resp: DetailResponse = client
-        .put_json(
-            &format!("channels/{}/default-type", args.channel_id),
-            &body,
-        )
+        .put_json(&format!("channels/{}/default-type", args.channel_id), &body)
         .await?;
 
     println!("{}", resp.detail);

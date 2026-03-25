@@ -37,6 +37,7 @@ pub struct PeriodicTaskRow {
 }
 
 /// Insert a new periodic task.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_task(
     pool: &SqlitePool,
     id: &str,

@@ -27,16 +27,12 @@ impl std::fmt::Display for BuildId {
 /// Build priority. Strict precedence: high before normal before low.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Priority {
     High,
+    #[default]
     Normal,
     Low,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Build lifecycle state. Lowercase in DB and API.

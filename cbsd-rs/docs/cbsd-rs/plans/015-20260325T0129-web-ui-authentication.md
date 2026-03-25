@@ -4,7 +4,7 @@
 
 | Item | Status |
 |------|--------|
-| Commit 1: BFF session cookie authentication for web UI | Not started |
+| Commit 1: BFF session cookie authentication for web UI | Done |
 
 ## Goal
 

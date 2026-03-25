@@ -368,7 +368,7 @@ pub async fn count_active_wildcard_holders(pool: &SqlitePool) -> Result<i64, sql
     .fetch_one(pool)
     .await?;
 
-    Ok(row.cnt.into())
+    Ok(row.cnt)
 }
 
 /// Check if any user is assigned to a given role.

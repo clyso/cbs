@@ -304,7 +304,7 @@ async fn handle_connection(
             },
         );
 
-        old.map(|(cid, was_connected)| (cid, was_connected))
+        old
     };
     // Queue lock released here.
 
@@ -721,7 +721,7 @@ async fn handle_worker_status(
                     .values()
                     .filter(|ab| {
                         ab.connection_id != connection_id
-                            && queue.get_worker(&ab.connection_id).map_or(true, |ws| {
+                            && queue.get_worker(&ab.connection_id).is_none_or(|ws| {
                                 matches!(ws, WorkerState::Disconnected { .. } | WorkerState::Dead)
                             })
                     })

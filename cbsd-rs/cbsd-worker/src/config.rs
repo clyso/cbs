@@ -168,13 +168,14 @@ impl WorkerConfig {
                     path.display()
                 )));
             }
-            if let Some(dir) = path.parent() {
-                if !dir.as_os_str().is_empty() && !dir.exists() {
-                    return Err(ConfigError::Validation(format!(
-                        "logging.log-file parent directory does not exist: '{}'",
-                        dir.display()
-                    )));
-                }
+            if let Some(dir) = path.parent()
+                && !dir.as_os_str().is_empty()
+                && !dir.exists()
+            {
+                return Err(ConfigError::Validation(format!(
+                    "logging.log-file parent directory does not exist: '{}'",
+                    dir.display()
+                )));
             }
         }
 

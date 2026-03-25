@@ -168,10 +168,7 @@ async fn user_can_view_channel(
     let assignments = db::roles::get_user_assignments_with_scopes(pool, &user.email)
         .await
         .map_err(|e| {
-            tracing::warn!(
-                "failed to load scope assignments for '{}': {e}",
-                user.email
-            );
+            tracing::warn!("failed to load scope assignments for '{}': {e}", user.email);
             auth_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to check channel visibility",
@@ -231,11 +228,21 @@ async fn create_channel(
             tracing::error!("failed to get channel {id}: {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
-        .ok_or_else(|| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "channel not found after create"))?;
+        .ok_or_else(|| {
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "channel not found after create",
+            )
+        })?;
 
     let resp = build_channel_response(&state.pool, channel).await?;
 
-    tracing::info!("user {} created channel '{}' (id={})", user.email, body.name, id);
+    tracing::info!(
+        "user {} created channel '{}' (id={})",
+        user.email,
+        body.name,
+        id
+    );
 
     Ok((StatusCode::CREATED, Json(resp)))
 }
@@ -252,10 +259,7 @@ async fn list_channels(
         .await
         .map_err(|e| {
             tracing::error!("failed to list channels: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to list channels",
-            )
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list channels")
         })?;
 
     let mut result = Vec::with_capacity(channels.len());
@@ -444,12 +448,10 @@ async fn add_type(
     })?;
 
     // Auto-set default_type_id if this is the first type for the channel.
-    if channel.default_type_id.is_none() {
-        if let Err(e) = db::channels::set_default_type(&state.pool, channel_id, type_id).await {
-            tracing::warn!(
-                "failed to auto-set default type for channel {channel_id}: {e}"
-            );
-        }
+    if channel.default_type_id.is_none()
+        && let Err(e) = db::channels::set_default_type(&state.pool, channel_id, type_id).await
+    {
+        tracing::warn!("failed to auto-set default type for channel {channel_id}: {e}");
     }
 
     let ct = db::channels::get_type(&state.pool, type_id)
@@ -629,9 +631,7 @@ async fn set_default_type(
     db::channels::set_default_type(&state.pool, channel_id, body.type_id)
         .await
         .map_err(|e| {
-            tracing::error!(
-                "failed to set default type for channel {channel_id}: {e}"
-            );
+            tracing::error!("failed to set default type for channel {channel_id}: {e}");
             auth_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "failed to set default type",

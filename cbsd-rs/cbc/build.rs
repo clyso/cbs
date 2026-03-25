@@ -3,8 +3,7 @@
 // Dev builds have no file — defaults to "unknown".
 
 fn main() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let workspace_root = std::path::Path::new(&manifest_dir)
         .parent()
         .expect("crate must be in a workspace");
@@ -19,8 +18,5 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
 
     println!("cargo:rustc-env=CBS_BUILD_META={git_meta}");
-    println!(
-        "cargo:rerun-if-changed={}",
-        version_file.display()
-    );
+    println!("cargo:rerun-if-changed={}", version_file.display());
 }

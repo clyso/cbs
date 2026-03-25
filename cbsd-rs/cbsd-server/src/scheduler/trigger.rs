@@ -99,10 +99,9 @@ pub async fn trigger_periodic_build(
     //    Re-validates the task owner's scope at trigger time. If the
     //    owner's channel/type scope was revoked since task creation,
     //    this returns an error which feeds into the retry/disable flow.
-    let resolved =
-        crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user)
-            .await
-            .map_err(|e| classify_resolution_error(e))?;
+    let resolved = crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user)
+        .await
+        .map_err(classify_resolution_error)?;
 
     // 9. Parse priority, defaulting to Normal on unknown values.
     let priority = match task.priority.as_str() {

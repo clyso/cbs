@@ -398,13 +398,14 @@ async fn update_role_caps(
         })?;
 
     // Last-admin guard: if we removed wildcard from a custom role
-    if had_wildcard && !has_wildcard {
-        if let Err(e) = last_admin_guard(&state.pool).await {
-            // Rollback: restore old caps
-            let old_refs: Vec<&str> = old_caps.iter().map(String::as_str).collect();
-            let _ = db::roles::set_role_caps(&state.pool, &name, &old_refs).await;
-            return Err(e);
-        }
+    if had_wildcard
+        && !has_wildcard
+        && let Err(e) = last_admin_guard(&state.pool).await
+    {
+        // Rollback: restore old caps
+        let old_refs: Vec<&str> = old_caps.iter().map(String::as_str).collect();
+        let _ = db::roles::set_role_caps(&state.pool, &name, &old_refs).await;
+        return Err(e);
     }
 
     tracing::info!("user {} updated caps for role '{}'", user.email, name);
@@ -483,16 +484,14 @@ async fn delete_role(
     }
 
     // Last-admin guard after deletion (cascade removes assignments + caps)
-    if has_wildcard {
-        if let Err(e) = last_admin_guard(&state.pool).await {
-            // Cannot easily rollback a DELETE CASCADE — the guard should prevent
-            // the scenario entirely. Log and return the error.
-            tracing::error!(
-                "last-admin guard triggered after deleting role '{}' — this should not happen",
-                name
-            );
-            return Err(e);
-        }
+    if has_wildcard && let Err(e) = last_admin_guard(&state.pool).await {
+        // Cannot easily rollback a DELETE CASCADE — the guard should prevent
+        // the scenario entirely. Log and return the error.
+        tracing::error!(
+            "last-admin guard triggered after deleting role '{}' — this should not happen",
+            name
+        );
+        return Err(e);
     }
 
     tracing::info!("user {} deleted role '{}'", user.email, name);

@@ -28,7 +28,7 @@ pub enum ServerMessage {
         build_id: BuildId,
         trace_id: String,
         priority: Priority,
-        descriptor: BuildDescriptor,
+        descriptor: Box<BuildDescriptor>,
         component_sha256: String,
     },
 
@@ -145,7 +145,7 @@ mod tests {
             build_id: BuildId(42),
             trace_id: "abc-123".to_string(),
             priority: Priority::High,
-            descriptor: BuildDescriptor {
+            descriptor: Box::new(BuildDescriptor {
                 version: "19.2.3".to_string(),
                 channel: Some("ces".to_string()),
                 version_type: Some(VersionType::Release),
@@ -168,7 +168,7 @@ mod tests {
                     artifact_type: "rpm".to_string(),
                     arch: Arch::X86_64,
                 },
-            },
+            }),
             component_sha256: "e3b0c44...".to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();

@@ -121,10 +121,9 @@ async fn submit_build(
         })?
         .ok_or_else(|| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "user record not found"))?;
 
-    let resolved =
-        crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user_record)
-            .await
-            .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e))?;
+    let resolved = crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user_record)
+        .await
+        .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e))?;
 
     let (build_id, pending_count) = insert_build_internal(
         &state,
@@ -505,7 +504,10 @@ async fn logs_follow(
         .await
         .map_err(|e| {
             tracing::error!("failed to get build {id}: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "database error".to_string())
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "database error".to_string(),
+            )
         })?
         .ok_or_else(|| (StatusCode::NOT_FOUND, "build not found".to_string()))?;
 

@@ -68,8 +68,7 @@ pub fn token_create(
 
     // Set the PASETO-level expiry to match the application TTL.
     let ttl_duration = std::time::Duration::from_secs(max_ttl_secs);
-    let mut claims =
-        Claims::new_expires_in(&ttl_duration).map_err(|_| TokenError::Creation)?;
+    let mut claims = Claims::new_expires_in(&ttl_duration).map_err(|_| TokenError::Creation)?;
     claims
         .add_additional("payload", payload_json.clone())
         .map_err(|_| TokenError::Creation)?;
@@ -163,7 +162,7 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        if s.len() % 2 != 0 {
+        if !s.len().is_multiple_of(2) {
             return Err(());
         }
         (0..s.len())

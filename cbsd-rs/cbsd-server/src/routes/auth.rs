@@ -225,8 +225,7 @@ async fn callback(
         .unwrap_or_else(|| "web".to_string());
 
     // Resolve user info — dev mode or Google exchange.
-    let user_info = if state.config.dev.enabled && params.dev_email.is_some() {
-        let email = params.dev_email.unwrap();
+    let user_info = if let Some(email) = params.dev_email.filter(|_| state.config.dev.enabled) {
         let name = email.split('@').next().unwrap_or(&email).to_string();
         oauth::GoogleUserInfo { email, name }
     } else {

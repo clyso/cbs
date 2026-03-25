@@ -179,7 +179,7 @@ pub async fn try_dispatch(state: &AppState) -> Result<(), DispatchError> {
         build_id: dispatch_info.build_id,
         trace_id: dispatch_info.trace_id.clone(),
         priority: dispatch_info.priority,
-        descriptor: dispatch_info.descriptor.clone(),
+        descriptor: Box::new(dispatch_info.descriptor.clone()),
         component_sha256: sha256_hex,
     };
 

@@ -64,10 +64,10 @@ pub fn load_components(components_dir: &Path) -> Result<Vec<ComponentInfo>, std:
             let version_entries = std::fs::read_dir(&containers_dir)?;
             for ve in version_entries {
                 let ve = ve?;
-                if ve.file_type()?.is_dir() {
-                    if let Some(name) = ve.file_name().to_str() {
-                        versions.push(name.to_string());
-                    }
+                if ve.file_type()?.is_dir()
+                    && let Some(name) = ve.file_name().to_str()
+                {
+                    versions.push(name.to_string());
                 }
             }
             versions.sort();

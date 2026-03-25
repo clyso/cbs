@@ -63,10 +63,7 @@ pub async fn sse_follow(
         )
     })?;
     let log_row = log_row.ok_or_else(|| {
-        tracing::warn!(
-            build_id,
-            "no build_logs row for existing build"
-        );
+        tracing::warn!(build_id, "no build_logs row for existing build");
         (StatusCode::NOT_FOUND, "no logs yet".to_string())
     })?;
 
@@ -120,11 +117,10 @@ pub async fn sse_follow(
 
         // Open file (or wait for it).
         let mut reader = if let Some(mut f) = file {
-            if let Some(offset) = seek_offset {
-                if let Err(e) = f.seek(std::io::SeekFrom::Start(offset)).await {
+            if let Some(offset) = seek_offset
+                && let Err(e) = f.seek(std::io::SeekFrom::Start(offset)).await {
                     tracing::warn!(build_id = build_id, "seek failed: {e}");
                 }
-            }
             Some(BufReader::new(f))
         } else {
             None
@@ -144,11 +140,10 @@ pub async fn sse_follow(
 
         loop {
             // Try to open the file if we don't have it yet.
-            if reader.is_none() {
-                if let Ok(f) = tokio::fs::File::open(&log_file_path_owned).await {
+            if reader.is_none()
+                && let Ok(f) = tokio::fs::File::open(&log_file_path_owned).await {
                     reader = Some(BufReader::new(f));
                 }
-            }
 
             // Read all available lines from current position.
             for event in read_available_lines(&mut reader, build_id, &mut current_seq).await {

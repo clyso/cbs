@@ -79,7 +79,14 @@ pub async fn stream_output(
     stdout: ChildStdout,
     build_id: BuildId,
     sender: &mpsc::Sender<WorkerMessage>,
-) -> Result<(BuildFinishedStatus, Option<String>, Option<serde_json::Value>), OutputError> {
+) -> Result<
+    (
+        BuildFinishedStatus,
+        Option<String>,
+        Option<serde_json::Value>,
+    ),
+    OutputError,
+> {
     let reader = BufReader::new(stdout);
     let mut lines_iter = reader.lines();
 
@@ -132,8 +139,8 @@ pub async fn stream_output(
 
                                 // Write the error to the build log so it
                                 // appears when tailing the log file.
-                                if let Some(ref err) = error {
-                                    if !err.is_empty() {
+                                if let Some(ref err) = error
+                                    && !err.is_empty() {
                                         if batch.is_empty() {
                                             batch_start_seq = line_count;
                                         }
@@ -142,7 +149,6 @@ pub async fn stream_output(
                                         );
                                         line_count += 1;
                                     }
-                                }
 
                                 wrapper_result = Some(WrapperResult {
                                     exit_code: parsed
