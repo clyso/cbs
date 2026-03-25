@@ -424,20 +424,35 @@ const MAX_TAIL_LINES: u32 = 10_000;
 
 async fn logs_tail(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<i64>,
     Query(params): Query<LogsTailQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
     // Cap n at MAX_TAIL_LINES.
     let n = params.n.min(MAX_TAIL_LINES) as usize;
 
-    // Check build exists.
-    db::builds::get_build(&state.pool, id)
+    // Reuse the same :own/:any logic as get_build — if you can see the
+    // build, you can see its logs.
+    let build = db::builds::get_build(&state.pool, id)
         .await
         .map_err(|e| {
             tracing::error!("failed to get build {id}: {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "build not found"))?;
+
+    let can_view_any = user.has_cap("builds:list:any");
+    if !can_view_any {
+        if !user.has_cap("builds:list:own") {
+            return Err(auth_error(
+                StatusCode::FORBIDDEN,
+                "missing required capability: builds:list:own or builds:list:any",
+            ));
+        }
+        if build.user_email != user.email {
+            return Err(auth_error(StatusCode::NOT_FOUND, "build not found"));
+        }
+    }
 
     // Determine log file path.
     let log_path = state.config.log_dir.join(format!("builds/{id}.log"));
@@ -481,9 +496,32 @@ async fn logs_tail(
 
 async fn logs_follow(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Same :own/:any gate as other log endpoints.
+    let build = db::builds::get_build(&state.pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get build {id}: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "database error".to_string())
+        })?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "build not found".to_string()))?;
+
+    let can_view_any = user.has_cap("builds:list:any");
+    if !can_view_any {
+        if !user.has_cap("builds:list:own") {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "missing required capability: builds:list:own or builds:list:any".to_string(),
+            ));
+        }
+        if build.user_email != user.email {
+            return Err((StatusCode::NOT_FOUND, "build not found".to_string()));
+        }
+    }
+
     let last_event_id = crate::logs::sse::parse_last_event_id(&headers);
     crate::logs::sse::sse_follow(state, id, last_event_id).await
 }
@@ -494,17 +532,32 @@ async fn logs_follow(
 
 async fn logs_full(
     State(state): State<AppState>,
+    user: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorDetail>)> {
     tracing::debug!("logs_full: received request for build {id} logs");
-    // Check build exists.
-    db::builds::get_build(&state.pool, id)
+
+    // Same :own/:any gate as other log endpoints.
+    let build = db::builds::get_build(&state.pool, id)
         .await
         .map_err(|e| {
             tracing::error!("failed to get build {id}: {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "build not found"))?;
+
+    let can_view_any = user.has_cap("builds:list:any");
+    if !can_view_any {
+        if !user.has_cap("builds:list:own") {
+            return Err(auth_error(
+                StatusCode::FORBIDDEN,
+                "missing required capability: builds:list:own or builds:list:any",
+            ));
+        }
+        if build.user_email != user.email {
+            return Err(auth_error(StatusCode::NOT_FOUND, "build not found"));
+        }
+    }
 
     // Open the log file.
     let log_path = state.config.log_dir.join(format!("builds/{id}.log"));
