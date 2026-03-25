@@ -21,7 +21,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
-use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
+use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
 use crate::db;
 use crate::db::periodic::PeriodicTaskRow;
 use crate::scheduler::tag_format;
@@ -180,6 +180,11 @@ async fn create_task(
         ));
     }
 
+    // Validate scopes at creation time so users cannot create tasks
+    // targeting channels they lack access to (would silently fail at
+    // trigger time).
+    validate_descriptor_scopes(&state, &user, &body.descriptor).await?;
+
     let id = uuid::Uuid::new_v4().to_string();
     let descriptor_json = serde_json::to_string(&body.descriptor).map_err(|e| {
         tracing::error!("failed to serialize descriptor: {e}");
@@ -319,12 +324,16 @@ async fn update_task(
         ));
     }
 
-    // If descriptor is being updated, require builds:create.
-    if body.descriptor.is_some() && !user.has_cap("builds:create") {
-        return Err(auth_error(
-            StatusCode::FORBIDDEN,
-            "missing required capability: builds:create",
-        ));
+    // If descriptor is being updated, require builds:create and
+    // validate scopes against the new descriptor.
+    if let Some(ref desc) = body.descriptor {
+        if !user.has_cap("builds:create") {
+            return Err(auth_error(
+                StatusCode::FORBIDDEN,
+                "missing required capability: builds:create",
+            ));
+        }
+        validate_descriptor_scopes(&state, &user, desc).await?;
     }
 
     // Validate cron_expr if provided.
@@ -557,4 +566,44 @@ async fn disable_task(
     Ok(Json(
         serde_json::json!({"detail": format!("periodic task '{id}' disabled")}),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Extract channel and repository scopes from a descriptor JSON and run
+/// the same scope validation used by `submit_build`. This catches
+/// permission issues at task creation/update time instead of silently
+/// failing when the scheduler triggers the build.
+async fn validate_descriptor_scopes(
+    state: &AppState,
+    user: &AuthUser,
+    descriptor: &serde_json::Value,
+) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+    let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
+
+    // Channel scope (if present in descriptor).
+    if let Some(channel) = descriptor.get("channel").and_then(|v| v.as_str()) {
+        if !channel.is_empty() {
+            scope_checks.push((ScopeType::Channel, channel.to_string()));
+        }
+    }
+
+    // Repository scopes from component repo overrides.
+    if let Some(components) = descriptor.get("components").and_then(|v| v.as_array()) {
+        for comp in components {
+            if let Some(repo) = comp.get("repo").and_then(|v| v.as_str()) {
+                scope_checks.push((ScopeType::Repository, repo.to_string()));
+            }
+        }
+    }
+
+    if !scope_checks.is_empty() {
+        let scope_refs: Vec<(ScopeType, &str)> =
+            scope_checks.iter().map(|(t, v)| (*t, v.as_str())).collect();
+        user.require_scopes_all(&state.pool, &scope_refs).await?;
+    }
+
+    Ok(())
 }
