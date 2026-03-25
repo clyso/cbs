@@ -58,6 +58,18 @@ DATABASE_URL=sqlite:///tmp/cbsd-dev.db cargo sqlx prepare --workspace
 
 CI builds use `SQLX_OFFLINE=true` (reads from committed `.sqlx/` cache).
 
+## Pre-Commit Checks
+
+Before every commit, run these checks **in order** on all modified files:
+
+```bash
+cargo fmt --all                    # 1. format
+cargo clippy --workspace           # 2. lint (fix any warnings)
+cargo check --workspace            # 3. compile check (with SQLX_OFFLINE=true if needed)
+```
+
+All three must pass with zero errors and zero warnings before staging.
+
 ## Git Conventions
 
 ```bash
