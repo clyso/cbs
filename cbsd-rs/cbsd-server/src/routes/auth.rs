@@ -13,8 +13,8 @@
 //! Auth route handlers: OAuth login/callback, token management, API keys.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use base64::Engine;
@@ -29,6 +29,7 @@ use crate::auth::api_keys;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::auth::oauth;
 use crate::auth::paseto;
+use crate::config::WEB_SESSION_IDLE_SECS;
 use crate::db;
 
 /// Build the auth sub-router: `/api/auth/*`.
@@ -48,9 +49,10 @@ pub fn router() -> Router<AppState> {
             GovernorError::TooManyRequests { .. } => {
                 (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
             }
-            GovernorError::UnableToExtractKey => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "unable to extract client IP")
-            }
+            GovernorError::UnableToExtractKey => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "unable to extract client IP",
+            ),
             GovernorError::Other { .. } => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "rate limiter error")
             }
@@ -63,10 +65,11 @@ pub fn router() -> Router<AppState> {
             .unwrap()
     });
 
-    // Rate-limited OAuth routes
+    // Rate-limited session lifecycle routes
     let oauth_routes = Router::new()
         .route("/login", get(login))
         .route("/callback", get(callback))
+        .route("/logout", post(logout))
         .layer(governor_layer);
 
     // Non-rate-limited authenticated routes
@@ -90,8 +93,6 @@ pub struct LoginQuery {
     /// Client type: "cli" or "web".
     #[serde(default = "default_client")]
     client: String,
-    /// Optional port for CLI localhost callback redirect.
-    cli_port: Option<u16>,
 }
 
 fn default_client() -> String {
@@ -163,12 +164,6 @@ async fn login(
             tracing::error!("session insert failed: {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
         })?;
-    if let Some(port) = params.cli_port {
-        session.insert("cli_port", port).await.map_err(|e| {
-            tracing::error!("session insert failed: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
-        })?;
-    }
 
     // Dev mode: skip Google, redirect to callback with seed_admin email.
     if state.config.dev.enabled {
@@ -178,9 +173,7 @@ async fn login(
                 "dev mode requires seed-admin in config",
             )
         })?;
-        let url = format!(
-            "/api/auth/callback?state={oauth_nonce}&dev_email={email}"
-        );
+        let url = format!("/api/auth/callback?state={oauth_nonce}&dev_email={email}");
         return Ok(Redirect::temporary(&url).into_response());
     }
 
@@ -221,7 +214,7 @@ async fn callback(
         return Err(auth_error(StatusCode::BAD_REQUEST, "OAuth state mismatch"));
     }
 
-    // Read client_type and cli_port before cycling the session
+    // Read client_type before cycling the session
     let client_type: String = session
         .get("client_type")
         .await
@@ -231,20 +224,15 @@ async fn callback(
         })?
         .unwrap_or_else(|| "web".to_string());
 
-    let cli_port: Option<u16> = session.get("cli_port").await.map_err(|e| {
-        tracing::error!("session get failed: {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
-    })?;
-
     // Resolve user info — dev mode or Google exchange.
     let user_info = if state.config.dev.enabled && params.dev_email.is_some() {
         let email = params.dev_email.unwrap();
         let name = email.split('@').next().unwrap_or(&email).to_string();
         oauth::GoogleUserInfo { email, name }
     } else {
-        let code = params.code.ok_or_else(|| {
-            auth_error(StatusCode::BAD_REQUEST, "missing authorization code")
-        })?;
+        let code = params
+            .code
+            .ok_or_else(|| auth_error(StatusCode::BAD_REQUEST, "missing authorization code"))?;
 
         let info = oauth::exchange_code_for_userinfo(&state.oauth, &code)
             .await
@@ -258,11 +246,7 @@ async fn callback(
 
         // Check domain restriction (production only).
         if !state.config.oauth.allow_any_google_account {
-            let domain = info
-                .email
-                .rsplit_once('@')
-                .map(|(_, d)| d)
-                .unwrap_or("");
+            let domain = info.email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
 
             if !state
                 .config
@@ -322,39 +306,25 @@ async fn callback(
 
     // Respond based on client type
     if client_type == "cli" {
-        if let Some(port) = cli_port {
-            // CLI with port: redirect to localhost
-            let html = format!(
-                r#"<!DOCTYPE html>
-<html><head><title>Authentication Successful</title></head>
-<body>
-<p>Authentication successful. Redirecting...</p>
-<script>window.location.href = "http://localhost:{port}/callback?token={token_b64}";</script>
-</body></html>"#
-            );
-            Ok(Html(html).into_response())
-        } else {
-            // CLI without port: display token with strict CSP
-            let html = format!(
-                r#"<!DOCTYPE html>
-<html><head><title>Authentication Successful</title></head>
-<body>
-<h1>Authentication Successful</h1>
-<p>Copy this token to your CLI:</p>
-<pre id="token">{token_b64}</pre>
-</body></html>"#
-            );
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                "content-security-policy",
-                HeaderValue::from_static("default-src 'none'; script-src 'none'"),
-            );
-            Ok((headers, Html(html)).into_response())
-        }
-    } else {
-        // Web client: redirect with token fragment
-        let redirect_url = format!("/#token={token_b64}");
+        // CLI: redirect to UI with token in fragment for copy-paste.
+        // The fragment is client-side only — never sent to the server.
+        let redirect_url = format!("/#cli-token={token_b64}");
         Ok(Redirect::temporary(&redirect_url).into_response())
+    } else {
+        // Web: store token server-side in session (BFF pattern).
+        // The browser gets a session cookie; the token never leaves
+        // the server.
+        session
+            .insert("paseto_token", &raw_token)
+            .await
+            .map_err(|e| {
+                tracing::error!("session insert failed: {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to store session")
+            })?;
+        session.set_expiry(Some(tower_sessions::Expiry::OnInactivity(
+            time::Duration::seconds(WEB_SESSION_IDLE_SECS as i64),
+        )));
+        Ok(Redirect::temporary("/").into_response())
     }
 }
 
@@ -391,11 +361,20 @@ async fn whoami(
 // ---------------------------------------------------------------------------
 
 /// Self-revoke: revokes the bearer token used in the current request.
+/// Cookie-authenticated users should use POST /api/auth/logout instead.
 async fn revoke_token(
     State(state): State<AppState>,
     user: AuthUser,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    // Cookie-authenticated users don't have a bearer token to revoke.
+    if headers.get("authorization").is_none() {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "use POST /api/auth/logout for web sessions",
+        ));
+    }
+
     // Re-extract the raw bearer token from Authorization header
     let auth_header = headers
         .get("authorization")
@@ -463,6 +442,40 @@ async fn revoke_all_tokens(
     Ok(Json(
         serde_json::json!({"detail": format!("revoked {count} tokens")}),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/logout
+// ---------------------------------------------------------------------------
+
+/// Clear the web session and revoke the underlying PASETO token.
+///
+/// Does NOT use the `AuthUser` extractor — the session may contain an
+/// expired or revoked token that fails validation. The user should
+/// always be able to log out.
+async fn logout(
+    State(state): State<AppState>,
+    session: Session,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    // Revoke the token if one is stored in the session.
+    match session.get::<String>("paseto_token").await {
+        Ok(Some(raw_token)) => {
+            let hash = paseto::token_hash(&raw_token);
+            if let Err(e) = db::tokens::revoke_token(&state.pool, &hash).await {
+                tracing::warn!("logout: failed to revoke session token: {e}");
+            }
+        }
+        Ok(None) => {} // no token stored — nothing to revoke
+        Err(e) => tracing::warn!("logout: could not read session token: {e}"),
+    }
+
+    // Flush the session (deletes server-side data + clears the cookie).
+    session.flush().await.map_err(|e| {
+        tracing::error!("session flush failed: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to clear session")
+    })?;
+
+    Ok(Json(serde_json::json!({"detail": "logged out"})))
 }
 
 // ---------------------------------------------------------------------------

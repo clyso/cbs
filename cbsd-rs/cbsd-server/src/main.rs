@@ -35,11 +35,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
 
 /// Extended version: cargo version + git SHA from production build.
-pub const VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "+",
-    env!("CBS_BUILD_META"),
-);
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("CBS_BUILD_META"),);
 
 /// CBS build service daemon (Rust).
 #[derive(Parser)]
@@ -67,8 +63,7 @@ fn setup_tracing(
         .map(|v| !v.is_empty())
         .unwrap_or(false);
 
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     let console_layer = if is_dev {
         Some(fmt::layer().with_ansi(true))
@@ -83,12 +78,15 @@ fn setup_tracing(
                 path.display()
             )
         });
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or_else(|| {
-            panic!(
-                "config error: logging.log-file has no filename component: '{}'",
-                path.display()
-            )
-        });
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "config error: logging.log-file has no filename component: '{}'",
+                    path.display()
+                )
+            });
         let appender = tracing_appender::rolling::never(dir, filename);
         let (writer, guard) = tracing_appender::non_blocking(appender);
         let layer = fmt::layer().with_ansi(false).with_writer(writer);
@@ -114,10 +112,7 @@ async fn main() {
     let config = config::load_config(&cli.config);
 
     // Set up tracing — hold the guard for the process lifetime.
-    let _guard = setup_tracing(
-        &config.logging.level,
-        config.logging.log_file.as_deref(),
-    );
+    let _guard = setup_tracing(&config.logging.level, config.logging.log_file.as_deref());
 
     tracing::info!("cbsd-server starting");
 
@@ -151,10 +146,15 @@ async fn main() {
         .expect("HKDF expand failed for session key");
     let session_key = tower_sessions::cookie::Key::from(&session_key_bytes);
 
-    // Session layer with signed cookies and 10-minute expiry (OAuth flows only).
-    // In dev mode, disable the Secure flag so cookies work over plain HTTP.
+    // Session layer: explicit cookie attributes for security.
+    // Default 10-minute TTL covers OAuth flow sessions; web login
+    // sessions get extended to WEB_SESSION_IDLE_SECS per-session.
     let session_layer = tower_sessions::SessionManagerLayer::new(session_store.clone())
         .with_signed(session_key)
+        .with_name("cbsd_session")
+        .with_http_only(true)
+        .with_same_site(tower_sessions::cookie::SameSite::Lax)
+        .with_path("/")
         .with_secure(!config.dev.enabled)
         .with_expiry(tower_sessions::Expiry::OnInactivity(
             time::Duration::minutes(10),

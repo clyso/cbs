@@ -14,6 +14,14 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+/// Web session idle timeout in seconds (7 days).
+///
+/// Used for the session cookie TTL after web login and as the minimum
+/// allowed value for `max_token_ttl_seconds` (a token that expires
+/// before the session idle timeout would produce confusing 401s on an
+/// apparently live session).
+pub const WEB_SESSION_IDLE_SECS: u64 = 7 * 24 * 3600;
+
 /// Top-level server configuration. Loaded from YAML.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -252,6 +260,16 @@ impl ServerConfig {
                  liveness_grace_period_secs ({})",
                 self.timeouts.reconnect_backoff_ceiling_secs,
                 self.timeouts.liveness_grace_period_secs,
+            );
+        }
+
+        // Token TTL must cover the web session idle timeout, otherwise
+        // tokens embedded in sessions expire before the session does.
+        if self.secrets.max_token_ttl_seconds < WEB_SESSION_IDLE_SECS {
+            panic!(
+                "config error: max-token-ttl-seconds ({}) must be >= {} \
+                 (web session idle timeout is 7 days)",
+                self.secrets.max_token_ttl_seconds, WEB_SESSION_IDLE_SECS,
             );
         }
 

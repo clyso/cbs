@@ -20,6 +20,7 @@ use axum_extra::TypedHeader;
 use axum_extra::headers::Authorization;
 use axum_extra::headers::authorization::Bearer;
 use sqlx::SqlitePool;
+use tower_sessions::Session;
 
 use crate::app::AppState;
 use crate::auth::paseto;
@@ -51,10 +52,13 @@ impl std::fmt::Display for ScopeType {
     }
 }
 
-/// Authenticated user extracted from the `Authorization: Bearer` header.
+/// Authenticated user extracted from `Authorization: Bearer` header or
+/// session cookie (web UI fallback).
 ///
-/// Distinguishes PASETO tokens from API keys by the `cbsk_` prefix.
-/// Capabilities are loaded from the database after user validation.
+/// Bearer path distinguishes PASETO tokens from API keys by the `cbsk_`
+/// prefix. Session path reads the PASETO token stored server-side by
+/// the OAuth callback. Capabilities are loaded from the database after
+/// user validation.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub email: String,
@@ -168,6 +172,50 @@ async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, Au
     })
 }
 
+/// Validate a raw PASETO token: decode, check revocation, load user.
+/// Shared by the Bearer header and session cookie auth paths.
+async fn validate_paseto(token_str: &str, state: &AppState) -> Result<AuthUser, AuthError> {
+    let payload =
+        paseto::token_decode(token_str, &state.config.secrets.token_secret_key).map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                token_prefix = &token_str[..token_str.len().min(20)],
+                "auth reject: PASETO decode failed"
+            );
+            auth_error(StatusCode::UNAUTHORIZED, &format!("invalid token: {e}"))
+        })?;
+
+    let hash = paseto::token_hash(token_str);
+    tracing::debug!(
+        user = %payload.user,
+        expires = ?payload.expires,
+        hash_prefix = &hash[..16],
+        "auth: PASETO decoded successfully"
+    );
+
+    let revoked = db::tokens::is_token_revoked(&state.pool, &hash)
+        .await
+        .map_err(|e| {
+            tracing::warn!("auth reject: DB error checking revocation: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to check token status",
+            )
+        })?;
+
+    if revoked {
+        tracing::warn!(
+            user = %payload.user,
+            hash_prefix = &hash[..16],
+            "auth reject: token revoked or unknown"
+        );
+        return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
+    }
+
+    tracing::debug!(user = %payload.user, "auth: token valid, loading user");
+    load_authed_user(&state.pool, &payload.user).await
+}
+
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AuthError;
 
@@ -175,76 +223,57 @@ impl FromRequestParts<AppState> for AuthUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let TypedHeader(Authorization(bearer)) = parts
-            .extract::<TypedHeader<Authorization<Bearer>>>()
-            .await
-            .map_err(|_| {
-                tracing::warn!("auth reject: missing or invalid Authorization header");
-                auth_error(
-                    StatusCode::UNAUTHORIZED,
-                    "missing or invalid Authorization header",
-                )
-            })?;
+        // Path 1: Authorization: Bearer header (CLI, API keys, scripts)
+        let bearer_result = parts.extract::<TypedHeader<Authorization<Bearer>>>().await;
 
-        let token_str = bearer.token();
-        tracing::warn!(
-            token_prefix = &token_str[..token_str.len().min(20)],
-            token_len = token_str.len(),
-            "auth: processing token"
-        );
-
-        // API key path
-        if token_str.starts_with("cbsk_") {
-            let cached =
-                crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token_str)
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!("auth reject: API key error: {e}");
-                        auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
-                    })?;
-
-            return load_authed_user(&state.pool, &cached.owner_email).await;
-        }
-
-        // PASETO token path
-        let payload = paseto::token_decode(token_str, &state.config.secrets.token_secret_key)
-            .map_err(|e| {
-                tracing::warn!(
-                    error = %e,
-                    token_prefix = &token_str[..token_str.len().min(20)],
-                    "auth reject: PASETO decode failed"
-                );
-                auth_error(StatusCode::UNAUTHORIZED, &format!("invalid token: {e}"))
-            })?;
-
-        let hash = paseto::token_hash(token_str);
-        tracing::warn!(
-            user = %payload.user,
-            expires = ?payload.expires,
-            hash_prefix = &hash[..16],
-            "auth: PASETO decoded successfully"
-        );
-
-        let revoked = db::tokens::is_token_revoked(&state.pool, &hash)
-            .await
-            .map_err(|e| {
-                tracing::warn!("auth reject: DB error checking revocation: {e}");
-                auth_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to check token status",
-                )
-            })?;
-
-        if revoked {
-            tracing::warn!(
-                user = %payload.user,
-                hash_prefix = &hash[..16],
-                "auth reject: token revoked or unknown"
+        if let Ok(TypedHeader(Authorization(bearer))) = bearer_result {
+            let token_str = bearer.token();
+            tracing::debug!(
+                token_prefix = &token_str[..token_str.len().min(20)],
+                token_len = token_str.len(),
+                "auth: processing bearer token"
             );
-            return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
+
+            // API key path
+            if token_str.starts_with("cbsk_") {
+                let cached = crate::auth::api_keys::verify_api_key(
+                    &state.pool,
+                    &state.api_key_cache,
+                    token_str,
+                )
+                .await
+                .map_err(|e| {
+                    tracing::warn!("auth reject: API key error: {e}");
+                    auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
+                })?;
+
+                return load_authed_user(&state.pool, &cached.owner_email).await;
+            }
+
+            // PASETO token path
+            return validate_paseto(token_str, state).await;
         }
 
-        tracing::warn!(user = %payload.user, "auth: token valid, loading user");
-        load_authed_user(&state.pool, &payload.user).await
+        // Path 2: Session cookie fallback (web UI)
+        tracing::debug!("auth: no bearer header, trying session cookie");
+        let session = Session::from_request_parts(parts, state)
+            .await
+            .map_err(|_| auth_error(StatusCode::UNAUTHORIZED, "authentication required"))?;
+
+        let raw_token: Option<String> = session.get("paseto_token").await.map_err(|e| {
+            tracing::warn!("auth reject: session read failed: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "session error")
+        })?;
+
+        let Some(token_str) = raw_token else {
+            tracing::debug!("auth reject: no bearer header and no session token");
+            return Err(auth_error(
+                StatusCode::UNAUTHORIZED,
+                "authentication required",
+            ));
+        };
+
+        tracing::debug!("auth: processing token from session cookie");
+        validate_paseto(&token_str, state).await
     }
 }
