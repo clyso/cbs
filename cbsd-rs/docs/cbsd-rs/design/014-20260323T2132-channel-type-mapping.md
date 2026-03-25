@@ -64,23 +64,31 @@ worker's cbscore config independently (see "Registry"
 section below).
 
 Given:
+
+
 - Channel "user", type "dev" maps to project
-  `cbs-internal`, prefix `${username}`
-- User "joao.luis@clyso.com" builds "ceph" with tag
+  `cbs-i<joao.luis@clyso.com>{username}`
+- User "<joao.luis@clyso.com>" builds "ceph" with tag
   "v19.2.2"
 
+
 The server rewrites `dst_image.name` to:
+
 ```
 cbs-internal/joao.luis/ceph
 ```
 
+
 cbscore on the worker side prepends the registry from
 its own config, producing the final push URI:
+
 ```
 harbor.clyso.com/cbs-internal/joao.luis/ceph:v19.2.2
+
 ```
 
 The path components:
+
 ```
 <project>/<prefix>/<image-name>:<tag>
     │         │         │         │
@@ -409,18 +417,22 @@ Body: `{"channel_id": 3}`
 
 Requires `permissions:manage`.
 
+
 ### cbc Changes
 
 `cbc build new` evolves:
+
 - `--channel` (`-p`) becomes optional (default: omitted
   → server resolves from user's default)
 - `--type` becomes optional (default: omitted → server
   uses channel's default type)
+
 - `--image-name` overrides only the image name portion
   (not project/prefix)
 - `--image-tag` overrides the tag
 
 New commands:
+
 - `cbc channel list` — list channels the user has
   access to, with their types
 - `cbc admin channel create/delete/update` — admin

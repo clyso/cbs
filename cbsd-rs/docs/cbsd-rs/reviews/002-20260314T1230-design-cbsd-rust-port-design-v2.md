@@ -1,6 +1,8 @@
 # Design Review: cbsd Rust Port (Post-Revision)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
@@ -27,7 +29,9 @@ The `build_output` WebSocket message carries a single `seq` field per batch (up 
 
 This will be visibly broken in any CLI or browser UI following an active build whenever the connection is interrupted mid-batch.
 
+
 **Fix (choose one):**
+
 1. **Per-line seq (recommended).** `build_output` carries `start_seq` and `lines`. Individual seq values are `start_seq`, `start_seq+1`, ..., `start_seq+len-1`. Each SSE event has `id: <per_line_seq>`. Resume is exact.
 2. **Composite SSE event IDs.** Format: `<seq>:<line_index>` (e.g., `7:20`). Server parses both on resume. More complex but avoids WS protocol changes.
 3. **Accept at-least-once delivery.** Document that mid-batch reconnects produce duplicates. Clients must deduplicate. Lowest effort but weakens SSE's correctness guarantee.

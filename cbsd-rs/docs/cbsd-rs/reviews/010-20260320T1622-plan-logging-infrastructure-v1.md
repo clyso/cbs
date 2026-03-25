@@ -94,6 +94,8 @@ Commit 3 touches 9 files across `cbsd-server`,
 `cbsd-worker`, `config/`, compose, and README. At ~400
 lines this is within the guideline, but the blast radius
 is wide. Consider whether the worker changes (Cargo.toml
+
+
 + config.rs + main.rs) could be a separate commit after
 the server changes.
 
@@ -111,20 +113,20 @@ radius is acceptable given the tight coupling.
 ---
 
 ## Minor Notes
-
-- **Commit 2 verification says "cargo test --workspace".**
++
++ **Commit 2 verification says "cargo test --workspace".**
   There are no tests that exercise the log path format
   string — the verification relies on manual testing or
   integration testing. The `cargo test` line is correct
   (it runs existing tests to ensure no regressions) but
   won't catch a typo in the format string itself.
-
-- **Commit 4's `install.sh` changes.** The plan says
++
++ **Commit 4's `install.sh` changes.** The plan says
   "enable the timer" — verify this uses `systemctl --user
   enable` (not `start`), matching the existing pattern for
   the service target.
-
-- **Commit ordering is correct.** Commit 2 (bug fix) has
++
++ **Commit ordering is correct.** Commit 2 (bug fix) has
   no dependency on Commit 3 (logging). Commit 4 (logrotate)
   depends on Commit 3 (the log files it rotates). Commits
   1 and 5 are documentation bookends. No circular

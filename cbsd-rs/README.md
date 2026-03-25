@@ -46,9 +46,13 @@ the database setup and migration steps.
   worker in containers.
 - **cargo-sqlx** — only needed when adding or modifying `query!()` macros
   or SQL migrations. Install with:
+
+
   ```bash
   cargo install sqlx-cli --no-default-features --features sqlite
+
   ```
+
 - **A cbscore config file** (`cbs-build.config.yaml`) — the worker container
   needs this to run builds. Use an existing one from your host or create a
   minimal placeholder.

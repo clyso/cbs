@@ -487,19 +487,19 @@ Assignments:
 
 | user_email | role_name |
 |------------|-----------|
-| joao@clyso.com | admin |
-| alice@clyso.com | builder |
-| bob@clyso.com | builder |
-| bob@clyso.com | viewer |
+| <joao@clyso.com>m> | admin |
+| <alice@clyso.com>m> | builder |
+| <bob@clyso.com>m> | builder |
+| <bob@clyso.com>m> | viewer |
 
 Per-assignment scopes:
 
 | user_email | role_name | scope_type | pattern |
 |------------|-----------|------------|---------|
-| alice@clyso.com | builder | channel | ces-devel/* |
-| alice@clyso.com | builder | registry | harbor.clyso.com/ces-devel/* |
-| bob@clyso.com | builder | channel | * |
-| bob@clyso.com | builder | registry | harbor.clyso.com/* |
+| <alice@clyso.com>m> | builder | channel | ces-devel/* |
+| <alice@clyso.com>m> | builder | registry | harbor.clyso.com/ces-devel/* |
+| <bob@clyso.com>m> | builder | channel | * |
+| <bob@clyso.com>m> | builder | registry | harbor.clyso.com/* |
 
 Result:
 

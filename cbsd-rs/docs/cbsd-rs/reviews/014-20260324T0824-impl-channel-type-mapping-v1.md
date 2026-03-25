@@ -140,6 +140,8 @@ DB layer should be self-protecting.
 ### F7 — Low: auto-set default type silently discards error
 
 `routes/channels.rs` (first type auto-sets default):
+
+
 ```rust
 let _ = db::channels::set_default_type(...).await;
 ```
@@ -226,7 +228,9 @@ value correctly.
 | Medium | 5 | F1-F5 |
 | Low | 6 | F6-F11 |
 
+
 No blockers. The medium issues:
+
 - F1 (`--type` / `default_type_id` dead code) is a
   design gap — decide whether to implement the
   fallback or document it as deferred.

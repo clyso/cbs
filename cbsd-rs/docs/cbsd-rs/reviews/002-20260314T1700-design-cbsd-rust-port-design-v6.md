@@ -1,6 +1,8 @@
 # Design Review: cbsd Rust Port — Final Pre-Implementation Review
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
@@ -24,7 +26,9 @@ Issues that must be resolved before implementation begins.
 
 ### B1 — PASETO `expires` serialization: frozen spec says epoch integer, running Python produces ISO 8601
 
+
 The frozen `CBSD_TOKEN_PAYLOAD_V1` spec mandates:
+
 ```json
 {"expires":1710412200,"user":"alice@clyso.com"}
 ```
@@ -35,7 +39,9 @@ The design's Python pseudocode (`json.dumps({"expires": int(dt.timestamp()) ...}
 
 Additionally, JSON key ordering is not intrinsically guaranteed. `serde_json` serializes fields in struct declaration order (which happens to be alphabetical for `{"expires", "user"}`), but this is coincidental. A future payload field between "e" and "u" will only appear in alphabetical position if the Rust struct declares it in that order.
 
+
 **Fix:** Before writing `auth/paseto.rs`:
+
 1. Decrypt a live Python-issued token and confirm the actual payload bytes.
 2. Update the auth doc to note: "The current Python server produces ISO 8601 `expires`. `CBSD_TOKEN_PAYLOAD_V1` specifies epoch integers. These are not hash-compatible. The migration break invalidates all existing tokens regardless."
 3. Remove or demote the zero-downtime migration path (it requires hashing ISO 8601 payloads, which the spec does not support).
@@ -48,9 +54,11 @@ The Python `BuildDescriptor` (`cbsdcore/src/cbsdcore/versions.py`) has two field
 1. `version_type: VersionType` — required field, values `"release"`, `"dev"`, `"test"`, `"ci"`. Present in every existing `cbc` submission.
 2. `artifact_type: BuildArtifactType` inside `BuildTarget` — string enum, default `"rpm"`.
 
+
 With default `#[derive(Deserialize)]` (no `deny_unknown_fields`), these fields are silently dropped. If migrated `builds.descriptor` blobs are ever re-serialized (display, re-dispatch, periodic re-submission), the fields are permanently lost. `version_type` has semantic meaning — cbscore may use it for tagging or behavior selection.
 
 **Fix:** Add both fields to the Rust structs:
+
 ```rust
 struct BuildDescriptor {
     version: String,
@@ -64,19 +72,23 @@ struct BuildDescriptor {
 struct BuildTarget {
     distro: String,
     os_version: String,
+
     artifact_type: String,  // default "rpm"
     arch: Arch,
 }
 ```
+
 If the Rust server doesn't use them, mark `#[allow(dead_code)]` with a comment. The cbscore subprocess wrapper must pass them through.
 
 ### B3 — `ApiKeyCache` LRU eviction cleanup is unimplementable as specified
+
 
 The design says eviction should use "a custom `pop` wrapper or `on_evict` callback." The `lru` crate (0.12) has no `on_evict` callback. Eviction happens implicitly via `push()`, which returns the evicted key-value pair. The `CachedApiKey` struct is defined as `{owner_email, roles, expires_at}` — missing `key_prefix`. Without `key_prefix` in the evicted value, the cleanup cannot find and remove the corresponding entry from `by_prefix`.
 
 Result: after LRU eviction, `by_prefix` retains a stale SHA-256 → entry mapping. A subsequent `DELETE /auth/api-keys/{prefix}` finds the prefix, retrieves the SHA-256, looks it up in `by_sha256` (cache miss — evicted), and silently fails to invalidate. `by_owner` retains the stale SHA-256 too, corrupting bulk deactivation.
 
 **Fix:** Add `key_prefix: String` to `CachedApiKey`. Specify the exact eviction pattern:
+
 ```rust
 fn insert(&mut self, sha256: [u8; 32], entry: CachedApiKey) {
     if let Some((evicted_sha256, evicted)) = self.by_sha256.push(sha256, entry.clone()) {
@@ -84,12 +96,14 @@ fn insert(&mut self, sha256: [u8; 32], entry: CachedApiKey) {
         if let Some(set) = self.by_owner.get_mut(&evicted.owner_email) {
             set.remove(&evicted_sha256);
             if set.is_empty() { self.by_owner.remove(&evicted.owner_email); }
+
         }
     }
     self.by_prefix.insert(entry.key_prefix.clone(), sha256);
     self.by_owner.entry(entry.owner_email.clone()).or_default().insert(sha256);
 }
 ```
+
 This is the only correct pattern for `lru 0.12`. Replace the vague language in the design with this concrete implementation.
 
 ---

@@ -1,6 +1,8 @@
 # Design & Plan Review: Worker Registration v2 (Phase 7)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md` (revised)
 - `cbsd-rs/docs/cbsd-rs/plans/004-20260316T1018-01-worker-registration.md` (revised)
 
@@ -79,10 +81,10 @@ before calling `handle_worker_dead`."
 ### C2 — Reconnecting worker loses in-flight build due to missing connection migration
 
 The design's reconnection flow specifies:
-
-> 3. Server checks `BuildQueue.workers` for any existing entry with the
->    same worker UUID (from a previous connection that is now `Disconnected`).
-> 4. If found: the previous connection's state is migrated to the new
+1
+> 1. Server checks `BuildQueue.workers` for any existing entry with the
+> 2  same worker UUID (from a previous connection that is now `Disconnected`).
+> 2. If found: the previous connection's state is migrated to the new
 >    connection.
 
 But the plan's Commit 3 only handles reconnection in the `WorkerStatus`

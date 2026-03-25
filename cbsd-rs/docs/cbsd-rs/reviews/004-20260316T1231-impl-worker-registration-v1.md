@@ -1,6 +1,8 @@
 # Implementation Review: cbsd-rs Phase 7 — Worker Registration
 
 **Commits reviewed (6):**
+
+
 - `d9ade16` — add worker registration and management REST API (691 lines)
 - `3b6feab` — bind WS handshake to registered worker identity (328 lines)
 - `1f21c8e` — add worker token support to config and WS client (158 lines)
@@ -8,7 +10,9 @@
 - `4648727` — merge DB and in-memory state in GET /api/workers (91 lines)
 - `5626829` — apply cargo fmt across workspace (225 lines)
 
+
 **Evaluated against:**
+
 - Design: `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md`
 
 ---
@@ -146,12 +150,16 @@ auth attempts. The prefix lookup works because the row still exists.
 
 ## Minor Observations
 
+
 - **`arch` parsing in `list_workers` uses `serde_json` roundtrip.**
   `routes/workers.rs` line 114:
+
   ```rust
+
   let arch = serde_json::from_value::<Arch>(serde_json::Value::String(row.arch))
       .unwrap_or(Arch::X86_64);
   ```
+
   This allocates a `serde_json::Value` to parse a string into an enum.
   The same pattern appears in `ws/handler.rs` for the handshake arch
   validation (lines 153–155). Both sites could use a simpler

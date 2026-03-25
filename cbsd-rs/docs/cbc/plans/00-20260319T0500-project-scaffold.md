@@ -1,6 +1,8 @@
 # Plan 00: Project Scaffold + Authentication
 
 **Design documents:**
+
+
 - `docs/cbc/design/00-20260318T1800-project-scaffold.md`
 - `docs/cbc/design/01-20260318T1801-authentication.md`
 
@@ -180,13 +182,17 @@ Only `Login` and `Whoami` variants for now. `Build`,
 
 1. Load config (require auth).
 2. `GET /api/auth/whoami`.
+
 3. Print aligned key-value output:
+
    ```
      email: admin@clyso.com
       name: Admin
      roles: admin
+
       caps: *
    ```
+
 4. On 401: print `"session expired — run 'cbc login
    {host}' to re-authenticate"` using the stored
    host from config.

@@ -65,6 +65,8 @@ it. ✓
 ### Commit 3 — Hello version + workers API (~100 lines)
 
 Proto change + worker handler + server handler + liveness
+
+
 + routes + cbc display. Below 200 but independently
 meaningful — after this commit, operators can see worker
 versions. ✓
@@ -92,7 +94,9 @@ module (`pub mod app`) declared in `main.rs`. It can
 access `crate::VERSION` — but the plan doesn't specify
 this plumbing.
 
+
 Alternatives:
+
 1. Define `VERSION` in `main.rs` at crate scope, access
    as `crate::VERSION` from `app.rs`. Simple, no state.
 2. Put `VERSION` in `app.rs` directly. But then `main.rs`
@@ -110,30 +114,30 @@ assumption.
 
 ---
 
-## Minor Notes
++# Minor Notes
 
-- **Dependency ordering is correct.** Commit 2 defines
++ **Dependency ordering is correct.** Commit 2 defines
   `VERSION` → Commit 3 uses it in the Hello message.
   Commit 4 creates the `.git-version` mechanism that
   Commit 2's `build.rs` reads — but Commit 2 compiles
-  without it (defaults to `unknown`). ✓
++ without it (defaults to `unknown`). ✓
 
-- **The server's `#[command]` attribute currently lacks
++ **The server's `#[command]` attribute currently lacks
   `version`.** The plan says all 3 binaries get
   `#[command(version = VERSION)]`. The server's current
   attribute is `#[command(name = "cbsd-server", about)]`
-  — adding `version = VERSION` is correct.
++ — adding `version = VERSION` is correct.
 
-- **Pattern matches on `WorkerState::Connected { .. }`
++ **Pattern matches on `WorkerState::Connected { .. }`
   use rest patterns.** Adding `version: Option<String>`
-  to the struct won't break existing match arms. ✓
++ to the struct won't break existing match arms. ✓
 
-- **`cbc` `WorkerInfo` uses `serde::Deserialize`.**
++ **`cbc` `WorkerInfo` uses `serde::Deserialize`.**
   Adding `version: Option<String>` with `serde(default)`
   is safe — the field deserializes as `None` from older
-  servers that don't send it. ✓
++ servers that don't send it. ✓
 
-- **Compose prod profile removal is a user-facing
++ **Compose prod profile removal is a user-facing
   change.** The README update in Commit 4 should
   document the migration path for operators currently
   using `--profile prod`.

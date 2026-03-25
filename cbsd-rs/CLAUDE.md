@@ -52,6 +52,8 @@ cargo fmt --check
 ```
 
 After any migration or query change:
+
+
 ```bash
 DATABASE_URL=sqlite:///tmp/cbsd-dev.db cargo sqlx prepare --workspace
 ```
@@ -172,14 +174,18 @@ These are easy to get wrong. Document and test them:
 
 The `.sqlx/` directory lives at the workspace root (`cbsd-rs/.sqlx/`).
 
+
 **After any commit that adds or modifies sqlx queries:**
+
 1. Ensure a dev DB exists: `DATABASE_URL=sqlite:///tmp/cbsd-dev.db`
 2. Run migrations: `cargo sqlx migrate run`
 3. Prepare cache: `cargo sqlx prepare --workspace`
 4. Verify: `SQLX_OFFLINE=true cargo build --workspace`
 5. Include `.sqlx/` changes in the commit
 
+
 **Bootstrap (first time):**
+
 1. `cargo sqlx database create`
 2. `cargo sqlx migrate run`
 3. Write query code

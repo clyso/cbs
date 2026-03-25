@@ -1,11 +1,15 @@
 # Plan Review: cbsd-rs Implementation Plans (Phases 0–6)
 
 **Plans reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/plans/README.md` (index, dependency graph, conventions)
 - `cbsd-rs/docs/cbsd-rs/plans/README.md` (implementation session instructions)
 - `cbsd-rs/docs/cbsd-rs/plans/001-20260318T1411-scaffolding.md` through `002-20260318T1411-05-integration.md`
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`

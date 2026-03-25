@@ -1,6 +1,8 @@
 # Implementation Review: cbsd-rs Phase 2 Fixes + Phase 3
 
 **Commits reviewed:**
+
+
 - `c76962a` — Commit 4a: Google OAuth flow with HKDF session signing
 - `2ce89c4` — Commit 4b: API key management with LRU cache and auth routes
 - `d6beaca` — Commit 5a: RBAC database layer and scope evaluation
@@ -12,7 +14,9 @@ into two each per the granularity assessment. This review covers the
 split versions. Commit 4 fixes (HKDF, rate limiting, `load_authed_user`,
 default `"cli"`) were fixup'd into the split commits.
 
+
 **Evaluated against:**
+
 - Plan: `cbsd-rs/docs/cbsd-rs/plans/003-20260318T1411-authentication.md` (Commit 4)
 - Plan: `cbsd-rs/docs/cbsd-rs/plans/002-20260318T1411-02-permissions-builds.md` (Commits 5–6)
 - Design: `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
@@ -97,14 +101,18 @@ No route handlers — independently testable DB + evaluation logic.
 
 ### Plan Compliance: Complete
 
+
 **`routes/permissions.rs`** (812 lines):
+
 - All 10 endpoints implemented ✓
 - `KNOWN_CAPS` validation on create/update (400 for unknown) ✓
 - `SCOPE_DEPENDENT_CAPS` enforcement on assignment (400 if missing) ✓
 - `?force=true` for cascade deletion ✓
+
 - Builtin role protection (409 on delete/modify) ✓
 
 **`routes/admin.rs`** (188 lines):
+
 - Deactivation: transactional with in-transaction last-admin guard ✓
 - Idempotent (already-inactive → 200, skips guard) ✓
 - Bulk revoke tokens + API keys after commit ✓
@@ -152,9 +160,11 @@ Phase 3 plan progress table updated. ✓
 
 ## Code Quality & Issues
 
+
 ### Issue — `role_is_scope_dependent` treats `*` as scope-dependent
 
 `routes/permissions.rs` line 153:
+
 ```rust
 fn role_is_scope_dependent(caps: &[String]) -> bool {
     caps.iter().any(|c| SCOPE_DEPENDENT_CAPS.contains(&c.as_str()) || c == "*")

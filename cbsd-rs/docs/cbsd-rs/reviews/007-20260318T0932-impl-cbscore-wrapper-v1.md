@@ -1,9 +1,13 @@
 # Implementation Review: cbsd-rs Phase 9 — cbscore Wrapper
 
 **Commit reviewed:**
+
+
 - `ab96acc` — implement cbscore-wrapper.py build bridge (180+, 19−, 2 files)
 
+
 **Evaluated against:**
+
 - Design: `cbsd-rs/docs/cbsd-rs/design/007-20260318T0716-cbscore-wrapper.md`
 
 ---
@@ -91,7 +95,9 @@ and exit with code 1. The Rust worker sees no structured result line
 `stream_output` returns `(Failure, None)` — correct outcome but with
 no error message.
 
+
 The design's error classification table maps:
+
 - `VersionError` → exit 1
 - `MalformedVersionError` → exit 1
 

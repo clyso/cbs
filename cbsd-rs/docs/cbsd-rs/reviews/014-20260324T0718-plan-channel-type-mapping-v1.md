@@ -99,6 +99,8 @@ their existing periodic task for `ces/release` fail
 at the next trigger?
 
 The plan should state one of:
+
+
 - **Yes, re-check scopes** — more secure, prevents
   stale permissions from producing builds
 - **No, skip scopes** — the task was authorized at
@@ -134,7 +136,9 @@ format correctly:
 - `ces/*` → prefix match ✓
 - `*` → matches all ✓
 
+
 The actual changes are:
+
 - `routes/builds.rs`: construct scope check value as
   `"{channel_name}/{type_name}"` instead of raw
   `descriptor.channel`

@@ -64,6 +64,8 @@ $ cbc whoami
 **Endpoint:** `GET /api/auth/whoami`
 
 **Response fields displayed:**
+
+
 - `email`
 - `name`
 - `roles` (comma-separated)

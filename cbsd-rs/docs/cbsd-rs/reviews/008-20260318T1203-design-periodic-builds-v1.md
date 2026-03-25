@@ -1,9 +1,13 @@
 # Design Review: Periodic Builds
 
 **Document reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md`
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/cbsd-server/src/routes/builds.rs` (build submission, scope checks)
 - `cbsd-rs/cbsd-server/src/routes/permissions.rs` (KNOWN_CAPS, scope logic)
 - `cbsd-rs/cbsd-server/src/app.rs` (AppState)
@@ -54,7 +58,9 @@ on their behalf targeting `channel=ces-internal`, the task fires outside
 the builder's scope. Even if the scope gap is fixed later, the task is
 unaffected.
 
+
 **Fix:** Choose one explicitly:
+
 - **Option A (stronger):** At trigger time, re-validate `created_by`
   user: check `users.active`, check `builds:create` capability, and run
   `require_scopes_all()` against the descriptor. Disable the task if
@@ -89,9 +95,11 @@ The retry loop runs in memory. On restart, the scheduler reloads from
 DB and computes next fire times from `cron_expr`, resetting all retry
 state. A permanently failing task (bad registry URL, unknown component)
 will: fire → fail → disable → operator re-enables → server restarts →
+
 retry count resets → repeat forever.
 
 **Fix:** Add two columns to `periodic_tasks`:
+
 - `retry_count INTEGER NOT NULL DEFAULT 0`
 - `retry_until INTEGER` (nullable — NULL when not in retry)
 

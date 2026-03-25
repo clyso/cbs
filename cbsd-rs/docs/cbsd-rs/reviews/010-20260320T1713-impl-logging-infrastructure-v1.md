@@ -1,12 +1,16 @@
 # Implementation Review: 010 — Logging Infrastructure
 
 **Commits reviewed:**
+
+
 - `da13205` — docs: design, plan, reviews
 - `9255de9` — fix build log path stored in database
 - `4596788` — file logging with CBSD_DEV console gating
 - `48b2dd1` — logrotate for application logs
 
+
 **Evaluated against:**
+
 - Design `010-20260320T1430-logging-infrastructure.md` (v3)
 - Plan `010-20260320T1600-logging-infrastructure.md`
 
@@ -74,33 +78,41 @@ full-download routes. SSE and GC now resolve correctly. ✓
 
 ### 4596788 — file logging (~293 lines)
 
+
 **Server `config.rs`:**
+
 - `#[allow(dead_code)]` removed from `log_file`. ✓
 - Validation in `validate()`: `is_dev` check, absolute
   path, filename component, parent directory. ✓
 - Server uses `panic!` for validation failures (consistent
+
   with existing `validate()` pattern). ✓
 
 **Server `main.rs`:**
+
 - `setup_tracing()` function with optional console + file
   layers. ✓
 - `rolling::never(dir, filename)` — correct API call. ✓
 - `non_blocking()` → `(writer, guard)`. Guard held as
   `let _guard`. ✓
 - `registry().with(filter).with(console).with(file).init()`
+
   — correct combinator pattern. ✓
 - Called after `load_config()` (validation runs first). ✓
 
 **Worker `config.rs`:**
+
 - `LoggingConfig` struct with `level` and `log_file`. ✓
 - `Default` impl with `level: "info"`. ✓
 - Validation in `resolve()`: same 3 checks as server. ✓
 - Worker uses `ConfigError::Validation` (returns `Result`,
+
   not `panic!` — matches existing `resolve()` pattern). ✓
 - `logging` field added to both `WorkerConfig` and
   `ResolvedWorkerConfig`. ✓
 
 **Worker `main.rs`:**
+
 - `setup_tracing()` identical to server's version. ✓
 - Called before `resolve()` using `raw_config.logging`. ✓
 - Resolve error falls back to `eprintln!` (correct —

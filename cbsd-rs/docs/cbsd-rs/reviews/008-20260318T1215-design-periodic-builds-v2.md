@@ -1,9 +1,13 @@
 # Design Review: Periodic Builds v2
 
 **Document reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (revised)
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/cbsd-server/src/routes/builds.rs`
 - `cbsd-rs/cbsd-server/src/routes/permissions.rs`
 - `cbsd-rs/cbsd-server/src/app.rs`
@@ -76,7 +80,9 @@ target channel) updates the descriptor to target a different channel,
 the scheduler fires it unchecked — the only gate is `users.active` on
 the original creator.
 
+
 Concrete attack path:
+
 1. Alice has `builds:create` scoped to `channel=ces-devel`, creates a
    periodic task.
 2. Bob has `periodic:manage` but no `builds:create`.

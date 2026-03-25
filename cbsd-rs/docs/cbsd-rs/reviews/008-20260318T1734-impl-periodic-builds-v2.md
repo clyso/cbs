@@ -1,9 +1,13 @@
 # Implementation Review: cbsd-rs Phase 10 — Periodic Builds (v2)
 
 **Commit reviewed:**
+
+
 - `76c2e27` — add periodic build scheduling (amended from `d061131`)
 
+
 **Evaluated against:**
+
 - Design: `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3)
 - Prior review: `20260318T1717-impl-phase10-periodic-builds.md`
 
@@ -37,25 +41,31 @@ function is eliminated — `insert_build()` now takes
 
 ### F1 — `{DT}` now includes seconds
 
+
 `tag_format.rs:120-128`:
+
 ```rust
 "DT" => Some(format!(
     "{:04}{:02}{:02}T{:02}{:02}{:02}",
     now.year(), now.month(), now.day(),
     now.hour(), now.minute(), now.second()
 )),
+
 ```
 
 Test updated (`tag_format.rs:277`):
+
 ```rust
 assert_eq!(result, "build-20260318T143045");
 ```
 
 Matches the design's specification: `{DT}` → `20260318T143020`. ✓
 
+
 ### F2 — Shared `insert_build_internal()`
 
 `routes/builds.rs:169` defines:
+
 ```rust
 pub async fn insert_build_internal(
     state: &AppState,

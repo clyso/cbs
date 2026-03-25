@@ -106,6 +106,8 @@ Flattens `BuildDescriptorArgs` from `builds.rs` (already
    split, version type/priority parsing).
 4. Serialize descriptor to `serde_json::Value`.
 5. Build request body:
+
+
    ```json
    {
      "cron_expr": "<cron>",
@@ -114,7 +116,9 @@ Flattens `BuildDescriptorArgs` from `builds.rs` (already
      "priority": "<priority>",
      "summary": "<summary>"
    }
+
    ```
+
 6. `POST /api/periodic`.
 7. Print task ID and state from response. Include
    schedule and next run time (convert epoch to UTC).

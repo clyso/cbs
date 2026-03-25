@@ -1,9 +1,13 @@
 # Design Review: Periodic Builds v3
 
 **Document reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3, third revision)
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/cbsd-server/src/routes/builds.rs`
 - `cbsd-rs/cbsd-server/src/routes/permissions.rs`
 - `cbsd-rs/cbsd-server/src/app.rs`

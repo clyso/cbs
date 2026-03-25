@@ -1,9 +1,13 @@
 # Plan Review: cbsd-rs Implementation Plans v3 (Phases 0–6)
 
 **Plans reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/plans/README.md` through `002-20260318T1411-05-integration.md` (all 9 files)
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/docs/cbsd-rs/design/` (all 4 design documents)
 
 ---
@@ -42,7 +46,9 @@ If the implementer substitutes a simpler approach (raw key reuse, random key), s
 
 ### SC1 — Watch channel storage and lifecycle unspecified across Commits 8a and 9
 
+
 The log writer (Commit 9) creates `tokio::sync::watch` senders per active build. The SSE handler needs to find them. The plan never specifies:
+
 1. Where the `HashMap<BuildId, watch::Sender<()>>` lives (in `ActiveBuild`? In `AppState` separately?).
 2. Who creates the sender — dispatch (Commit 8a) or first `build_output` (Commit 9)? If at first output, there's a race where SSE connects before output arrives.
 3. Who drops the sender on completion — `build_finished` handler, startup recovery (Commit 12), or shutdown (Commit 13)?

@@ -1,6 +1,8 @@
 # Implementation Review: cbsd-rs Phases 4–6 (Final)
 
 **Commits reviewed (8 new since last review):**
+
+
 - `5ea7bb5` — Commit 7: WebSocket handler, liveness, worker tracking (673 lines)
 - `d2dfe6a` — Commit 8a: Build dispatch engine, split-mutex (810 lines)
 - `3866bf7` — Commit 8b: Revocation, reconnection table, periodic sweep (680 lines)
@@ -13,7 +15,9 @@
 **Also verified:** Prior review fix (`role_is_scope_dependent` no longer
 treats `*` as scope-dependent) confirmed applied.
 
+
 **Evaluated against:**
+
 - Plans: `002-20260318T1411-03-dispatch-logs.md`, `002-20260318T1411-04-worker.md`, `002-20260318T1411-05-integration.md`
 - Design documents in `cbsd-rs/docs/cbsd-rs/design/`
 
@@ -212,7 +216,9 @@ dispatched to a worker that accepts the connection but ignores the
 
 ### Finding 2 — `ActiveBuild` doesn't store `priority`
 
+
 `handle_build_rejected` (dispatch.rs:388) re-queues with:
+
 ```rust
 let priority = Priority::Normal; // Active builds don't store priority
 ```

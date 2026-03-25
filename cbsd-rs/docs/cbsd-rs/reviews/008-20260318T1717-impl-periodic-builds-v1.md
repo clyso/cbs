@@ -1,9 +1,13 @@
 # Implementation Review: cbsd-rs Phase 10 — Periodic Builds
 
 **Commit reviewed:**
+
+
 - `d061131` — add periodic build scheduling (~2000 LOC, 14 source files)
 
+
 **Evaluated against:**
+
 - Design: `cbsd-rs/docs/cbsd-rs/design/008-20260318T1412-periodic-builds.md` (v3, approved)
 
 ---
@@ -121,7 +125,9 @@ than expected and will not match the Python implementation's format.
 Two periodic tasks firing in the same minute with different second
 offsets (e.g., retry fires) will produce identical tags.
 
+
 **Fix:** Add seconds to the format string:
+
 ```rust
 "DT" => Some(format!(
     "{:04}{:02}{:02}T{:02}{:02}{:02}",

@@ -1,6 +1,8 @@
 # Design & Plan Review: Compile-Time Checked SQL Queries (Phase 8)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/006-20260317T0732-sqlx-compile-time-queries.md`
 - `cbsd-rs/docs/cbsd-rs/plans/006-20260317T1028-sqlx-macros.md`
 
@@ -59,7 +61,9 @@ Wait — the actual total is 77 including recovery's 7. The design says
 not 77). The table undercounts by 8: 7 from the missing `recovery.rs`
 and 1 from `admin.rs` (actual: 6, listed: 5).
 
+
 **Corrected totals:**
+
 - 13 files, 77 queries total
 - 76 to migrate (77 - 1 dynamic `list_builds`)
 - The plan's progress table says "69 queries migrated" which is also

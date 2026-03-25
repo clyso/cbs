@@ -1,6 +1,8 @@
 # Design Review: cbsd Rust Port — v5 (2026-03-15)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
@@ -28,7 +30,9 @@ The `create_build` handler makes independent `require_scope` calls for channel a
 
 Example: alice has `builder` with two assignments — A scoped to `channel=ces-devel/*`, B scoped to `registry=harbor.clyso.com/ces-prod/*`. A build targeting `channel=ces-devel/ceph` pushing to `harbor.clyso.com/ces-prod/ceph` passes both checks (A satisfies channel, B satisfies registry), even though no single assignment authorizes that specific combination. This is the classic confused-deputy problem in multi-dimensional RBAC.
 
+
 **Fix (choose one):**
+
 - **Option A (assignment-level AND — stricter, likely correct):** Replace independent `require_scope` calls with a single `require_scopes` that takes all scope checks and finds one assignment satisfying ALL of them.
 - **Option B (per-type OR — looser):** Keep independent checks. Document explicitly that cross-assignment combinations are intentionally permitted. Accept the broader authorization model.
 
@@ -36,7 +40,9 @@ Example: alice has `builder` with two assignments — A scoped to `channel=ces-d
 
 The auth doc's scope check example calls `user.require_scope(ScopeType::Repository, &body.descriptor.repo)`. The Python `BuildDescriptor` has no top-level `repo` field. The `repo` field exists on `BuildComponent` (each descriptor can have multiple components, each with an optional and potentially distinct `repo`). This code will not compile.
 
+
 **Fix (choose one):**
+
 - **Option A:** Add a top-level `repo: Option<String>` field to the Rust `BuildDescriptor`. Document as a schema change in the migration plan.
 - **Option B:** Define an extraction rule (e.g., check each `components[].repo`, pass if any matches).
 - **Option C:** Remove `repository` as a scope type from `builds:create` for v1 and rely on channel + registry scopes only.
@@ -49,15 +55,21 @@ The `GET /api/auth/whoami` response example shows `{ "type": "project", "pattern
 
 ### B4 — PASETO token payload schema is unfrozen
 
+
 The `tokens.token_hash` hashing spec is frozen (SHA-256 of raw UTF-8 token string). But the encrypted payload schema — field names, types, `expires_at` encoding, `jti` presence — is still listed as an open question. Both the Python migration script and the Rust server must agree on this.
 
 The answer is already in the codebase. `cbsdcore/src/cbsdcore/auth/token.py` defines:
+
 ```python
+
 class TokenInfo(pydantic.BaseModel):
+
     user: str          # email
     expires: dt | None # ISO 8601 or null
 ```
+
 No `jti` field exists. The Rust equivalent is:
+
 ```rust
 struct CbsdTokenPayloadV1 {
     user: String,
@@ -77,12 +89,15 @@ Significant issues that will cause pain if not addressed.
 
 The LRU cache is keyed by SHA-256 of the raw API key string. Two invalidation paths cannot reach the cache:
 
+
 1. **Individual revocation** (`DELETE /auth/api-keys/{prefix}`): The handler has the `key_prefix`, not the raw key. The argon2 `key_hash` in the DB is one-way — you cannot derive the SHA-256 cache key from it.
 2. **Bulk deactivation** (`PUT /admin/users/{email}/deactivate`): The handler has the user's email but the same SHA-256 derivation problem. Even if individual revocation is fixed, bulk deactivation has the same structural gap.
 
 Result: revoked/deactivated API keys remain authenticated via the LRU until natural eviction.
 
 **Fix:** The LRU needs reverse indices:
+
+
 ```rust
 struct ApiKeyCache {
     by_sha256: LruCache<[u8;32], CachedApiKey>,
@@ -90,6 +105,7 @@ struct ApiKeyCache {
     by_owner: HashMap<String, HashSet<[u8;32]>>, // email → set of sha256
 }
 ```
+
 On individual revocation by prefix: use `by_prefix` to find and remove. On bulk deactivation by email: drain `by_owner[email]`. On cache insert: populate both reverse maps. Specify this explicitly in the design.
 
 ### M2 — Log file GC policy is completely absent

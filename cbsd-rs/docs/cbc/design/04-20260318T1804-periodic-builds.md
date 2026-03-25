@@ -204,6 +204,8 @@ Displayed in `--help` for `periodic new` and
 `{Y}` `{m}` `{d}` `{H}` `{M}` `{S}` `{DT}`
 
 **Build descriptor:**
+
+
 - `{version}` — `--version` value
 - `{base_tag}` — `--image-tag` value (the template tag
   before interpolation)

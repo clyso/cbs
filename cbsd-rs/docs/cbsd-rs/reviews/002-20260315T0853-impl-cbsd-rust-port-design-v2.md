@@ -116,6 +116,8 @@ acceptable.
 The 9-commit history is well-structured. Each commit has a clear scope,
 compiles independently, and is testable at its boundary. The Commit 4 and
 5 splits follow the recommended boundaries exactly:
+
+
 - 4: OAuth flow / API key management
 - 5: DB+extractor foundation / route handlers
 

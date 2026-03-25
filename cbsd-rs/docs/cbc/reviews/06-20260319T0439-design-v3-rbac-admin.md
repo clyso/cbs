@@ -10,6 +10,8 @@ Both v2 blockers resolved:
   Matches `ScopeBody` with `#[serde(rename = "type")]`.
 
 The v2 major concern is also resolved:
+
+
 - `admin users get` now uses a single request
   (`GET /api/permissions/users`, filter client-side).
 

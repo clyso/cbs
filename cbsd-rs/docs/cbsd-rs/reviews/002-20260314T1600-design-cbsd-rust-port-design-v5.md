@@ -1,6 +1,8 @@
 # Design Review: cbsd Rust Port — v6 (2026-03-15)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
@@ -38,7 +40,9 @@ The shutdown sequence says: "Send `build_revoke` to all workers with active buil
 
 The reconnection decision table handles `STARTED + worker reconnects building N` correctly (resume, no state change) — but only if the previous server did NOT send `build_revoke`.
 
+
 **Fix:** Split into two modes:
+
 1. **Graceful restart** (default SIGTERM): Do not send `build_revoke`. Flush logs to disk. Close WebSocket connections. Workers enter reconnection loop and re-attach to the new instance. The reconnection table handles reconciliation.
 2. **Intentional decommission** (`--drain` flag or explicit signal): Send `build_revoke`, wait for acks, mark unacknowledged builds `FAILURE("server decommissioned")`.
 

@@ -177,6 +177,8 @@ at least one type.
 
 The design lists `seed.rs` in files-changed but doesn't
 specify:
+
+
 - What channel(s) to seed
 - What types per channel (names, projects, prefix
   templates)

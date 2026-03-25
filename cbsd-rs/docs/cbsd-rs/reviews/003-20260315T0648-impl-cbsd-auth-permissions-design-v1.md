@@ -1,9 +1,13 @@
 # Implementation Review: cbsd-rs Commit 4 (Phase 2 completion)
 
 **Commit reviewed:**
+
+
 - `f98c88f` — cbsd-rs/server: add OAuth, API key management, and auth routes
 
+
 **Evaluated against:**
+
 - Plan: `cbsd-rs/docs/cbsd-rs/plans/003-20260318T1411-authentication.md` (Commit 4 section)
 - Design: `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`
 
@@ -137,8 +141,10 @@ The plan's Commit 5 progress table should reflect this.
 
 **Issue 1 — Duplicate user-load + active-check pattern in AuthUser extractor.**
 
+
 The PASETO path (lines 205–245) and the API key path (lines 172–203) both
 contain identical logic:
+
 ```rust
 let user = db::users::get_user(&state.pool, &email).await...?
     .ok_or_else(...)?;
@@ -230,18 +236,22 @@ the next owner-level operation.
 
 ---
 
+
 ## Bonus: Ahead-of-Schedule Work
 
 `db/roles.rs` (374 lines) is a complete RBAC database layer including:
+
 - Role CRUD with builtin protection
 - Capability management (`set_role_caps`, `get_role_caps`)
 - User-role assignments with per-assignment scopes
 - `get_effective_caps()` — deduplicated union across roles
 - `get_user_assignments_with_scopes()` — for scope evaluation
+
 - `count_active_wildcard_holders()` — for last-admin guard
 - `has_assignments()`, `is_role_builtin()` — helpers
 
 `extractors.rs` additions (also ahead of Commit 5):
+
 - `ScopeType` enum with `as_str()` for DB matching
 - `has_cap()`, `has_any_cap()` — capability checks with `*` wildcard
 - `require_scopes_all()` — assignment-level AND semantics with glob matching

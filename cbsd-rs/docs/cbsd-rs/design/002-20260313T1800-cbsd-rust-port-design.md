@@ -729,7 +729,7 @@ lock across I/O:
 2. **Release lock.**
 3. **Outside lock:** Pack component tarball (no caching — re-packed on each
    dispatch; at ~6 KB per component this is negligible). Send `build_new` JSON
-   + binary frame over WebSocket.
+   - binary frame over WebSocket.
 4. **On send failure:** Re-acquire lock, push build back to front of its lane.
 
 This prevents two concurrent dispatch triggers from popping the same build,
@@ -787,11 +787,11 @@ When a build is submitted (via REST API) or a worker becomes idle:
 8a. On `build_accepted`: **cancel the ack timer**. Build remains in
     `DISPATCHED` state (worker has acknowledged but not yet started).
 8b. On `build_started`: transition from `DISPATCHED` to `STARTED`.
-9. On `build_rejected`: re-acquire mutex, push build back to front of its
+8. On `build_rejected`: re-acquire mutex, push build back to front of its
    lane, try the next worker.
-10. On send failure: re-acquire mutex, push build back to front of its lane.
-11. On ack timeout: re-acquire mutex, push build back to front of its lane.
-12. If no workers are available, the build stays in its priority lane.
+9 On send failure: re-acquire mutex, push build back to front of its lane.
+10. On ack timeout: re-acquire mutex, push build back to front of its lane.
+11. If no workers are available, the build stays in its priority lane.
 
 **DISPATCHED → STARTED gap:** If the worker sends `build_accepted` but
 disconnects before `build_started`, the build stays in `DISPATCHED` with no
@@ -888,6 +888,8 @@ previous server instance.
 
 Workers that were connected to the previous server instance will detect the
 connection drop and enter their reconnection loop. When they reconnect:
+
+
 - If idle: they re-register normally.
 - If mid-build: they send `worker_status`. The server applies the reconnection
   decision table. Since the server marked that build as `failure` in step 2,

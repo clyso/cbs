@@ -1,12 +1,16 @@
 # Implementation Review: 011 — Build Artifact Reporting
 
 **Commits reviewed:**
+
+
 - `02a72b1` — docs: design, plan, reviews
 - `2a3a06f` — cbscore: artifact report + builder/runner
 - `0e5eb6b` — cbsd-rs: WebSocket protocol + worker
 - `56a3895` — cbsd-rs/server: storage + API
 
+
 **Evaluated against:**
+
 - Design `011-20260321T0401` (v2, approved)
 - Plan `011-20260321T1022` (v2, approved)
 
@@ -76,14 +80,18 @@ All match approved documents. ✓
 
 ### 2a3a06f — Python (~220 lines)
 
+
 **`report.py`:**
+
 - Clean Pydantic v2 models with docstrings.
 - All fields typed. `str | None` union syntax. ✓
 - Logger follows cbscore pattern:
   `parent_logger.getChild("report")`. ✓
+
 - `report_version: int = 1` for schema evolution. ✓
 
 **`builder.py`:**
+
 - `async def run(self) -> BuildArtifactReport | None`
   — return type annotation correct. ✓
 - Skipped path: minimal report with `skipped=True`,
@@ -93,10 +101,12 @@ All match approved documents. ✓
   `ReleaseDesc.builds.values()` → components. ✓
 - `_write_report()` catches `OSError`, logs warning on
   failure (non-fatal). ✓
+
 - f-string logging replaced with `%s`-style in the
   `skopeo_image_exists` message. ✓
 
 **`runner.py`:**
+
 - Return type → `BuildArtifactReport | None`. ✓
 - `report_host_path` set before `try` block. ✓
 - Read + validate + cleanup in `try/finally` after the
@@ -105,22 +115,27 @@ All match approved documents. ✓
   for JSON string validation. ✓
 - `report_host_path.unlink(missing_ok=True)` in `finally`. ✓
 - Report read before `if rc != 0` check. ✓
+
 - `return report` after the success path. ✓
 - Broad `except Exception` for report read is acceptable:
   a corrupt report file should not crash the runner. ✓
 
 **`cbscore-wrapper.py`:**
+
 - `_emit_result` gains `build_report: dict[str, object] | None = None`. ✓
 - `report.model_dump(mode="json")` — correct Pydantic v2
   idiom for JSON-safe dict. ✓
 - Error paths call `_emit_result(1/2, ...)` without
   `build_report` — defaults to `None`. ✓
+
 - Result dict always includes `"build_report": null` for
   error paths. The Rust side handles this. ✓
 
 ### 0e5eb6b — Rust worker (~88 lines)
 
 **`ws.rs` (proto):**
+
+
 - `build_report: Option<serde_json::Value>` with
   `serde(default, skip_serializing_if)`. ✓
 - 2 new tests: round-trip with report, missing field
@@ -128,32 +143,43 @@ All match approved documents. ✓
 - Existing tests updated to include `build_report: None`. ✓
 
 **`output.rs`:**
+
+
 - `WrapperResult.build_report: Option<Value>`. ✓
 - Extraction: `parsed.get("build_report").cloned()`. ✓
 - Size limit: `MAX_REPORT_SIZE = 65_536`. ✓
+
 - Null filtering: `is_some_and(Value::is_null)`. ✓
 - Return type: 3-tuple. ✓
 
 **`cbsd-worker/ws/handler.rs`:**
+
 - All `BuildFinished` construction sites updated. ✓
 - Error paths pass `build_report: None`. ✓
 
+
 **`cbsd-server/ws/handler.rs` (in this commit):**
+
 - `let _ = build_report;` placeholder — correctly
+
   suppresses unused-variable warning until Commit 4
   wires it up. ✓
 
 ### 56a3895 — Rust server (~99 lines)
 
 **`004_build_report.sql`:**
+
 - `ALTER TABLE builds ADD COLUMN build_report TEXT`. ✓
 - Comment documents NULL semantics. ✓
 
 **`builds.rs`:**
+
+
 - `BuildRecord` gains `build_report: Option<Value>`
   with `skip_serializing_if`. ✓
 - `BuildListRecord` — separate type without report. ✓
 - `get_build` query SELECTs `build_report`, deserializes
+
   TEXT→Value via `serde_json::from_str`. ✓
 - `list_builds` returns `Vec<BuildListRecord>`. ✓
 - `row_to_build_list_record` — renamed from
@@ -161,11 +187,16 @@ All match approved documents. ✓
 - `set_build_finished` gains `build_report: Option<&str>`. ✓
 
 **`dispatch.rs`:**
+
+
 - `handle_build_finished` gains `build_report` param. ✓
 - `handle_build_rejected` passes `None`. ✓
 - `handle_revoke_timeout` passes `None`. ✓
 
+
 **`handler.rs`:**
+
+
 - `let _ = build_report` removed. ✓
 - Success path: serializes Value→String, passes to
   `handle_build_finished`. ✓
@@ -174,12 +205,15 @@ All match approved documents. ✓
 - `fail_build`: `set_build_finished` with `None`. ✓
 
 **`main.rs`:**
+
 - Drain/revoke: `set_build_finished` with `None`. ✓
 
 **`routes/builds.rs`:**
+
 - `list_builds` returns `Vec<BuildListRecord>`. ✓
 
 **`.sqlx/`:**
+
 - 2 updated cache files. ✓
 
 ---

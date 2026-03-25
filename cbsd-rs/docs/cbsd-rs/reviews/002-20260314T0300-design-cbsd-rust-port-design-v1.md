@@ -1,6 +1,8 @@
 # Design Review: cbsd Rust Port — Architecture, Auth/Permissions & API Surface
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md`
 - `cbsd-rs/docs/cbsd-rs/design/002-20260313T1800-cbsd-rust-port-design.md`
 - `cbsd-rs/docs/cbsd-rs/design/003-20260313T2129-cbsd-auth-permissions-design.md`

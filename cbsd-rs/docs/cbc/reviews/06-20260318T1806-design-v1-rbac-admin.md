@@ -58,6 +58,8 @@ or active status. There is no single-user GET endpoint.
 
 To produce the design's output (email, name, active, roles,
 caps), the client needs:
+
+
 1. `GET /api/permissions/users` (list all, filter by email).
 2. `GET /api/permissions/users/{email}/roles` (role list).
 3. N × `GET /api/permissions/roles/{name}` (caps per role).

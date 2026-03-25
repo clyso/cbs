@@ -1,6 +1,8 @@
 # Design & Plan Review: Worker Registration v3 (Phase 7)
 
 **Documents reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/design/004-20260316T0925-worker-registration.md` (revised)
 - `cbsd-rs/docs/cbsd-rs/plans/004-20260316T1018-01-worker-registration.md` (revised)
 
@@ -78,7 +80,9 @@ The plan handles the double-connect case with:
 > If found and `Connected` (stale double-connect): remove old entry,
 > log warning, register new.
 
+
 Not specified:
+
 1. The old connection's `worker_senders` entry — the forward task keeps
    running, the old socket stays open.
 2. Any active build in `queue.active` assigned to the old connection —

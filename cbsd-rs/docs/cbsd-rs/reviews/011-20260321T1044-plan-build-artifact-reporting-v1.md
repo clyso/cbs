@@ -87,6 +87,8 @@ uses union syntax, not `Optional`. ✓
 ### Commit 3 — Rust worker (~200 lines)
 
 `cbsd-proto/src/ws.rs` + `cbsd-worker/src/build/output.rs`
+
+
 + `cbsd-worker/src/ws/handler.rs`. The proto change and
 the worker extraction are tightly coupled (the handler
 constructs the `BuildFinished` message using the output
@@ -160,22 +162,22 @@ checked.
 ---
 
 ## Minor Notes
-
-- **Dependency ordering is correct.** Commit 2 (Python)
++
++ **Dependency ordering is correct.** Commit 2 (Python)
   → Commit 3 (worker) → Commit 4 (server). The Rust
   side handles `None`/missing gracefully, so commits 3-4
   compile independently of commit 2.
-
-- **The `model_dump(mode="json")` call** is correct
++
++ **The `model_dump(mode="json")` call** is correct
   Pydantic v2 idiom. Returns a plain dict suitable for
   `json.dumps`.
-
-- **`report.py` naming.** The plan places Pydantic
++
++ **`report.py` naming.** The plan places Pydantic
   models in `cbscore/src/cbscore/builder/report.py`.
   This follows cbscore's existing pattern of having
   model files alongside the code that constructs them.
-
-- **The `finally` block for report cleanup** is in
++
++ **The `finally` block for report cleanup** is in
   `runner.py`, not `builder.py`. Correct — `runner()`
   reads the file from the host side; it owns cleanup.
 

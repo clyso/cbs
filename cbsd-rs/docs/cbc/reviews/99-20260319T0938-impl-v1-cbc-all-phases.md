@@ -1,6 +1,8 @@
 # Implementation Review: cbc CLI — All Phases
 
 **Commits reviewed:**
+
+
 - `f91fd2d` — scaffold with login and whoami (Plan 00+01)
 - `bbb360b` — build commands (Plan 02)
 - `53d455c` — build log commands (Plan 03)
@@ -9,7 +11,9 @@
 - `c217529` — admin role and queue commands (Plan 06 C1)
 - `70cf5b8` — admin user and role assignment commands (Plan 06 C2)
 
+
 **Evaluated against:**
+
 - Design docs `00` through `06`
 - Plans `00` through `06`
 

@@ -1,9 +1,13 @@
 # Plan Review: cbsd-rs Implementation Plans v2 (Phases 0–6)
 
 **Plans reviewed:**
+
+
 - `cbsd-rs/docs/cbsd-rs/plans/README.md` through `002-20260318T1411-05-integration.md` (all 9 files)
 
+
 **Cross-referenced against:**
+
 - `cbsd-rs/docs/cbsd-rs/design/README.md` and all 3 design documents
 
 ---
@@ -24,7 +28,9 @@ Three blockers remain. The most immediately impactful is B1: the `cargo sqlx pre
 
 Commit 2 says "Run `cargo sqlx prepare` and commit `.sqlx/` directory." But `cargo sqlx prepare` requires a compilable binary (for query analysis), and the binary uses `sqlx::query!` macros that require either a live database or the `.sqlx/` cache to compile. Neither exists when Commit 2 is first being written.
 
+
 **Fix:** Add a numbered "sqlx offline cache bootstrap" procedure to Commit 2:
+
 1. Write migration SQL files.
 2. Create dev DB: `sqlx database create` + `sqlx migrate run` (requires `DATABASE_URL` env var).
 3. Write all `db/*.rs` query code with `DATABASE_URL` pointing to the live dev DB.

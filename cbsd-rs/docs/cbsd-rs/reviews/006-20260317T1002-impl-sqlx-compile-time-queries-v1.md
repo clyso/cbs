@@ -1,9 +1,13 @@
 # Implementation Review: cbsd-rs Phase 8 — Compile-Time Checked SQL Queries
 
 **Commit reviewed:**
+
+
 - `5be2e5f` — migrate to sqlx compile-time checked query macros (1924+, 443−, 81 files)
 
+
 **Evaluated against:**
+
 - Design: `cbsd-rs/docs/cbsd-rs/design/006-20260317T0732-sqlx-compile-time-queries.md`
 - Plan: `cbsd-rs/docs/cbsd-rs/plans/006-20260317T1028-sqlx-macros.md`
 

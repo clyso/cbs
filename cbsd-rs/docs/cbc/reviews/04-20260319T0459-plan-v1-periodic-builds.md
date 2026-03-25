@@ -6,6 +6,8 @@ Single commit at ~450 LOC — within the 400-800 target. Seven
 commands share the subcommand group and `BuildDescriptorArgs`.
 
 The plan faithfully tracks the design:
+
+
 - `periodic new` flattens `BuildDescriptorArgs` from
   `builds.rs` (already `pub`).
 - `--version` is `#[arg(long)]` (named flag, not positional).
