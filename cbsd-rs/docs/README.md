@@ -5,6 +5,9 @@
 - [UI Integration](ui-integration.md) — how the web UI SPA integrates with
   cbsd-rs for authentication, session management, and API access. Written for
   frontend engineers.
+- [RBAC](rbac.md) — roles, capabilities, scopes, and the `cbc` CLI commands for
+  managing permissions. Written for operators and developers working on the
+  permission system.
 
 ## Design, Plan, and Review Documents
 
