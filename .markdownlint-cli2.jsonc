@@ -12,7 +12,8 @@
     ".go",
     "**/.venv",
     ".ruff_cache",
-    "local"
+    "local",
+    "cbsd/ui/node_modules"
   ],
   "globs": [
     "**/*.md"

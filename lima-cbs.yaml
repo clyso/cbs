@@ -1,0 +1,36 @@
+# This template requires Lima v0.11.1 or later.
+
+arch: x86_64
+
+images:
+  - location: "https://dl.rockylinux.org/pub/rocky/9.6/images/x86_64/Rocky-9-GenericCloud-Base-9.6-20250531.0.x86_64.qcow2"
+    arch: "x86_64"
+    digest: "sha256:2c72815bb83cadccbede4704780e9b52033722db8a45c3fb02130aa380690a3d"
+  - location: "https://dl.rockylinux.org/pub/rocky/9.6/images/aarch64/Rocky-9-GenericCloud-Base-9.6-20250531.0.aarch64.qcow2"
+    arch: "aarch64"
+    digest: "sha256:3776b2c17cc011c28e2ab440c49dfba8d2be214d8b85df2b5edc97ebdeb30e4a"
+
+cpus: 4
+memory: 8GiB
+cpuType:
+  x86_64: "Haswell-v4"
+
+mountType: "reverse-sshfs"
+mounts:
+  - location: "~/src/cbs"
+    mountPoint: "/home/cbs"
+    writable: true
+  - location: "~/cbs/cbs-secrets"
+    mountPoint: "/home/cbs-secrets"
+  - location: "~/cbs/cbs-scratch"
+    mountPoint: "/home/cbs-scratch"
+    writable: true
+  - location: "/tmp/lima"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      dnf install -y podman python3-pip
+      pip install uv podman-compose yq

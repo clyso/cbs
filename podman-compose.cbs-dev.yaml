@@ -12,14 +12,39 @@
 # GNU Affero General Public License for more details.
 
 services:
+  proxy:
+    image: docker.io/library/nginx:alpine
+    container_name: cbs-proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./cbsd/nginx-dev.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./_local/cbs/config/server:/etc/nginx/certs:ro
+    depends_on:
+      - cbs
+      - ui
+    security_opt:
+      - label=disable
+
+  ui:
+    image: docker.io/library/node:lts-slim
+    container_name: cbs-ui
+    working_dir: /app
+    command: sh -c "yarn dev --host"
+    volumes:
+      - ./cbsd/ui:/app
+      - cbs_ui_node_modules:/app/node_modules:rw
+    environment:
+      - VITE_API_BASE_URL=/api
+    ports:
+      - "3000:3000"
+
   cbs:
     build:
       context: .
       dockerfile: ./container/ContainerFile.cbsd
       target: cbsd-dev-server
     container_name: clyso-cbs-service-dev
-    ports:
-      - "8080:8080"
     restart: "no"
     privileged: true
     volumes:
@@ -107,3 +132,7 @@ services:
       - ./_local/cbs/redis:/data
     security_opt:
       - label=disable
+
+volumes:
+  cbs_ui_node_modules:
+    external: true
