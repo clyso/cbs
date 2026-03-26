@@ -48,7 +48,7 @@ cbsd-rs/
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace
-cargo fmt --check
+cargo fmt --all --check
 ```
 
 After any migration or query change:
