@@ -1,0 +1,22 @@
+{
+  "version": "$version",
+  "title": "Release Development TC version $version",
+  "signed_off_by": {
+    "user": "testuser",
+    "email": "testuser@testcorp.com"
+  },
+  "image": {
+    "registry": "$registry",
+    "name": "$container_name",
+    "tag": "$container_tag"
+  },
+  "components": [
+    {
+      "name": "test-component",
+      "repo": "$git_repo",
+      "ref": "$version"
+    }
+  ],
+  "distro": "rockylinux:9",
+  "el_version": 9
+}

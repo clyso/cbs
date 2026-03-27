@@ -147,6 +147,9 @@ def cmd_build(
 
     try:
         config = Config.load(ctx.config_path)
+        # remove s3 config if build locally.
+        if ctx.local and config.storage:
+            config.storage.s3 = None
     except Exception as e:
         click.echo(f"error loading config from '{ctx.config_path}': {e}", err=True)
         sys.exit(errno.ENOTRECOVERABLE)
@@ -199,6 +202,8 @@ def cmd_build(
                 skip_build=skip_build,
                 force=force,
                 tls_verify=tls_verify,
+                local=ctx.local,
+                dev=ctx.dev,
             )
         )
 
@@ -258,7 +263,9 @@ Should not be called by the user directly. Use 'build' instead.
     default=True,
 )
 @with_config
+@pass_ctx
 def cmd_runner_build(
+    ctx: Ctx,
     config: Config,
     desc_path: Path,
     skip_build: bool,
@@ -299,6 +306,7 @@ sign with transit: {transit_signing_str}
        skip build: {skip_build}
             force: {force}
        tls-verify: {tls_verify}
+       push to s3: {not ctx.local}
 """)
 
     if not desc_path.exists():
@@ -318,6 +326,8 @@ sign with transit: {transit_signing_str}
             skip_build=skip_build,
             force=force,
             tls_verify=tls_verify,
+            local=ctx.local,
+            dev=ctx.dev,
         )
     except BuilderError as e:
         logger.error(f"unable to initialize builder: {e}")

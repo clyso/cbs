@@ -1,0 +1,62 @@
+# Copyright (C) 2025  Clyso GmbH
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+config:
+  env:
+    CEPH_IS_DEVEL: "False"
+    CEPH_REF: "{git_ref}"
+    CEPH_VERSION: "{git_ref}"
+    CEPH_OSD_FLAVOR: default
+    FROM_IMAGE: "{distro}"
+  labels:
+    ceph: "True"
+    CEPH_REF: "{git_ref}"
+    CEPH_SHA1: "{git_sha1}"
+    CEPH_GIT_REPO: "{git_repo_url}"
+    GANESHA_REPO_BASEURL: https://buildlogs.centos.org/centos/$releasever-stream/storage/$basearch/nfsganesha-5/
+    OSD_FLAVOR: default
+  annotations:
+    com.clyso.ces.ceph.version: "{git_ref}"
+
+pre:
+  keys: []
+
+  packages:
+    - epel-release
+    - jq
+    - dnf-plugins-core
+    - {base_url}/components/test-component/rpm-{version}/el{el}.clyso/noarch/test-component-release-2-test.noarch.rpm
+
+  repos: []
+
+  scripts:
+    - name: disable rpm docs install
+      run: setup-no-docs.sh
+
+packages:
+  required:
+    - section: test-component
+      packages:
+        - test-component
+        
+post:
+  - name: ganesha-fixes
+    run: fix-ganesha.sh
+
+  - name: fix-jaraco
+    run: fix-jaraco.sh
+
+  - name: disable-sync-udev
+    run: disable-sync-udev.sh
+
+  - name: cleanup
+    run: cleanup.sh

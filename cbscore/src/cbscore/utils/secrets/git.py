@@ -162,7 +162,11 @@ IdentityFile {ssh_key_path.as_posix()}
 
 
 def _https_git_url_for(
-    url: str, entry: GitHTTPSSecret | GitVaultHTTPSSecret, vault: Vault | None
+    url: str,
+    entry: GitHTTPSSecret | GitVaultHTTPSSecret,
+    vault: Vault | None,
+    *,
+    dev: bool = False,
 ) -> MaybeSecure:
     """Obtain URL for an HTTPS-based git access, either local or from vault."""
     m = re.match(GIT_URL_PATTERN, url)
@@ -174,6 +178,7 @@ def _https_git_url_for(
     https_host = cast(str, m.group("http_host"))
     https_port = cast(str, m.group("http_port")) if m.group("http_port") else ""
     http_path = cast(str, m.group("http_path"))
+    protocol = cast(str, m.group("http_protocol")) if dev else "https"
 
     if isinstance(entry, GitHTTPSSecret):
         username = entry.username
@@ -201,7 +206,8 @@ def _https_git_url_for(
             raise SecretsMgrError(msg) from e
 
     return SecureURL(
-        "https://{username}:{password}@{host_with_port}/{path}",
+        "{protocol}://{username}:{password}@{host_with_port}/{path}",
+        protocol=protocol,
         username=username,
         password=Password(password),
         host_with_port=f"{https_host}{':' + https_port if https_port else ''}",
@@ -232,7 +238,7 @@ def _token_git_url_for(url: str, entry: GitTokenSecret) -> MaybeSecure:
 
 @contextmanager
 def git_url_for(
-    url: str, secrets: dict[str, GitSecret], vault: Vault | None
+    url: str, secrets: dict[str, GitSecret], vault: Vault | None, *, dev: bool = False
 ) -> Generator[MaybeSecure]:
     """Obtain URL for git access."""
     url_m = re.match(GIT_URL_PATTERN, url)
@@ -257,7 +263,7 @@ def git_url_for(
         with _ssh_git_url_for(url, entry, vault) as ssh_url:
             yield ssh_url
     elif isinstance(entry, GitHTTPSSecret | GitVaultHTTPSSecret):
-        yield _https_git_url_for(url, entry, vault)
+        yield _https_git_url_for(url, entry, vault, dev=dev)
     else:  # GitTokenSecret
         assert isinstance(entry, GitTokenSecret)
         yield _token_git_url_for(url, entry)

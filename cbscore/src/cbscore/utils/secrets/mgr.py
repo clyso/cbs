@@ -66,9 +66,9 @@ class SecretsMgr:
                 raise SecretsMgrError(msg) from e
 
     @contextmanager
-    def git_url_for(self, url: str) -> Generator[MaybeSecure]:
+    def git_url_for(self, url: str, *, dev: bool = False) -> Generator[MaybeSecure]:
         """Obtain git url with credentials for specified URL, if any."""
-        with git_url_for(url, self.secrets.git, self.vault) as git_url:
+        with git_url_for(url, self.secrets.git, self.vault, dev=dev) as git_url:
             yield git_url
 
     def s3_creds(self, url: str) -> tuple[str, str, str]:
