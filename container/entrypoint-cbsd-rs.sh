@@ -59,8 +59,11 @@ case "${mode}" in
             -w cbsd-proto/src \
             -x "run --bin cbsd-worker -- --config ${config}"
         ;;
+    ui-dev)
+        exec ./cbsd-rs-ui.sh dev
+        ;;
     *)
-        echo "error: unknown mode '${mode}'; expected 'server', 'worker', 'server-dev', or 'worker-dev'" >&2
+        echo "error: unknown mode '${mode}'; expected 'server', 'worker', 'server-dev', 'worker-dev' or 'ui-dev'" >&2
         exit 1
         ;;
 esac
