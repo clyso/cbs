@@ -32,7 +32,6 @@
 #      populate the .sqlx/ offline query cache (required by cargo build).
 
 services:
-
   server-dev:
     profiles: [dev]
     build:
@@ -40,9 +39,6 @@ services:
       dockerfile: container/ContainerFile.cbsd-rs
       target: cbsd-rs-dev-server
     container_name: cbsd-rs-server-dev
-    ports:
-      - "8080:8080"
-    restart: "no"
     volumes:
       - ./_local/cbsd-rs/config/server:/cbs/config:ro
       - ./_local/cbsd-rs/data:/cbs/data:Z
@@ -94,8 +90,41 @@ services:
     depends_on:
       - server-dev
 
+  ui-dev:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: container/ContainerFile.cbsd-rs
+      target: cbsd-rs-dev-ui
+    container_name: cbsd-rs-ui-dev
+    privileged: false
+    volumes:
+      - ./cbsd-rs/ui:/cbs/src:Z
+      - cbsd-rs-ui-node-modules:/cbs/src/node_modules:Z
+    security_opt:
+      - label=disable
+
+  caddy-dev:
+    profiles: [dev]
+    build:
+      context: .
+      dockerfile: cbsd-rs/misc/ContainerFile.caddy
+    privileged: false
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./cbsd-rs/misc/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+    security_opt:
+      - label=disable
+    depends_on:
+      - server-dev
+      - ui-dev
+
 volumes:
   # Persistent Cargo registry and git caches shared across dev containers.
   # Avoids re-downloading crates on every container restart.
   cbsd-rs-cargo-registry:
   cbsd-rs-cargo-git:
+  # Persistent node_modules for the UI. Avoids re-downloading on every
+  # container restart.
+  cbsd-rs-ui-node-modules:

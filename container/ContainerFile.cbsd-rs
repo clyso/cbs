@@ -10,10 +10,13 @@
 # Stages:
 #   worker-base        Python 3.13 + uv + cbscore + podman (shared by workers)
 #   rust-builder       compile both binaries in release mode (pinned toolchain)
+#   node-builder       compile the node UI for production
 #   cbsd-rs-server     minimal server image (binary + ca-certs)
 #   cbsd-rs-worker     production worker (binary + cbscore + podman)
+#   cbsd-rs-ui         production UI (nginx + static files)
 #   cbsd-rs-dev-server dev server (cargo-watch, source bind-mounted)
 #   cbsd-rs-dev-worker dev worker (cargo-watch + cbscore + podman)
+#   cbsd-rs-dev-ui     dev UI (node + yarn)
 #
 # Rust toolchain version is pinned via RUST_VERSION and shared between
 # the production builder and development images.
@@ -115,6 +118,18 @@ ENV SQLX_OFFLINE=true
 RUN cargo build --release --workspace
 
 # ==========================================================================
+# Production UI build stage (node + yarn)
+# ==========================================================================
+
+FROM docker.io/library/node:lts-slim AS node-builder
+
+WORKDIR /build
+
+COPY cbsd-rs/ui/ .
+
+RUN ./cbsd-rs-ui.sh prod
+
+# ==========================================================================
 # Production server image
 # ==========================================================================
 
@@ -155,6 +170,14 @@ VOLUME ["/cbs/ccache"]
 ENV CBSD_CONFIG=/cbs/config/worker.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "worker"]
+
+# ==========================================================================
+# Production UI image
+# ==========================================================================
+
+FROM docker.io/library/nginx:alpine AS cbsd-rs-ui
+
+COPY --from=node-builder /build/build/ /usr/share/nginx/html
 
 # ==========================================================================
 # Development server image
@@ -222,3 +245,20 @@ VOLUME ["/cbs/ccache"]
 ENV CBSD_CONFIG=/cbs/config/worker.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "worker-dev"]
+
+# ==========================================================================
+# Development UI image
+# ==========================================================================
+
+FROM docker.io/library/node:lts-slim AS cbsd-rs-dev-ui
+
+COPY container/entrypoint-cbsd-rs.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /cbs/src
+
+VOLUME ["/cbs/src"]
+VOLUME ["/cbs/src/node_modules"]
+
+ENTRYPOINT ["/entrypoint.sh", "ui-dev"]
+

@@ -1,0 +1,23 @@
+:8080 {
+
+  tls /etc/caddy/certs/cert.pem /etc/caddy/certs/cert.key
+
+  handle_path /api/* {
+    rewrite * /api{path}
+    reverse_proxy http://cbsd-rs-server-dev:8080 {
+      header_up Host {upstream_hostport}
+      header_up X-Real-IP {remote_host}
+      header_up X-Forwarded-For {remote_host}
+    }
+  }
+
+  handle_path /* {
+    rewrite * {path}
+    reverse_proxy http://cbsd-rs-ui-dev:3000
+  }
+
+  log {
+    output stdout
+    level DEBUG
+  }
+}
