@@ -1,0 +1,120 @@
+<!--
+  - Copyright © 2026 Clyso GmbH
+  -
+  -  Licensed under the GNU Affero General Public License, Version 3.0 (the "License");
+  -  you may not use this file except in compliance with the License.
+  -  You may obtain a copy of the License at
+  -
+  -  https://www.gnu.org/licenses/agpl-3.0.html
+  -
+  -  Unless required by applicable law or agreed to in writing, software
+  -  distributed under the License is distributed on an "AS IS" BASIS,
+  -  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  -  See the License for the specific language governing permissions and
+  -  limitations under the License.
+  -->
+
+<script setup lang="ts">
+  import {
+    CDashboardFooter,
+    CIcon,
+    type DashboardFooterLink,
+  } from '@clyso/clyso-ui-kit';
+  import { computed } from 'vue';
+  import { IconName } from '@/utils/types/icon';
+
+  const year = new Date().getFullYear();
+
+  const DashboardFooterLinkId = {
+    ABOUT: 'ABOUT',
+    IMPRINT: 'IMPRINT',
+    PRIVACY_POLICY: 'PRIVACY_POLICY',
+    CONTACT_US: 'CONTACT_US',
+  };
+
+  const footerLinks = computed<DashboardFooterLink[]>(() => {
+    return [
+      {
+        id: DashboardFooterLinkId.ABOUT,
+        text: 'About Clyso',
+        url: 'https://clyso.com/eu/en/about/',
+      },
+      {
+        id: DashboardFooterLinkId.IMPRINT,
+        text: 'Imprint',
+        url: 'https://clyso.com/eu/en/imprint/',
+      },
+      {
+        id: DashboardFooterLinkId.PRIVACY_POLICY,
+        text: 'Privacy Policy',
+        url: 'https://clyso.com/eu/en/privacy-policy/',
+      },
+      {
+        id: DashboardFooterLinkId.CONTACT_US,
+        text: 'Contact Us',
+        url: 'https://www.clyso.com/en/contact',
+      },
+    ];
+  });
+</script>
+
+<template>
+  <CDashboardFooter
+    class="dashboard-footer"
+    :is-centered="true"
+    :links="footerLinks"
+  >
+    <template #address>
+      Hohenzollernstraße 27, 80801 München, Deutschland
+    </template>
+    <template #copyright>© Copyright {{ year }} Clyso GmbH</template>
+    <template #logo>
+      <a
+        target="_blank"
+        href="https://www.clyso.com/"
+        rel="noopener noreferrer"
+        class="logo-link"
+      >
+        <CIcon
+          class="logo-link__icon"
+          :is-inline="true"
+          :name="IconName.BASE_LOGO_CLYSO"
+        />
+        Clyso
+      </a>
+    </template>
+  </CDashboardFooter>
+</template>
+
+<style lang="scss" scoped>
+  @use '@/styles/utils' as utils;
+
+  .dashboard-footer {
+    ::v-deep(.container) {
+      @include utils.desktop {
+        padding: 0 utils.unit(8);
+        max-width: none;
+      }
+    }
+  }
+
+  .logo-link {
+    font-size: 0;
+    margin-top: - utils.unit(1);
+
+    &__icon {
+      width: 100px;
+      height: auto;
+      color: var(--text-color-3);
+      transition: opacity utils.$transition-duration;
+
+      &:hover {
+        opacity: 0.6;
+      }
+
+      &:active {
+        opacity: 0.8;
+      }
+    }
+  }
+</style>
