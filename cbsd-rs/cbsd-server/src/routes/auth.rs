@@ -307,7 +307,7 @@ async fn callback(
     if client_type == "cli" {
         // CLI: redirect to UI with token in fragment for copy-paste.
         // The fragment is client-side only — never sent to the server.
-        let redirect_url = format!("/#cli-token={token_b64}");
+        let redirect_url = format!("/?cli-token={token_b64}");
         Ok(Redirect::temporary(&redirect_url).into_response())
     } else {
         // Web: store token server-side in session (BFF pattern).
