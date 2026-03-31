@@ -29,9 +29,9 @@ Services:
   worker    cbsd-rs worker (may be named, e.g. worker.host-01)
 
 Options:
-  -c|--config DIR       Directory for per-deployment configuration files
-  -d|--data DIR         Directory for per-deployment data files
-  -h|--help             Show this help message and exit
+  -c | --config DIR       Directory for per-deployment configuration files
+  -d | --data DIR         Directory for per-deployment data files
+  -h | --help             Show this help message and exit
 EOF
 }
 
@@ -125,10 +125,13 @@ echo "  service id:     ${service_id}"
 echo "  container name: ${ctr_name}"
 
 source_config() {
-  [[ -e "${config_dir}/${deployment_name}/${service}.conf" ]] && {
-    # shellcheck source=/dev/null
-    source "${config_dir}/${deployment_name}/${service}.conf"
+  local cfg_file="${config_dir}/${deployment_name}/${service}.conf"
+  [[ ! -e "${cfg_file}" ]] && {
+    echo "error: missing config file at '${cfg_file}'"
+    exit 1
   }
+  # shellcheck source=/dev/null
+  source "${cfg_file}"
 }
 
 # --------------------------------------------------------------------------
@@ -145,9 +148,31 @@ server_start() {
 
   SERVER_BIND_ADDR="127.0.0.1"
   SERVER_BIND_PORT="8080"
-  RUST_LOG="info"
+  CBSD_LOG="info"
   IMAGE="harbor.clyso.com/cbs/cbsd-rs-server:latest"
+  WITH_WIREGUARD="false"
   source_config
+
+  cbsd_log="${CBSD_LOG}"
+  [[ -z "${cbsd_log}" ]] && {
+    echo "warning: CBSD_LOG is empty in config, defaulting to 'error'" >&2
+    cbsd_log="error"
+  }
+
+  [[ -z "${SERVER_BIND_ADDR}" ]] && {
+    echo "error: empty SERVER_BIND_ADDR in config" >&2
+    exit 1
+  }
+
+  [[ -z "${SERVER_BIND_PORT}" ]] && {
+    echo "error: empty SERVER_BIND_PORT in config" >&2
+    exit 1
+  }
+
+  [[ -z "${IMAGE}" ]] && {
+    echo "error: empty IMAGE in config" >&2
+    exit 1
+  }
 
   [[ ! -d "${server_config_dir}" ]] && {
     echo "error: server config directory '${server_config_dir}' does not exist" >&2
@@ -169,25 +194,30 @@ server_start() {
   }
 
   # Components directory is optional — server starts without it (with a warning).
-  components_vol=""
+  components_vol=()
   [[ -d "${components_dir}" ]] && {
-    components_vol="-v ${components_dir}:/cbs/components:ro"
+    components_vol=("-v" "${components_dir}:/cbs/components:ro")
   }
 
-  # shellcheck disable=SC2086
+  network_opts=()
+  [[ "${WITH_WIREGUARD}" == "true" ]] && {
+    network_opts=("--network" "slirp4netns:mtu=1420,allow_host_loopback=true")
+  }
+
+  # shellcheck disable=SC2068
   podman run \
-    -d \
     --replace \
     -p "${SERVER_BIND_ADDR}":"${SERVER_BIND_PORT}":8080 \
     -v "${server_config_dir}":/cbs/config:ro \
     -v "${server_data_dir}":/cbs/data:Z \
     -v "${server_logs_dir}":/cbs/logs:Z \
-    ${components_vol} \
+    ${components_vol[@]} \
     -e CBSD_CONFIG=/cbs/config/server.yaml \
-    -e RUST_LOG="${RUST_LOG}" \
+    -e CBSD_LOG="${cbsd_log}" \
+    -e RUST_LOG="${cbsd_log}" \
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
-    --network "cbsd-rs-${deployment_name}" \
+    ${network_opts[@]} \
     --name "${ctr_name}" \
     "${IMAGE}" || {
     echo "error: failed to start server '${ctr_name}'" >&2
@@ -197,7 +227,7 @@ server_start() {
 
 server_stop() {
   echo "stopping server '${ctr_name}'..."
-  podman stop "${ctr_name}" || {
+  podman stop --ignore "${ctr_name}" || {
     echo "error: failed to stop server '${ctr_name}'" >&2
     exit 1
   }
@@ -211,23 +241,44 @@ worker_start() {
   echo "starting worker '${ctr_name}'..."
 
   worker_config_dir="${config_dir}/${deployment_name}/${service}"
-  worker_components_dir="${data_dir}/${deployment_name}/components"
   worker_logs_dir="${data_dir}/${deployment_name}/${service}/logs"
 
   WORKER_SCRATCH_DIR=
   WORKER_CONTAINERS_DIR=
   WORKER_CCACHE_DIR=
-  RUST_LOG="info"
+  CBSD_LOG="info"
   IMAGE="harbor.clyso.com/cbs/cbsd-rs-worker:latest"
+  WITH_WIREGUARD="false"
   source_config
 
-  [[ ! -d "${worker_config_dir}" ]] && {
-    echo "error: worker config directory '${worker_config_dir}' does not exist" >&2
+  cbsd_log="${CBSD_LOG}"
+  [[ -z "${cbsd_log}" ]] && {
+    echo "warning: CBSD_LOG is empty in config, defaulting to 'error'" >&2
+    cbsd_log="error"
+  }
+
+  [[ -z "${WORKER_SCRATCH_DIR}" ]] && {
+    echo "error: empty WORKER_SCRATCH_DIR in config" >&2
     exit 1
   }
 
-  [[ ! -d "${worker_components_dir}" ]] && {
-    echo "error: worker components directory '${worker_components_dir}' does not exist" >&2
+  [[ -z "${WORKER_CONTAINERS_DIR}" ]] && {
+    echo "error: empty WORKER_CONTAINERS_DIR in config" >&2
+    exit 1
+  }
+
+  [[ -z "${WORKER_CCACHE_DIR}" ]] && {
+    echo "error: empty WORKER_CCACHE_DIR in config" >&2
+    exit 1
+  }
+
+  [[ -z "${IMAGE}" ]] && {
+    echo "error: empty IMAGE in config" >&2
+    exit 1
+  }
+
+  [[ ! -d "${worker_config_dir}" ]] && {
+    echo "error: worker config directory '${worker_config_dir}' does not exist" >&2
     exit 1
   }
 
@@ -259,25 +310,29 @@ worker_start() {
     }
   }
 
-  # shellcheck disable=SC2086
+  network_opts=()
+  [[ "${WITH_WIREGUARD}" == "true" ]] && {
+    network_opts=("--network" "slirp4netns:mtu=1420,allow_host_loopback=true")
+  }
+
+  # shellcheck disable=SC2068
   podman run \
-    -d \
     --replace \
     -v "${worker_config_dir}":/cbs/config:ro \
     -v "${worker_logs_dir}":/cbs/logs:Z \
     -v "${WORKER_SCRATCH_DIR}":/cbs/scratch:Z \
     -v "${WORKER_CONTAINERS_DIR}":/var/lib/containers:Z \
     -v "${WORKER_CCACHE_DIR}":/cbs/ccache:Z \
-    -v "${worker_components_dir}":/cbs/components:ro \
     -v /dev/fuse:/dev/fuse:rw \
     -e CBSD_CONFIG=/cbs/config/worker.yaml \
-    -e RUST_LOG="${RUST_LOG}" \
+    -e CBSD_LOG="${cbsd_log}" \
+    -e RUST_LOG="${cbsd_log}" \
     --cap-add SYS_ADMIN \
     --cap-add MKNOD \
     --security-opt label=disable \
     --security-opt seccomp=unconfined \
+    ${network_opts[@]} \
     --privileged \
-    --network "cbsd-rs-${deployment_name}" \
     --name "${ctr_name}" \
     "${IMAGE}" || {
     echo "error: failed to start worker '${ctr_name}'" >&2
@@ -287,7 +342,7 @@ worker_start() {
 
 worker_stop() {
   echo "stopping worker '${ctr_name}'..."
-  podman stop "${ctr_name}" || {
+  podman stop --ignore "${ctr_name}" || {
     echo "error: failed to stop worker '${ctr_name}'" >&2
     exit 1
   }

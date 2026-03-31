@@ -14,11 +14,11 @@
 #   ws://cbsd.example.com:8080/api/ws/worker
 #
 # TLS-enabled server:
-#   wss://cbsd.example.com:8443/api/ws/worker
+#   wss://cbsd.example.com:443/api/ws/worker
 #
 # Within a podman-compose deployment, use the server's service name:
 #   ws://server:8080/api/ws/worker
-server-url: "ws://server:8080/api/ws/worker"
+server-url: "ws://{{address}}/api/ws/worker"
 
 # --------------------------------------------------------------------------
 # Authentication — choose ONE of the following methods:
@@ -29,12 +29,14 @@ server-url: "ws://server:8080/api/ws/worker"
 # Base64url-encoded JSON containing worker_id, worker_name, api_key, arch.
 # Can also be set via the CBSD_WORKER_TOKEN environment variable.
 #
-# worker-token: "eyJ3b3JrZXJfaWQ..."
+worker-token: "eyJ3b3JrZXJfaWQ..."
 
 # Method 2: Pre-configured API key (development).
 # Use the same api-key value configured in the server's dev.seed-workers.
 # This is the simplest path for podman-compose dev deployments.
-api-key: "cbsk_0000000000000000000000000000000000000000000000000000000000000000"
+#api-key: "cbsk_0000000000000000000000000000000000000000000000000000000000000000"
+
+# Architecture identifier to report to the server.
 arch: "x86_64"
 
 # Path to a custom TLS CA bundle (PEM format).

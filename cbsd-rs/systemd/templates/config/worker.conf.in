@@ -2,11 +2,21 @@
 # Sourced by cbsd-rs-ctr.sh at container start time.
 # Uncomment and adjust the values you need to override.
 
-# Recommended: set explicit scratch directories for this worker instance.
+## Required: set explicit scratch directories for this worker instance.
 WORKER_SCRATCH_DIR="{{cbsd_rs_data}}/{{deployment}}/{{svc_name}}/scratch"
 WORKER_CONTAINERS_DIR="{{cbsd_rs_data}}/{{deployment}}/{{svc_name}}/scratch/containers"
 WORKER_CCACHE_DIR="{{cbsd_rs_data}}/{{deployment}}/{{svc_name}}/scratch/ccache"
 
-# Optional overrides.
-# RUST_LOG="info"
+## --- Optional overrides ---
+
+## Allow the containers to communicate with a host's wireguard interface.
+## Allowed values: "true" or "fale"; default: "false".
+# WITH_WIREGUARD="false"
+
+## Specify logging level in the worker container.
+## Default: "info".
+# CBSD_LOG="info"
+
+## Image to use for the worker container.
+## Default: "harbor.clyso.com/cbs/cbsd-rs-worker:latest".
 # IMAGE="harbor.clyso.com/cbs/cbsd-rs-worker:latest"

@@ -2,7 +2,24 @@
 # Sourced by cbsd-rs-ctr.sh at container start time.
 # Uncomment and adjust the values you need to override.
 
+## --- Optional overrides ---
+
+## Address for the server container to bind to.
+## Default: "127.0.0.1"
 # SERVER_BIND_ADDR="127.0.0.1"
+
+## Host port for the server container to be available at.
+## Default: "8080"
 # SERVER_BIND_PORT="8080"
-# RUST_LOG="info"
+
+## Allow the containers to communicate with a host's wireguard interface.
+## Allowed values: "true" or "false"; default: "false".
+# WITH_WIREGUARD="false"
+
+## Specify logging level in the server container.
+## Default: "info".
+# CBSD_LOG="info"
+
+## Image to use for the server container.
+## Default: "harbor.clyso.com/cbs/cbsd-rs-server:latest".
 # IMAGE="harbor.clyso.com/cbs/cbsd-rs-server:latest"

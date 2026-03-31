@@ -10,7 +10,7 @@
 # missed runs (e.g. host was off at midnight) are caught up on boot.
 
 [Unit]
-Description=Rotate cbsd-rs logs for '%i' deployment
+Description=Rotate cbsd logs for '%i' deployment
 
 [Timer]
 OnCalendar=*-*-* 00:00:00

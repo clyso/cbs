@@ -10,7 +10,7 @@
 # Placeholder: {{deployment}}
 
 [Unit]
-Description=Clyso Build System RS service for '{{deployment}}' deployment
+Description=CBS service for '{{deployment}}' deployment
 PartOf=cbsd-rs.target
 Before=cbsd-rs.target
 

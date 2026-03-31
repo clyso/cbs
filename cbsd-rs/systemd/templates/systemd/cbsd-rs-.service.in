@@ -10,9 +10,9 @@
 # Placeholders: {{deployment}}, {{cbsd_rs_data}}, {{cbsd_rs_config}}
 
 [Unit]
-Description=CBSD-RS Init Container Services for %i on deployment '{{deployment}}'
-After=network.target local-fs.target cbsd-rs-network@{{deployment}}
-Wants=network-online.target local-fs.target cbsd-rs-network@{{deployment}}
+Description=CBS service containers init for %i on deployment '{{deployment}}'
+After=network.target local-fs.target
+Wants=network-online.target local-fs.target 
 PartOf=cbsd-rs-{{deployment}}.target
 Before=cbsd-rs-{{deployment}}.target
 
@@ -22,7 +22,7 @@ ExecStart=/bin/bash {{cbsd_rs_data}}/cbsd-rs-ctr.sh start %p %i -c {{cbsd_rs_con
 ExecStop=/bin/bash {{cbsd_rs_data}}/cbsd-rs-ctr.sh stop %p %i -c {{cbsd_rs_config}} -d {{cbsd_rs_data}}
 Restart=on-failure
 RestartSec=10s
-Type=forking
+Type=simple
 
 [Install]
 WantedBy=cbsd-rs-{{deployment}}.target

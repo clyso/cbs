@@ -11,7 +11,7 @@
 # system-wide logrotate.
 
 [Unit]
-Description=Rotate cbsd-rs logs for '%i' deployment
+Description=Rotate cbsd logs for '%i' deployment
 
 [Service]
 Type=oneshot
