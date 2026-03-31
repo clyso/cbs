@@ -105,6 +105,11 @@ pub struct ResolvedWorkerConfig {
     pub worker_name: String,
     pub arch: cbsd_proto::Arch,
 
+    /// When true (`CBSD_DEV` is set), TLS certificate verification is
+    /// disabled so the worker can connect through reverse-proxies with
+    /// self-signed certificates.
+    pub dev_mode: bool,
+
     // Operational fields
     #[allow(dead_code)]
     pub tls_ca_bundle_path: Option<PathBuf>,
@@ -207,6 +212,7 @@ impl WorkerConfig {
                 api_key: token.api_key,
                 worker_name: token.worker_name,
                 arch,
+                dev_mode: is_dev,
                 tls_ca_bundle_path: self.tls_ca_bundle_path,
                 cbscore_wrapper_path: self.cbscore_wrapper_path,
                 cbscore_config_path: self.cbscore_config_path,
@@ -242,6 +248,7 @@ impl WorkerConfig {
             api_key,
             worker_name,
             arch,
+            dev_mode: is_dev,
             tls_ca_bundle_path: self.tls_ca_bundle_path,
             cbscore_wrapper_path: self.cbscore_wrapper_path,
             cbscore_config_path: self.cbscore_config_path,

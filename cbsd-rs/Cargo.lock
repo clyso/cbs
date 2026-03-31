@@ -368,6 +368,8 @@ dependencies = [
  "http",
  "libc",
  "rand 0.8.5",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_yml",

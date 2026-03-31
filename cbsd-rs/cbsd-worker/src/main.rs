@@ -133,6 +133,10 @@ async fn main() {
         "starting cbsd-worker"
     );
 
+    if config.dev_mode {
+        tracing::warn!("CBSD_DEV is set — TLS certificate verification is disabled");
+    }
+
     // Set up graceful shutdown.
     let state = Arc::new(ShutdownState::new());
     let _signal_handle = install_signal_handler(Arc::clone(&state));

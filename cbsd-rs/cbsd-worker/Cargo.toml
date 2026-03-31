@@ -21,6 +21,8 @@ serde_yml = "0.0.12"
 sha2 = "0.10"
 tar = "0.4"
 tokio = { version = "1", features = ["full"] }
+rustls = { version = "0.23", default-features = false }
+rustls-pki-types = "1"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
 tracing-appender = "0.2"

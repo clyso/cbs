@@ -30,6 +30,10 @@ pub type WsStream =
 
 /// Establish a WebSocket connection to the server with the `Authorization`
 /// header set from `config.api_key`.
+///
+/// When `config.dev_mode` is true, TLS certificate verification is disabled
+/// so the worker can connect through reverse-proxies with self-signed
+/// certificates.
 async fn connect(config: &ResolvedWorkerConfig) -> Result<WsStream, ConnectionError> {
     let mut request = config
         .server_url
@@ -43,11 +47,72 @@ async fn connect(config: &ResolvedWorkerConfig) -> Result<WsStream, ConnectionEr
         .headers_mut()
         .insert(http::header::AUTHORIZATION, header_value);
 
-    let (stream, _response) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(ConnectionError::WebSocket)?;
+    let connector = if config.dev_mode {
+        Some(tokio_tungstenite::Connector::Rustls(Arc::new(
+            dev_tls_config(),
+        )))
+    } else {
+        None
+    };
+
+    let (stream, _response) =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector)
+            .await
+            .map_err(ConnectionError::WebSocket)?;
 
     Ok(stream)
+}
+
+/// Build a rustls `ClientConfig` that accepts any server certificate.
+///
+/// Used only in development mode (`CBSD_DEV` is set) where the
+/// reverse-proxy presents self-signed certificates.
+fn dev_tls_config() -> rustls::ClientConfig {
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_no_client_auth()
+}
+
+/// A [`rustls`] certificate verifier that accepts every certificate.
+#[derive(Debug)]
+struct NoVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls_pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls_pki_types::CertificateDer<'_>],
+        _server_name: &rustls_pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls_pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls_pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
 }
 
 // ---------------------------------------------------------------------------
