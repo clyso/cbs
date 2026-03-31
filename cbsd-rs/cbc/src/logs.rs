@@ -97,11 +97,12 @@ pub async fn run(
     args: LogsArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        LogsCommands::Tail(a) => cmd_tail(a, config_path, debug).await,
-        LogsCommands::Follow(a) => cmd_follow(a, config_path, debug).await,
-        LogsCommands::Get(a) => cmd_get(a, config_path, debug).await,
+        LogsCommands::Tail(a) => cmd_tail(a, config_path, debug, no_tls_verify).await,
+        LogsCommands::Follow(a) => cmd_follow(a, config_path, debug, no_tls_verify).await,
+        LogsCommands::Get(a) => cmd_get(a, config_path, debug, no_tls_verify).await,
     }
 }
 
@@ -113,9 +114,10 @@ async fn cmd_tail(
     args: TailArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let resp: TailResponse = client
         .get(&format!("builds/{}/logs/tail?n={}", args.id, args.n))
@@ -140,9 +142,10 @@ async fn cmd_follow(
     args: FollowArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let request =
         client.request_builder(Method::GET, &format!("builds/{}/logs/follow", args.id))?;
@@ -191,9 +194,10 @@ async fn cmd_get(
     args: GetArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let output_path = args
         .output

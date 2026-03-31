@@ -197,14 +197,15 @@ pub async fn run(
     args: BuildArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        BuildCommands::New(a) => cmd_new(*a, config_path, debug).await,
-        BuildCommands::List(a) => cmd_list(a, config_path, debug).await,
-        BuildCommands::Get(a) => cmd_get(a, config_path, debug).await,
-        BuildCommands::Revoke(a) => cmd_revoke(a, config_path, debug).await,
-        BuildCommands::Components => cmd_components(config_path, debug).await,
-        BuildCommands::Logs(a) => crate::logs::run(a, config_path, debug).await,
+        BuildCommands::New(a) => cmd_new(*a, config_path, debug, no_tls_verify).await,
+        BuildCommands::List(a) => cmd_list(a, config_path, debug, no_tls_verify).await,
+        BuildCommands::Get(a) => cmd_get(a, config_path, debug, no_tls_verify).await,
+        BuildCommands::Revoke(a) => cmd_revoke(a, config_path, debug, no_tls_verify).await,
+        BuildCommands::Components => cmd_components(config_path, debug, no_tls_verify).await,
+        BuildCommands::Logs(a) => crate::logs::run(a, config_path, debug, no_tls_verify).await,
     }
 }
 
@@ -216,9 +217,10 @@ async fn cmd_new(
     args: BuildNewArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     // Get current user for signed_off_by.
     let whoami: WhoamiResponse = client.get("auth/whoami").await?;
@@ -311,9 +313,10 @@ async fn cmd_list(
     args: BuildListArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     // Build query path.
     let mut query_parts: Vec<String> = Vec::new();
@@ -365,9 +368,10 @@ async fn cmd_get(
     args: BuildGetArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let build: BuildRecord = client.get(&format!("builds/{}", args.id)).await?;
 
@@ -503,9 +507,10 @@ async fn cmd_revoke(
     args: BuildRevokeArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let resp: RevokeResponse = client.delete(&format!("builds/{}", args.id)).await?;
     println!("{}", resp.detail);
@@ -517,9 +522,13 @@ async fn cmd_revoke(
 // build components
 // ---------------------------------------------------------------------------
 
-async fn cmd_components(config_path: Option<&std::path::Path>, debug: bool) -> Result<(), Error> {
+async fn cmd_components(
+    config_path: Option<&std::path::Path>,
+    debug: bool,
+    no_tls_verify: bool,
+) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let components: Vec<ComponentInfo> = client.get("components").await?;
 

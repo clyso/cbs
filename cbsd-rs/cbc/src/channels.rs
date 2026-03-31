@@ -64,9 +64,10 @@ pub async fn run(
     args: ChannelArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        ChannelCommands::List => cmd_list(config_path, debug).await,
+        ChannelCommands::List => cmd_list(config_path, debug, no_tls_verify).await,
     }
 }
 
@@ -74,9 +75,13 @@ pub async fn run(
 // channel list
 // ---------------------------------------------------------------------------
 
-async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<(), Error> {
+async fn cmd_list(
+    config_path: Option<&std::path::Path>,
+    debug: bool,
+    no_tls_verify: bool,
+) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let channels: Vec<ChannelResponse> = client.get("channels").await?;
 

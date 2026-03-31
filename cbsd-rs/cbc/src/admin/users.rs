@@ -237,16 +237,23 @@ pub async fn run(
     args: UsersArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        UsersCommands::List => cmd_list(config_path, debug).await,
-        UsersCommands::Get(a) => cmd_get(a, config_path, debug).await,
-        UsersCommands::Activate(a) => cmd_activate(a, config_path, debug).await,
-        UsersCommands::Deactivate(a) => cmd_deactivate(a, config_path, debug).await,
+        UsersCommands::List => cmd_list(config_path, debug, no_tls_verify).await,
+        UsersCommands::Get(a) => cmd_get(a, config_path, debug, no_tls_verify).await,
+        UsersCommands::Activate(a) => cmd_activate(a, config_path, debug, no_tls_verify).await,
+        UsersCommands::Deactivate(a) => cmd_deactivate(a, config_path, debug, no_tls_verify).await,
         UsersCommands::Roles(a) => match a.command {
-            UserRolesCommands::Set(sa) => cmd_roles_set(sa, config_path, debug).await,
-            UserRolesCommands::Add(sa) => cmd_roles_add(sa, config_path, debug).await,
-            UserRolesCommands::Remove(sa) => cmd_roles_remove(sa, config_path, debug).await,
+            UserRolesCommands::Set(sa) => {
+                cmd_roles_set(sa, config_path, debug, no_tls_verify).await
+            }
+            UserRolesCommands::Add(sa) => {
+                cmd_roles_add(sa, config_path, debug, no_tls_verify).await
+            }
+            UserRolesCommands::Remove(sa) => {
+                cmd_roles_remove(sa, config_path, debug, no_tls_verify).await
+            }
         },
     }
 }
@@ -255,9 +262,13 @@ pub async fn run(
 // admin users list
 // ---------------------------------------------------------------------------
 
-async fn cmd_list(config_path: Option<&std::path::Path>, debug: bool) -> Result<(), Error> {
+async fn cmd_list(
+    config_path: Option<&std::path::Path>,
+    debug: bool,
+    no_tls_verify: bool,
+) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let users: Vec<UserWithRoles> = client.get("permissions/users").await?;
 
@@ -291,9 +302,10 @@ async fn cmd_get(
     args: GetArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let users: Vec<UserWithRoles> = client.get("permissions/users").await?;
 
@@ -368,9 +380,10 @@ async fn cmd_activate(
     args: ActivateArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let _resp: SimpleResponse = client
         .put_empty(&format!("admin/users/{}/activate", args.email))
@@ -388,9 +401,10 @@ async fn cmd_deactivate(
     args: DeactivateArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     match client
         .put_empty::<DeactivateResponse>(&format!("admin/users/{}/deactivate", args.email))
@@ -424,9 +438,10 @@ async fn cmd_roles_set(
     args: RolesSetArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     if args.role.is_empty() {
         return Err(Error::Other("at least one --role is required".to_string()));
@@ -458,9 +473,10 @@ async fn cmd_roles_add(
     args: RolesAddArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let scopes: Vec<ScopeItem> = args
         .scope
@@ -489,9 +505,10 @@ async fn cmd_roles_remove(
     args: RolesRemoveArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let _resp: SimpleResponse = client
         .delete(&format!(

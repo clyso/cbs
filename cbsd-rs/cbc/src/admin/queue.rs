@@ -36,9 +36,13 @@ struct QueueStatus {
 // admin queue
 // ---------------------------------------------------------------------------
 
-pub async fn run(config_path: Option<&std::path::Path>, debug: bool) -> Result<(), Error> {
+pub async fn run(
+    config_path: Option<&std::path::Path>,
+    debug: bool,
+    no_tls_verify: bool,
+) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let status: QueueStatus = client.get("admin/queue").await?;
 

@@ -62,14 +62,22 @@ pub async fn run(
     args: AdminArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        AdminCommands::Roles(a) => roles::run(a, config_path, debug).await,
-        AdminCommands::Users(a) => users::run(a, config_path, debug).await,
-        AdminCommands::Queue => queue::run(config_path, debug).await,
-        AdminCommands::Channel(a) => channels::run(a, config_path, debug).await,
+        AdminCommands::Roles(a) => roles::run(a, config_path, debug, no_tls_verify).await,
+        AdminCommands::Users(a) => users::run(a, config_path, debug, no_tls_verify).await,
+        AdminCommands::Queue => queue::run(config_path, debug, no_tls_verify).await,
+        AdminCommands::Channel(a) => channels::run(a, config_path, debug, no_tls_verify).await,
         AdminCommands::UserSetDefaultChannel(a) => {
-            channels::set_user_default_channel(config_path, debug, &a.email, a.channel_id).await
+            channels::set_user_default_channel(
+                config_path,
+                debug,
+                no_tls_verify,
+                &a.email,
+                a.channel_id,
+            )
+            .await
         }
     }
 }

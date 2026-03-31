@@ -45,6 +45,11 @@ struct Cli {
     #[arg(short, long, global = true)]
     debug: bool,
 
+    /// Disable TLS certificate verification (for development with
+    /// self-signed certificates)
+    #[arg(short = 'k', long, global = true)]
+    no_tls_verify: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -88,20 +93,24 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<(), Error> {
+    let k = cli.no_tls_verify;
+    if k {
+        eprintln!("warning: TLS certificate verification is disabled");
+    }
     match cli.command {
-        Commands::Login { url } => cmd_login(&url, cli.debug).await,
-        Commands::Whoami => cmd_whoami(cli.config.as_deref(), cli.debug).await,
-        Commands::Build(args) => builds::run(*args, cli.config.as_deref(), cli.debug).await,
-        Commands::Periodic(args) => periodic::run(args, cli.config.as_deref(), cli.debug).await,
-        Commands::Worker(args) => worker::run(args, cli.config.as_deref(), cli.debug).await,
-        Commands::Admin(args) => admin::run(args, cli.config.as_deref(), cli.debug).await,
-        Commands::Channel(args) => channels::run(args, cli.config.as_deref(), cli.debug).await,
+        Commands::Login { url } => cmd_login(&url, cli.debug, k).await,
+        Commands::Whoami => cmd_whoami(cli.config.as_deref(), cli.debug, k).await,
+        Commands::Build(args) => builds::run(*args, cli.config.as_deref(), cli.debug, k).await,
+        Commands::Periodic(args) => periodic::run(args, cli.config.as_deref(), cli.debug, k).await,
+        Commands::Worker(args) => worker::run(args, cli.config.as_deref(), cli.debug, k).await,
+        Commands::Admin(args) => admin::run(args, cli.config.as_deref(), cli.debug, k).await,
+        Commands::Channel(args) => channels::run(args, cli.config.as_deref(), cli.debug, k).await,
     }
 }
 
-async fn cmd_login(url: &str, debug: bool) -> Result<(), Error> {
+async fn cmd_login(url: &str, debug: bool, no_tls_verify: bool) -> Result<(), Error> {
     // Verify server is reachable.
-    let client = CbcClient::unauthenticated(url, debug)?;
+    let client = CbcClient::unauthenticated(url, debug, no_tls_verify)?;
     client
         .get::<serde_json::Value>("health")
         .await
@@ -137,7 +146,7 @@ async fn cmd_login(url: &str, debug: bool) -> Result<(), Error> {
     .map_err(|e| Error::Config(format!("invalid token: {e}")))?;
 
     // Validate the token.
-    let client = CbcClient::new(url, &token, debug)?;
+    let client = CbcClient::new(url, &token, debug, no_tls_verify)?;
     let whoami: serde_json::Value = client
         .get("auth/whoami")
         .await
@@ -162,9 +171,13 @@ async fn cmd_login(url: &str, debug: bool) -> Result<(), Error> {
     Ok(())
 }
 
-async fn cmd_whoami(config_path: Option<&std::path::Path>, debug: bool) -> Result<(), Error> {
+async fn cmd_whoami(
+    config_path: Option<&std::path::Path>,
+    debug: bool,
+    no_tls_verify: bool,
+) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     match client.get::<WhoamiResponse>("auth/whoami").await {
         Ok(w) => {

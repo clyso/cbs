@@ -26,7 +26,7 @@ pub struct CbcClient {
 
 impl CbcClient {
     /// Create an authenticated client.
-    pub fn new(host: &str, token: &str, debug: bool) -> Result<Self, Error> {
+    pub fn new(host: &str, token: &str, debug: bool, no_tls_verify: bool) -> Result<Self, Error> {
         let base_url = parse_base_url(host)?;
 
         let mut headers = HeaderMap::new();
@@ -38,6 +38,7 @@ impl CbcClient {
         );
 
         let inner = reqwest::Client::builder()
+            .danger_accept_invalid_certs(no_tls_verify)
             .default_headers(headers)
             .build()
             .map_err(|e| Error::Connection(format!("cannot build HTTP client: {e}")))?;
@@ -50,10 +51,11 @@ impl CbcClient {
     }
 
     /// Create an unauthenticated client (for pre-login health checks).
-    pub fn unauthenticated(host: &str, debug: bool) -> Result<Self, Error> {
+    pub fn unauthenticated(host: &str, debug: bool, no_tls_verify: bool) -> Result<Self, Error> {
         let base_url = parse_base_url(host)?;
 
         let inner = reqwest::Client::builder()
+            .danger_accept_invalid_certs(no_tls_verify)
             .build()
             .map_err(|e| Error::Connection(format!("cannot build HTTP client: {e}")))?;
 

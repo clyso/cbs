@@ -203,11 +203,12 @@ struct DetailResponse {
 pub async fn set_user_default_channel(
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
     email: &str,
     channel_id: i64,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = SetDefaultChannelBody { channel_id };
     let resp: DetailResponse = client
@@ -226,14 +227,15 @@ pub async fn run(
     args: ChannelAdminArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        ChannelAdminCommands::Create(a) => cmd_create(a, config_path, debug).await,
-        ChannelAdminCommands::Update(a) => cmd_update(a, config_path, debug).await,
-        ChannelAdminCommands::Delete(a) => cmd_delete(a, config_path, debug).await,
-        ChannelAdminCommands::Type(a) => run_type(a, config_path, debug).await,
+        ChannelAdminCommands::Create(a) => cmd_create(a, config_path, debug, no_tls_verify).await,
+        ChannelAdminCommands::Update(a) => cmd_update(a, config_path, debug, no_tls_verify).await,
+        ChannelAdminCommands::Delete(a) => cmd_delete(a, config_path, debug, no_tls_verify).await,
+        ChannelAdminCommands::Type(a) => run_type(a, config_path, debug, no_tls_verify).await,
         ChannelAdminCommands::SetDefaultType(a) => {
-            cmd_set_default_type(a, config_path, debug).await
+            cmd_set_default_type(a, config_path, debug, no_tls_verify).await
         }
     }
 }
@@ -242,11 +244,12 @@ async fn run_type(
     args: TypeAdminArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     match args.command {
-        TypeAdminCommands::Add(a) => cmd_type_add(a, config_path, debug).await,
-        TypeAdminCommands::Update(a) => cmd_type_update(a, config_path, debug).await,
-        TypeAdminCommands::Delete(a) => cmd_type_delete(a, config_path, debug).await,
+        TypeAdminCommands::Add(a) => cmd_type_add(a, config_path, debug, no_tls_verify).await,
+        TypeAdminCommands::Update(a) => cmd_type_update(a, config_path, debug, no_tls_verify).await,
+        TypeAdminCommands::Delete(a) => cmd_type_delete(a, config_path, debug, no_tls_verify).await,
     }
 }
 
@@ -258,9 +261,10 @@ async fn cmd_create(
     args: ChannelCreateArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = CreateChannelBody {
         name: args.name.clone(),
@@ -280,6 +284,7 @@ async fn cmd_update(
     args: ChannelUpdateArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     if args.name.is_none() && args.description.is_none() {
         return Err(Error::Other(
@@ -288,7 +293,7 @@ async fn cmd_update(
     }
 
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = UpdateChannelBody {
         name: args.name,
@@ -311,9 +316,10 @@ async fn cmd_delete(
     args: ChannelDeleteArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let resp: DetailResponse = client.delete(&format!("channels/{}", args.id)).await?;
 
@@ -329,9 +335,10 @@ async fn cmd_type_add(
     args: TypeAddArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = AddTypeBody {
         type_name: args.type_name.clone(),
@@ -358,6 +365,7 @@ async fn cmd_type_update(
     args: TypeUpdateArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     if args.project.is_none() && args.prefix.is_none() {
         return Err(Error::Other(
@@ -366,7 +374,7 @@ async fn cmd_type_update(
     }
 
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = UpdateTypeBody {
         project: args.project,
@@ -395,9 +403,10 @@ async fn cmd_type_delete(
     args: TypeDeleteArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let resp: DetailResponse = client
         .delete(&format!(
@@ -418,9 +427,10 @@ async fn cmd_set_default_type(
     args: SetDefaultTypeArgs,
     config_path: Option<&std::path::Path>,
     debug: bool,
+    no_tls_verify: bool,
 ) -> Result<(), Error> {
     let config = Config::load(config_path)?;
-    let client = CbcClient::new(&config.host, &config.token, debug)?;
+    let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let body = SetDefaultTypeBody {
         type_id: args.type_id,
