@@ -33,7 +33,7 @@
 #   podman build -f container/ContainerFile.cbsd-rs --target cbsd-rs-dev-worker .
 
 # Pinned Rust toolchain version — used by both rust-builder and dev images.
-ARG RUST_VERSION=1.93.0
+ARG RUST_VERSION=1.94.1
 
 # ==========================================================================
 # Worker base: Python 3.13 + cbscore + podman
