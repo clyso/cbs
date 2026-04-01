@@ -27,6 +27,7 @@ Actions:
 Services:
   server    cbsd-rs server
   worker    cbsd-rs worker (may be named, e.g. worker.host-01)
+  ui        cbsd-rs UI (nginx serving static content)
 
 Options:
   -c | --config DIR       Directory for per-deployment configuration files
@@ -349,6 +350,51 @@ worker_stop() {
 }
 
 # --------------------------------------------------------------------------
+# UI
+# --------------------------------------------------------------------------
+
+ui_start() {
+  echo "starting ui '${ctr_name}'..."
+
+  UI_BIND_ADDR="127.0.0.1"
+  UI_BIND_PORT="3000"
+  IMAGE="harbor.clyso.com/cbs/cbsd-rs-ui:latest"
+  source_config
+
+  [[ -z "${UI_BIND_ADDR}" ]] && {
+    echo "error: empty UI_BIND_ADDR in config" >&2
+    exit 1
+  }
+
+  [[ -z "${UI_BIND_PORT}" ]] && {
+    echo "error: empty UI_BIND_PORT in config" >&2
+    exit 1
+  }
+
+  [[ -z "${IMAGE}" ]] && {
+    echo "error: empty IMAGE in config" >&2
+    exit 1
+  }
+
+  podman run \
+    --replace \
+    -p "${UI_BIND_ADDR}":"${UI_BIND_PORT}":80 \
+    --name "${ctr_name}" \
+    "${IMAGE}" || {
+    echo "error: failed to start ui '${ctr_name}'" >&2
+    exit 1
+  }
+}
+
+ui_stop() {
+  echo "stopping ui '${ctr_name}'..."
+  podman stop --ignore "${ctr_name}" || {
+    echo "error: failed to stop ui '${ctr_name}'" >&2
+    exit 1
+  }
+}
+
+# --------------------------------------------------------------------------
 # Dispatch
 # --------------------------------------------------------------------------
 
@@ -360,6 +406,9 @@ case "${service_type}" in
     ;;
   worker)
     fname="worker_${action}"
+    ;;
+  ui)
+    fname="ui_${action}"
     ;;
   *)
     echo "error: unknown service type '${service_type}'" >&2

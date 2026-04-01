@@ -1,0 +1,17 @@
+# cbsd-rs UI instance configuration
+# Sourced by cbsd-rs-ctr.sh at container start time.
+# Uncomment and adjust the values you need to override.
+
+## --- Optional overrides ---
+
+## Address for the UI container to bind to.
+## Default: "127.0.0.1"
+# UI_BIND_ADDR="127.0.0.1"
+
+## Host port for the UI container to be available at.
+## Default: "3000"
+# UI_BIND_PORT="3000"
+
+## Image to use for the UI container.
+## Default: "harbor.clyso.com/cbs/cbsd-rs-ui:latest".
+# IMAGE="harbor.clyso.com/cbs/cbsd-rs-ui:latest"

@@ -17,10 +17,11 @@
 # Services are managed as podman containers via cbsd-rs-ctr.sh.
 #
 # Usage:
-#   ./install.sh                          Install server + worker
+#   ./install.sh                          Install server + worker + ui
 #   ./install.sh server                   Install server only
 #   ./install.sh worker                   Install a worker
 #   ./install.sh worker -n host-01        Install a named worker instance
+#   ./install.sh ui                       Install UI only
 
 _CHECKMARK="\u2713"
 _INFOMARK="\u2139"
@@ -196,6 +197,7 @@ ADDRESS must be in the form 'DOMAIN:PORT'; e.g., 'cbsd.example.tld:443'.
 Services:
   server    cbsd-rs server
   worker    cbsd-rs worker
+  ui        cbsd-rs UI (nginx serving static content)
   nginx     prepare nginx config for server and UI
 
 Options:
@@ -409,6 +411,7 @@ die_on_no_files "${src_components_dir}" "cbs.component.yaml"
 
 do_server=0
 do_worker=0
+do_ui=0
 do_nginx=0
 
 [[ ${do_no_systemd} -eq 1 && ${#positional_args[@]} -gt 0 ]] && {
@@ -421,6 +424,7 @@ if [[ ${#positional_args[@]} -eq 0 && ${do_no_systemd} -eq 0 ]]; then
   info "installing all services for deployment '${deployment}'"
   do_server=1
   do_worker=1
+  do_ui=1
   do_nginx=1
 else
   for what in "${positional_args[@]}"; do
@@ -430,6 +434,9 @@ else
         ;;
       worker)
         do_worker=1
+        ;;
+      ui)
+        do_ui=1
         ;;
       nginx)
         do_nginx=1
@@ -450,7 +457,7 @@ fi
 }
 
 [[ -n "${service_name}" && ${do_worker} -eq 0 ]] && {
-  err "instance name cannot be specified for server service"
+  err "instance name can only be specified for worker service"
   usage
   exit 1
 }
@@ -838,6 +845,58 @@ EOF
   )" "worker"
 }
 
+# --------------------------------------------------------------------------
+# Install UI
+# --------------------------------------------------------------------------
+
+install_ui() {
+  info "installing UI service for deployment '${deployment}'..."
+
+  old_config_warning=
+  dst_ui_conf="${deployment_config_dir}/ui.conf"
+  [[ -e "${dst_ui_conf}" ]] && {
+    warn "found existing ui.conf at ${dst_ui_conf}, moving to '.old'"
+    mv "${dst_ui_conf}" "${dst_ui_conf}.old" || {
+      err "unable to move '${dst_ui_conf}' to '.old'"
+      exit 1
+    }
+    old_config_warning="$(
+      cat <<EOF
+
+Old config file can be found at:
+  ${dst_ui_conf}.old
+EOF
+    )"
+  }
+
+  cp "${src_systemd_dir}/templates/config/ui.conf.in" \
+    "${dst_ui_conf}" || {
+    err "failed to install UI config for deployment '${deployment}'"
+    exit 1
+  }
+
+  enable_service "ui"
+  success "UI service installed and enabled"
+
+  print_boxed "$(
+    cat <<EOF
+
+CBS service 'ui' installed for deployment '${deployment}'.
+
+systemd unit configuration can be found at:
+  ${dst_ui_conf}
+${old_config_warning}
+
+The UI container serves static content via nginx, binding to
+  UI_BIND_ADDR:UI_BIND_PORT (default 127.0.0.1:3000).
+
+Adjust the bind address and port in the config file if the defaults
+do not suit your deployment.
+
+EOF
+  )" "ui"
+}
+
 install_nginx() {
   info "creating nginx config for deployment '${deployment}'..."
 
@@ -879,6 +938,10 @@ EOF
 
 [[ ${do_worker} -eq 1 ]] && {
   install_worker
+}
+
+[[ ${do_ui} -eq 1 ]] && {
+  install_ui
 }
 
 [[ ${do_nginx} -eq 1 ]] && {
