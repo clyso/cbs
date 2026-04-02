@@ -583,12 +583,9 @@ async fn validate_descriptor_scopes(
 ) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
     let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
 
-    // Channel scope (if present in descriptor).
-    if let Some(channel) = descriptor.get("channel").and_then(|v| v.as_str())
-        && !channel.is_empty()
-    {
-        scope_checks.push((ScopeType::Channel, channel.to_string()));
-    }
+    // Channel scope is NOT checked here. The channel/type composite is
+    // validated downstream by resolve_and_rewrite → check_channel_scope
+    // at both build-submission and periodic-trigger time.
 
     // Repository scopes from component repo overrides.
     if let Some(components) = descriptor.get("components").and_then(|v| v.as_array()) {

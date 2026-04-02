@@ -19,8 +19,9 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::AppState;
-use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
+use crate::scopes;
 
 /// Build the channels sub-router: `/api/channels/*`.
 pub fn router() -> Router<AppState> {
@@ -180,10 +181,7 @@ async fn user_can_view_channel(
             return true;
         }
         a.scopes.iter().any(|s| {
-            s.scope_type == ScopeType::Channel.as_str()
-                && (s.pattern == "*"
-                    || s.pattern.starts_with(&format!("{channel_name}/"))
-                    || s.pattern == format!("{channel_name}/*"))
+            s.scope_type == "channel" && scopes::scope_covers_channel(&s.pattern, channel_name)
         })
     }))
 }

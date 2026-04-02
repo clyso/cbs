@@ -103,7 +103,7 @@ impl AuthUser {
                 a.scopes
                     .iter()
                     .filter(|s| s.scope_type == scope_type.as_str())
-                    .any(|s| scope_pattern_matches(&s.pattern, value))
+                    .any(|s| crate::scopes::scope_pattern_matches(&s.pattern, value))
             })
         });
 
@@ -112,15 +112,6 @@ impl AuthUser {
         } else {
             Err(auth_error(StatusCode::FORBIDDEN, "insufficient scopes"))
         }
-    }
-}
-
-/// Match a scope pattern against a value.
-fn scope_pattern_matches(pattern: &str, value: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        value.starts_with(prefix)
-    } else {
-        pattern == value
     }
 }
 

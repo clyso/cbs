@@ -20,6 +20,7 @@ mod logs;
 mod queue;
 mod routes;
 mod scheduler;
+mod scopes;
 mod ws;
 
 use std::net::SocketAddr;

@@ -164,27 +164,13 @@ async fn check_channel_scope(
         if a.scopes.is_empty() {
             return true;
         }
-        a.scopes
-            .iter()
-            .any(|s| s.scope_type == "channel" && scope_pattern_matches(&s.pattern, scope_value))
+        a.scopes.iter().any(|s| {
+            s.scope_type == "channel"
+                && crate::scopes::scope_pattern_matches(&s.pattern, scope_value)
+        })
     });
 
     Ok(ok)
-}
-
-/// Match a scope pattern against a value. Supports:
-/// - Exact match: `ces/dev` matches `ces/dev`
-/// - Wildcard suffix: `ces/*` matches `ces/dev`, `ces/release`, etc.
-/// - Global wildcard: `*` matches everything
-fn scope_pattern_matches(pattern: &str, value: &str) -> bool {
-    if pattern == "*" {
-        return true;
-    }
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        value.starts_with(prefix)
-    } else {
-        pattern == value
-    }
 }
 
 /// Resolve a prefix template by replacing known variables.
@@ -228,24 +214,5 @@ mod tests {
             resolve_prefix_template("static-prefix", "user@clyso.com"),
             "static-prefix"
         );
-    }
-
-    #[test]
-    fn scope_pattern_exact_match() {
-        assert!(scope_pattern_matches("ces/dev", "ces/dev"));
-        assert!(!scope_pattern_matches("ces/dev", "ces/release"));
-    }
-
-    #[test]
-    fn scope_pattern_wildcard_suffix() {
-        assert!(scope_pattern_matches("ces/*", "ces/dev"));
-        assert!(scope_pattern_matches("ces/*", "ces/release"));
-        assert!(!scope_pattern_matches("ces/*", "ccs/dev"));
-    }
-
-    #[test]
-    fn scope_pattern_global_wildcard() {
-        assert!(scope_pattern_matches("*", "ces/dev"));
-        assert!(scope_pattern_matches("*", "anything"));
     }
 }
