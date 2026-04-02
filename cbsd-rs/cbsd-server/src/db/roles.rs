@@ -22,13 +22,6 @@ pub struct RoleRecord {
     pub created_at: i64,
 }
 
-/// A role assignment with optional per-assignment scopes.
-#[derive(Debug, Clone)]
-pub struct RoleAssignment {
-    pub role: String,
-    pub scopes: Vec<ScopeEntry>,
-}
-
 /// A single scope entry (type + glob pattern).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ScopeEntry {
@@ -36,13 +29,13 @@ pub struct ScopeEntry {
     pub pattern: String,
 }
 
-/// A user's role with its per-assignment scopes (for listing).
+/// A user's role with its role-level scopes (for listing).
 pub struct UserRoleWithScopes {
     pub role_name: String,
     pub scopes: Vec<ScopeEntry>,
 }
 
-/// Full assignment details: role name, its capabilities, and per-assignment scopes.
+/// Full assignment details: role name, its capabilities, and role-level scopes.
 #[allow(dead_code)]
 pub struct AssignmentWithScopes {
     pub role_name: String,
@@ -123,11 +116,24 @@ pub async fn delete_role(pool: &SqlitePool, name: &str) -> Result<bool, sqlx::Er
     Ok(result.rows_affected() > 0)
 }
 
-/// Replace the capabilities of a role: DELETE all existing + INSERT batch.
-pub async fn set_role_caps(
+/// Get all capabilities for a role.
+pub async fn get_role_caps(pool: &SqlitePool, role_name: &str) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT cap AS "cap!" FROM role_caps WHERE role_name = ? ORDER BY cap"#,
+        role_name,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|r| r.cap).collect())
+}
+
+/// Replace both capabilities and scopes of a role atomically.
+pub async fn set_role_caps_and_scopes(
     pool: &SqlitePool,
     role_name: &str,
     caps: &[&str],
+    scopes: &[ScopeEntry],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
@@ -145,20 +151,69 @@ pub async fn set_role_caps(
         .await?;
     }
 
+    sqlx::query!("DELETE FROM role_scopes WHERE role_name = ?", role_name)
+        .execute(&mut *tx)
+        .await?;
+
+    for scope in scopes {
+        let scope_type = &scope.scope_type;
+        let pattern = &scope.pattern;
+        sqlx::query!(
+            "INSERT INTO role_scopes (role_name, scope_type, pattern) VALUES (?, ?, ?)",
+            role_name,
+            scope_type,
+            pattern,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
     tx.commit().await?;
     Ok(())
 }
 
-/// Get all capabilities for a role.
-pub async fn get_role_caps(pool: &SqlitePool, role_name: &str) -> Result<Vec<String>, sqlx::Error> {
+/// Set role scopes inside an existing transaction (used by seed).
+pub async fn set_role_scopes_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    role_name: &str,
+    scopes: &[ScopeEntry],
+) -> Result<(), sqlx::Error> {
+    for scope in scopes {
+        let scope_type = &scope.scope_type;
+        let pattern = &scope.pattern;
+        sqlx::query!(
+            "INSERT INTO role_scopes (role_name, scope_type, pattern) VALUES (?, ?, ?)",
+            role_name,
+            scope_type,
+            pattern,
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Get all scopes for a role.
+pub async fn get_role_scopes(
+    pool: &SqlitePool,
+    role_name: &str,
+) -> Result<Vec<ScopeEntry>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT cap AS "cap!" FROM role_caps WHERE role_name = ? ORDER BY cap"#,
+        r#"SELECT scope_type AS "scope_type!", pattern AS "pattern!"
+           FROM role_scopes WHERE role_name = ?
+           ORDER BY scope_type, pattern"#,
         role_name,
     )
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| r.cap).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| ScopeEntry {
+            scope_type: r.scope_type,
+            pattern: r.pattern,
+        })
+        .collect())
 }
 
 /// Add a single role to a user. Ignores conflicts (idempotent).
@@ -194,87 +249,71 @@ pub async fn remove_user_role(
     Ok(result.rows_affected() > 0)
 }
 
-/// Replace all role assignments (with scopes) for a user in a single transaction.
-/// Deletes existing assignments then inserts new ones.
+/// Replace all role assignments for a user in a single transaction.
+/// Scopes are defined on roles, not per-assignment.
 pub async fn set_user_roles(
     pool: &SqlitePool,
     user_email: &str,
-    assignments: &[RoleAssignment],
+    role_names: &[&str],
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
-    // Delete existing scopes and role assignments (scopes cascade from user_roles)
     sqlx::query!("DELETE FROM user_roles WHERE user_email = ?", user_email)
         .execute(&mut *tx)
         .await?;
 
-    for assignment in assignments {
-        let role = &assignment.role;
+    for role in role_names {
         sqlx::query!(
             "INSERT INTO user_roles (user_email, role_name) VALUES (?, ?)",
             user_email,
-            role,
+            *role,
         )
         .execute(&mut *tx)
         .await?;
-
-        for scope in &assignment.scopes {
-            let scope_type = &scope.scope_type;
-            let pattern = &scope.pattern;
-            sqlx::query!(
-                "INSERT INTO user_role_scopes (user_email, role_name, scope_type, pattern)
-                 VALUES (?, ?, ?, ?)",
-                user_email,
-                role,
-                scope_type,
-                pattern,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
     }
 
     tx.commit().await?;
     Ok(())
 }
 
-/// Get all role assignments for a user, including per-assignment scopes.
+/// Get all role assignments for a user, including role-level scopes.
+/// Uses a single JOIN query instead of N+1 round trips.
 pub async fn get_user_roles(
     pool: &SqlitePool,
     user_email: &str,
 ) -> Result<Vec<UserRoleWithScopes>, sqlx::Error> {
-    let role_rows = sqlx::query!(
-        r#"SELECT role_name AS "role_name!" FROM user_roles WHERE user_email = ? ORDER BY role_name"#,
+    let rows = sqlx::query!(
+        r#"SELECT ur.role_name AS "role_name!",
+                  rs.scope_type AS "scope_type?",
+                  rs.pattern AS "pattern?"
+           FROM user_roles ur
+           LEFT JOIN role_scopes rs ON ur.role_name = rs.role_name
+           WHERE ur.user_email = ?
+           ORDER BY ur.role_name, rs.scope_type, rs.pattern"#,
         user_email,
     )
     .fetch_all(pool)
     .await?;
 
-    let mut result = Vec::with_capacity(role_rows.len());
-
-    for role_row in role_rows {
-        let role_name = role_row.role_name;
-
-        let scope_rows = sqlx::query!(
-            r#"SELECT scope_type AS "scope_type!", pattern AS "pattern!"
-               FROM user_role_scopes
-               WHERE user_email = ? AND role_name = ?
-               ORDER BY scope_type, pattern"#,
-            user_email,
-            role_name,
-        )
-        .fetch_all(pool)
-        .await?;
-
-        let scopes = scope_rows
-            .into_iter()
-            .map(|r| ScopeEntry {
-                scope_type: r.scope_type,
-                pattern: r.pattern,
-            })
-            .collect();
-
-        result.push(UserRoleWithScopes { role_name, scopes });
+    let mut result: Vec<UserRoleWithScopes> = Vec::new();
+    for row in rows {
+        let scope = match (row.scope_type, row.pattern) {
+            (Some(st), Some(p)) => Some(ScopeEntry {
+                scope_type: st,
+                pattern: p,
+            }),
+            _ => None,
+        };
+        if let Some(last) = result.last_mut().filter(|r| r.role_name == row.role_name) {
+            if let Some(s) = scope {
+                last.scopes.push(s);
+            }
+        } else {
+            result.push(UserRoleWithScopes {
+                role_name: row.role_name,
+                scopes: scope.into_iter().collect(),
+            });
+        }
     }
 
     Ok(result)
@@ -300,51 +339,74 @@ pub async fn get_effective_caps(
     Ok(rows.into_iter().map(|r| r.cap).collect())
 }
 
-/// Get all assignments for a user with each assignment's role capabilities and scopes.
+/// Get all assignments for a user with each role's capabilities and scopes.
+/// Uses two JOIN queries (caps + scopes) instead of 2N+1 round trips.
 pub async fn get_user_assignments_with_scopes(
     pool: &SqlitePool,
     user_email: &str,
 ) -> Result<Vec<AssignmentWithScopes>, sqlx::Error> {
-    let role_rows = sqlx::query!(
-        r#"SELECT role_name AS "role_name!" FROM user_roles WHERE user_email = ? ORDER BY role_name"#,
+    // Fetch roles + caps in one query
+    let cap_rows = sqlx::query!(
+        r#"SELECT ur.role_name AS "role_name!",
+                  rc.cap AS "cap?"
+           FROM user_roles ur
+           LEFT JOIN role_caps rc ON ur.role_name = rc.role_name
+           WHERE ur.user_email = ?
+           ORDER BY ur.role_name, rc.cap"#,
         user_email,
     )
     .fetch_all(pool)
     .await?;
 
-    let mut result = Vec::with_capacity(role_rows.len());
+    // Fetch roles + scopes in one query
+    let scope_rows = sqlx::query!(
+        r#"SELECT ur.role_name AS "role_name!",
+                  rs.scope_type AS "scope_type?",
+                  rs.pattern AS "pattern?"
+           FROM user_roles ur
+           LEFT JOIN role_scopes rs ON ur.role_name = rs.role_name
+           WHERE ur.user_email = ?
+           ORDER BY ur.role_name, rs.scope_type, rs.pattern"#,
+        user_email,
+    )
+    .fetch_all(pool)
+    .await?;
 
-    for role_row in role_rows {
-        let role_name = role_row.role_name;
+    // Build role -> caps map
+    let mut caps_map: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for row in &cap_rows {
+        let entry = caps_map.entry(row.role_name.clone()).or_default();
+        if let Some(cap) = &row.cap
+            && !entry.contains(cap)
+        {
+            entry.push(cap.clone());
+        }
+    }
 
-        let cap_rows = sqlx::query!(
-            r#"SELECT cap AS "cap!" FROM role_caps WHERE role_name = ? ORDER BY cap"#,
-            role_name,
-        )
-        .fetch_all(pool)
-        .await?;
+    // Build role -> scopes map
+    let mut scopes_map: std::collections::BTreeMap<String, Vec<ScopeEntry>> =
+        std::collections::BTreeMap::new();
+    for row in &scope_rows {
+        let entry = scopes_map.entry(row.role_name.clone()).or_default();
+        if let (Some(st), Some(p)) = (&row.scope_type, &row.pattern) {
+            let scope = ScopeEntry {
+                scope_type: st.clone(),
+                pattern: p.clone(),
+            };
+            if !entry
+                .iter()
+                .any(|e| e.scope_type == scope.scope_type && e.pattern == scope.pattern)
+            {
+                entry.push(scope);
+            }
+        }
+    }
 
-        let caps: Vec<String> = cap_rows.into_iter().map(|r| r.cap).collect();
-
-        let scope_rows = sqlx::query!(
-            r#"SELECT scope_type AS "scope_type!", pattern AS "pattern!"
-               FROM user_role_scopes
-               WHERE user_email = ? AND role_name = ?
-               ORDER BY scope_type, pattern"#,
-            user_email,
-            role_name,
-        )
-        .fetch_all(pool)
-        .await?;
-
-        let scopes = scope_rows
-            .into_iter()
-            .map(|r| ScopeEntry {
-                scope_type: r.scope_type,
-                pattern: r.pattern,
-            })
-            .collect();
-
+    // Merge into result (BTreeMap iteration is sorted by key)
+    let mut result = Vec::new();
+    for (role_name, caps) in caps_map {
+        let scopes = scopes_map.remove(&role_name).unwrap_or_default();
         result.push(AssignmentWithScopes {
             role_name,
             caps,

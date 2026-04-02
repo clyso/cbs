@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT scope_type AS \"scope_type!\", pattern AS \"pattern!\"\n               FROM user_role_scopes\n               WHERE user_email = ? AND role_name = ?\n               ORDER BY scope_type, pattern",
+  "query": "SELECT scope_type AS \"scope_type!\", pattern AS \"pattern!\"\n           FROM role_scopes WHERE role_name = ?\n           ORDER BY scope_type, pattern",
   "describe": {
     "columns": [
       {
@@ -15,12 +15,12 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "d3f96bccd94d7ddfb050188992cfe165c70df0ab51ca5fb7b06a3f28d9fa3e47"
+  "hash": "400f16a4767cdd63c145cceb20bac329e9b274a0a1067dc1e014fc5ef3a5f200"
 }

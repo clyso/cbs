@@ -108,6 +108,24 @@ pub async fn run_first_startup_seed(
     )
     .await?;
 
+    // Builder gets global scopes so existing behaviour is preserved.
+    db::roles::set_role_scopes_in_tx(
+        &mut tx,
+        "builder",
+        &[
+            db::roles::ScopeEntry {
+                scope_type: "channel".to_string(),
+                pattern: "*".to_string(),
+            },
+            db::roles::ScopeEntry {
+                scope_type: "repository".to_string(),
+                pattern: "*".to_string(),
+            },
+        ],
+    )
+    .await
+    .map_err(SeedError::Db)?;
+
     create_builtin_role(
         &mut tx,
         "viewer",

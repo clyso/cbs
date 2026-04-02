@@ -72,16 +72,14 @@ CREATE TABLE IF NOT EXISTS user_roles (
     PRIMARY KEY (user_email, role_name)
 );
 
--- Per-assignment scopes
-CREATE TABLE IF NOT EXISTS user_role_scopes (
-    user_email  TEXT NOT NULL,
-    role_name   TEXT NOT NULL,
+-- Role-level scopes (scopes are defined on roles, not per-assignment)
+CREATE TABLE IF NOT EXISTS role_scopes (
+    role_name   TEXT NOT NULL
+                REFERENCES roles(name) ON DELETE CASCADE,
     scope_type  TEXT NOT NULL
                 CHECK (scope_type IN ('channel', 'registry', 'repository')),
     pattern     TEXT NOT NULL,
-    FOREIGN KEY (user_email, role_name)
-        REFERENCES user_roles(user_email, role_name) ON DELETE CASCADE,
-    UNIQUE (user_email, role_name, scope_type, pattern)
+    UNIQUE (role_name, scope_type, pattern)
 );
 
 -- Builds: persistent record of every build

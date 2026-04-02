@@ -53,7 +53,7 @@ pub fn router() -> Router<AppState> {
         .route("/roles", get(list_roles))
         .route("/roles", post(create_role))
         .route("/roles/{name}", get(get_role))
-        .route("/roles/{name}", put(update_role_caps))
+        .route("/roles/{name}", put(update_role))
         .route("/roles/{name}", delete(delete_role))
         // Users
         .route("/users", get(list_users_with_roles))
@@ -72,6 +72,8 @@ struct CreateRoleBody {
     name: String,
     description: Option<String>,
     caps: Vec<String>,
+    #[serde(default)]
+    scopes: Vec<ScopeBody>,
 }
 
 #[derive(Serialize)]
@@ -80,6 +82,7 @@ struct RoleResponse {
     description: String,
     builtin: bool,
     caps: Vec<String>,
+    scopes: Vec<ScopeBody>,
     created_at: i64,
 }
 
@@ -99,21 +102,12 @@ struct DeleteRoleQuery {
 
 #[derive(Deserialize)]
 struct ReplaceUserRolesBody {
-    roles: Vec<RoleAssignmentBody>,
+    roles: Vec<String>,
 }
 
 #[derive(Deserialize)]
 struct AddUserRoleBody {
     role: String,
-    #[serde(default)]
-    scopes: Vec<ScopeBody>,
-}
-
-#[derive(Deserialize, Serialize, Clone)]
-struct RoleAssignmentBody {
-    role: String,
-    #[serde(default)]
-    scopes: Vec<ScopeBody>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -121,6 +115,24 @@ struct ScopeBody {
     #[serde(rename = "type")]
     scope_type: String,
     pattern: String,
+}
+
+impl From<db::roles::ScopeEntry> for ScopeBody {
+    fn from(s: db::roles::ScopeEntry) -> Self {
+        Self {
+            scope_type: s.scope_type,
+            pattern: s.pattern,
+        }
+    }
+}
+
+impl From<ScopeBody> for db::roles::ScopeEntry {
+    fn from(s: ScopeBody) -> Self {
+        Self {
+            scope_type: s.scope_type,
+            pattern: s.pattern,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -184,10 +196,23 @@ async fn last_admin_guard(pool: &sqlx::SqlitePool) -> Result<(), (StatusCode, Js
     Ok(())
 }
 
-/// Validate scope entries. Channel scope patterns must contain `/` to
-/// enforce the `channel/type` format (e.g. `ces/dev`, `ces/*`).
+/// Known scope types (validated at the API layer to return a clean 400
+/// instead of letting the DB CHECK constraint produce a 500).
+const KNOWN_SCOPE_TYPES: &[&str] = &["channel", "registry", "repository"];
+
+/// Validate scope entries: check type is known and channel patterns
+/// contain `/` to enforce the `channel/type` format.
 fn validate_scopes(scopes: &[ScopeBody]) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
     for scope in scopes {
+        if !KNOWN_SCOPE_TYPES.contains(&scope.scope_type.as_str()) {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "unknown scope type '{}': must be one of channel, registry, repository",
+                    scope.scope_type
+                ),
+            ));
+        }
         if scope.scope_type == "channel" && !scope.pattern.contains('/') && scope.pattern != "*" {
             return Err(auth_error(
                 StatusCode::BAD_REQUEST,
@@ -250,6 +275,15 @@ async fn create_role(
 ) -> Result<(StatusCode, Json<RoleResponse>), (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:manage")?;
     validate_caps(&body.caps)?;
+    validate_scopes(&body.scopes)?;
+
+    // Scope-dependent validation: roles with builds:create (etc.) need scopes
+    if role_is_scope_dependent(&body.caps) && body.scopes.is_empty() {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "role contains scope-dependent capabilities and requires at least one scope",
+        ));
+    }
 
     let description = body.description.as_deref().unwrap_or("");
 
@@ -263,15 +297,17 @@ async fn create_role(
             )
         })?;
 
-    // Set capabilities
+    // Set capabilities and scopes atomically
     let cap_refs: Vec<&str> = body.caps.iter().map(String::as_str).collect();
-    db::roles::set_role_caps(&state.pool, &body.name, &cap_refs)
+    let scope_entries: Vec<db::roles::ScopeEntry> =
+        body.scopes.iter().cloned().map(Into::into).collect();
+    db::roles::set_role_caps_and_scopes(&state.pool, &body.name, &cap_refs, &scope_entries)
         .await
         .map_err(|e| {
-            tracing::error!("failed to set caps for role '{}': {e}", body.name);
+            tracing::error!("failed to set caps/scopes for role '{}': {e}", body.name);
             auth_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to set role capabilities",
+                "failed to set role capabilities and scopes",
             )
         })?;
 
@@ -297,6 +333,7 @@ async fn create_role(
             description: role.description,
             builtin: role.builtin,
             caps: body.caps,
+            scopes: body.scopes,
             created_at: role.created_at,
         }),
     ))
@@ -331,11 +368,22 @@ async fn get_role(
             )
         })?;
 
+    let scopes = db::roles::get_role_scopes(&state.pool, &name)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get scopes for role '{name}': {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to get role scopes",
+            )
+        })?;
+
     Ok(Json(RoleResponse {
         name: role.name,
         description: role.description,
         builtin: role.builtin,
         caps,
+        scopes: scopes.into_iter().map(Into::into).collect(),
         created_at: role.created_at,
     }))
 }
@@ -344,7 +392,7 @@ async fn get_role(
 // PUT /api/permissions/roles/{name}
 // ---------------------------------------------------------------------------
 
-async fn update_role_caps(
+async fn update_role(
     State(state): State<AppState>,
     user: AuthUser,
     Path(name): Path<String>,
@@ -352,6 +400,15 @@ async fn update_role_caps(
 ) -> Result<Json<RoleResponse>, (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:manage")?;
     validate_caps(&body.caps)?;
+    validate_scopes(&body.scopes)?;
+
+    // Scope-dependent validation
+    if role_is_scope_dependent(&body.caps) && body.scopes.is_empty() {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "role contains scope-dependent capabilities and requires at least one scope",
+        ));
+    }
 
     // Check builtin
     if db::roles::is_role_builtin(&state.pool, &name)
@@ -375,25 +432,34 @@ async fn update_role_caps(
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "role not found"))?;
 
-    // If removing `*` from this role, run last-admin guard after the update
+    // Save old caps + scopes for possible rollback (last-admin guard)
     let old_caps = db::roles::get_role_caps(&state.pool, &name)
         .await
         .map_err(|e| {
             tracing::error!("failed to get caps for role '{name}': {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?;
+    let old_scopes = db::roles::get_role_scopes(&state.pool, &name)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get scopes for role '{name}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
 
     let had_wildcard = old_caps.iter().any(|c| c == "*");
     let has_wildcard = body.caps.iter().any(|c| c == "*");
 
+    // Set capabilities and scopes atomically
     let cap_refs: Vec<&str> = body.caps.iter().map(String::as_str).collect();
-    db::roles::set_role_caps(&state.pool, &name, &cap_refs)
+    let scope_entries: Vec<db::roles::ScopeEntry> =
+        body.scopes.iter().cloned().map(Into::into).collect();
+    db::roles::set_role_caps_and_scopes(&state.pool, &name, &cap_refs, &scope_entries)
         .await
         .map_err(|e| {
-            tracing::error!("failed to set caps for role '{name}': {e}");
+            tracing::error!("failed to update role '{name}': {e}");
             auth_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to set role capabilities",
+                "failed to update role capabilities and scopes",
             )
         })?;
 
@@ -402,19 +468,21 @@ async fn update_role_caps(
         && !has_wildcard
         && let Err(e) = last_admin_guard(&state.pool).await
     {
-        // Rollback: restore old caps
+        // Rollback: restore old caps and scopes
         let old_refs: Vec<&str> = old_caps.iter().map(String::as_str).collect();
-        let _ = db::roles::set_role_caps(&state.pool, &name, &old_refs).await;
+        let _ =
+            db::roles::set_role_caps_and_scopes(&state.pool, &name, &old_refs, &old_scopes).await;
         return Err(e);
     }
 
-    tracing::info!("user {} updated caps for role '{}'", user.email, name);
+    tracing::info!("user {} updated role '{}'", user.email, name);
 
     Ok(Json(RoleResponse {
         name: role.name,
         description: role.description,
         builtin: role.builtin,
         caps: body.caps,
+        scopes: body.scopes,
         created_at: role.created_at,
     }))
 }
@@ -537,14 +605,7 @@ async fn list_users_with_roles(
             .into_iter()
             .map(|ur| UserRoleItem {
                 role: ur.role_name,
-                scopes: ur
-                    .scopes
-                    .into_iter()
-                    .map(|s| ScopeBody {
-                        scope_type: s.scope_type,
-                        pattern: s.pattern,
-                    })
-                    .collect(),
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
             })
             .collect();
 
@@ -582,14 +643,7 @@ async fn get_user_roles(
             .into_iter()
             .map(|ur| UserRoleItem {
                 role: ur.role_name,
-                scopes: ur
-                    .scopes
-                    .into_iter()
-                    .map(|s| ScopeBody {
-                        scope_type: s.scope_type,
-                        pattern: s.pattern,
-                    })
-                    .collect(),
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
             })
             .collect(),
     ))
@@ -608,61 +662,24 @@ async fn replace_user_roles(
     require_cap(&user, "permissions:manage")?;
 
     // Validate that all referenced roles exist
-    for assignment in &body.roles {
-        let role = db::roles::get_role(&state.pool, &assignment.role)
+    for role_name in &body.roles {
+        if db::roles::get_role(&state.pool, role_name)
             .await
             .map_err(|e| {
-                tracing::error!("failed to get role '{}': {e}", assignment.role);
+                tracing::error!("failed to get role '{role_name}': {e}");
                 auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-            })?;
-
-        if role.is_none() {
+            })?
+            .is_none()
+        {
             return Err(auth_error(
                 StatusCode::BAD_REQUEST,
-                &format!("role '{}' does not exist", assignment.role),
+                &format!("role '{role_name}' does not exist"),
             ));
         }
-
-        // Check scope-dependent roles have scopes
-        let caps = db::roles::get_role_caps(&state.pool, &assignment.role)
-            .await
-            .map_err(|e| {
-                tracing::error!("failed to get caps for role '{}': {e}", assignment.role);
-                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-            })?;
-
-        if role_is_scope_dependent(&caps) && assignment.scopes.is_empty() {
-            return Err(auth_error(
-                StatusCode::BAD_REQUEST,
-                &format!(
-                    "role '{}' contains scope-dependent capabilities and requires scopes",
-                    assignment.role
-                ),
-            ));
-        }
-
-        // Validate channel scope patterns contain '/'.
-        validate_scopes(&assignment.scopes)?;
     }
 
-    // Convert to DB types
-    let assignments: Vec<db::roles::RoleAssignment> = body
-        .roles
-        .into_iter()
-        .map(|a| db::roles::RoleAssignment {
-            role: a.role,
-            scopes: a
-                .scopes
-                .into_iter()
-                .map(|s| db::roles::ScopeEntry {
-                    scope_type: s.scope_type,
-                    pattern: s.pattern,
-                })
-                .collect(),
-        })
-        .collect();
-
-    db::roles::set_user_roles(&state.pool, &email, &assignments)
+    let role_refs: Vec<&str> = body.roles.iter().map(String::as_str).collect();
+    db::roles::set_user_roles(&state.pool, &email, &role_refs)
         .await
         .map_err(|e| {
             tracing::error!("failed to set roles for user '{email}': {e}");
@@ -690,14 +707,7 @@ async fn replace_user_roles(
             .into_iter()
             .map(|ur| UserRoleItem {
                 role: ur.role_name,
-                scopes: ur
-                    .scopes
-                    .into_iter()
-                    .map(|s| ScopeBody {
-                        scope_type: s.scope_type,
-                        pattern: s.pattern,
-                    })
-                    .collect(),
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
             })
             .collect(),
     ))
@@ -716,7 +726,7 @@ async fn add_user_role(
     require_cap(&user, "permissions:manage")?;
 
     // Validate role exists
-    let role = db::roles::get_role(&state.pool, &body.role)
+    db::roles::get_role(&state.pool, &body.role)
         .await
         .map_err(|e| {
             tracing::error!("failed to get role '{}': {e}", body.role);
@@ -729,28 +739,7 @@ async fn add_user_role(
             )
         })?;
 
-    // Check scope-dependent roles have scopes
-    let caps = db::roles::get_role_caps(&state.pool, &role.name)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to get caps for role '{}': {e}", body.role);
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?;
-
-    if role_is_scope_dependent(&caps) && body.scopes.is_empty() {
-        return Err(auth_error(
-            StatusCode::BAD_REQUEST,
-            &format!(
-                "role '{}' contains scope-dependent capabilities and requires scopes",
-                body.role
-            ),
-        ));
-    }
-
-    // Validate channel scope patterns contain '/'.
-    validate_scopes(&body.scopes)?;
-
-    // Add the role assignment
+    // Add the role assignment (scopes come from the role definition)
     db::roles::add_user_role(&state.pool, &email, &body.role)
         .await
         .map_err(|e| {
@@ -758,23 +747,13 @@ async fn add_user_role(
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to add user role")
         })?;
 
-    // Insert scopes for this assignment
-    for scope in &body.scopes {
-        sqlx::query!(
-            "INSERT OR IGNORE INTO user_role_scopes (user_email, role_name, scope_type, pattern)
-             VALUES (?, ?, ?, ?)",
-            email,
-            body.role,
-            scope.scope_type,
-            scope.pattern,
-        )
-        .execute(&state.pool)
+    // Fetch role-level scopes for the response
+    let scopes = db::roles::get_role_scopes(&state.pool, &body.role)
         .await
         .map_err(|e| {
-            tracing::error!("failed to insert scope for assignment: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to add scope")
+            tracing::error!("failed to get scopes for role '{}': {e}", body.role);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?;
-    }
 
     tracing::info!(
         "user {} added role '{}' to user '{email}'",
@@ -786,14 +765,7 @@ async fn add_user_role(
         StatusCode::CREATED,
         Json(UserRoleItem {
             role: body.role,
-            scopes: body
-                .scopes
-                .into_iter()
-                .map(|s| ScopeBody {
-                    scope_type: s.scope_type,
-                    pattern: s.pattern,
-                })
-                .collect(),
+            scopes: scopes.into_iter().map(Into::into).collect(),
         }),
     ))
 }

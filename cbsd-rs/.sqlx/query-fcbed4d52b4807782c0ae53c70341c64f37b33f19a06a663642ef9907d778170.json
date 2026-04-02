@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM role_scopes WHERE role_name = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "fcbed4d52b4807782c0ae53c70341c64f37b33f19a06a663642ef9907d778170"
+}

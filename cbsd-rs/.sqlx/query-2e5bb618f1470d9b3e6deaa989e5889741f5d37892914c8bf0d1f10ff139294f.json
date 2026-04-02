@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ur.role_name AS \"role_name!\",\n                  rc.cap AS \"cap?\"\n           FROM user_roles ur\n           LEFT JOIN role_caps rc ON ur.role_name = rc.role_name\n           WHERE ur.user_email = ?\n           ORDER BY ur.role_name, rc.cap",
+  "describe": {
+    "columns": [
+      {
+        "name": "role_name!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "cap?",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2e5bb618f1470d9b3e6deaa989e5889741f5d37892914c8bf0d1f10ff139294f"
+}

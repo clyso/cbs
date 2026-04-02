@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO role_scopes (role_name, scope_type, pattern) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "73bb74d350965aed2ac0e531edcb50f5aedaa1cb3d61f2bae96f6a5f9cb4dc36"
+}
