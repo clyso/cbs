@@ -168,6 +168,81 @@ All YAML configuration keys use **kebab-case** throughout (e.g. `listen-addr`,
 - `cbsd-rs/config/server.yaml.example`
 - `cbsd-rs/config/worker.yaml.example`
 
+## Roles and Permissions
+
+Access control uses roles that define both **capabilities** (what you can do)
+and **scopes** (where you can do it). Users are assigned roles — all users
+sharing a role get the same permissions.
+
+Three built-in roles are seeded at first startup:
+
+| Role | Capabilities | Scopes |
+|------|-------------|--------|
+| `admin` | `*` (all) | global |
+| `builder` | `builds:create`, `builds:revoke:own`, `builds:list:own`, `builds:list:any`, `apikeys:create:own`, `workers:view`, `channels:view` | `channel=*`, `repository=*` |
+| `viewer` | `builds:list:any`, `workers:view` | — |
+
+### Creating custom roles
+
+Roles with scope-dependent capabilities (e.g. `builds:create`) must include
+at least one scope.
+
+```bash
+# A builder restricted to ces-devel channels
+cbc admin roles create devel-builder \
+    --cap builds:create \
+    --cap builds:revoke:own \
+    --cap builds:list:own \
+    --cap builds:list:any \
+    --scope "channel=ces-devel/*" \
+    --scope "repository=*"
+
+# A builder restricted to ces-prod channels and a specific registry
+cbc admin roles create prod-builder \
+    --cap builds:create \
+    --cap builds:list:any \
+    --scope "channel=ces-prod/*" \
+    --scope "registry=harbor.clyso.com/ces-prod/*" \
+    --scope "repository=*"
+
+# Update replaces the entire capability and scope set
+cbc admin roles update prod-builder \
+    --cap builds:create \
+    --cap builds:list:any \
+    --cap builds:revoke:own \
+    --scope "channel=ces-prod/*" \
+    --scope "repository=*"
+```
+
+### Assigning roles to users
+
+```bash
+# Assign a single role
+cbc admin users roles add alice@clyso.com --role devel-builder
+
+# Replace all roles for a user
+cbc admin users roles set bob@clyso.com \
+    --role prod-builder --role viewer
+
+# Remove a role
+cbc admin users roles remove alice@clyso.com --role devel-builder
+```
+
+### Scope types
+
+| Type | Checked against | Example |
+|------|----------------|---------|
+| `channel` | `channel/type` composite | `ces-devel/*`, `ces-prod/release` |
+| `registry` | destination image hostname | `harbor.clyso.com/*` |
+| `repository` | component repo name | `ceph`, `*` |
+
+Scope patterns support exact match, `prefix/*` wildcard suffix, and `*`
+(global). All scope checks for a request must be satisfied by a **single
+role** — scopes are not combined across roles.
+
+See [docs/rbac.md](docs/rbac.md) for the full RBAC reference including all
+capabilities, enforcement details, and divergences from the Python `cbsd`.
+
 ## Compose deployment (development only)
 
 The `podman-compose.cbsd-rs.yaml` file is for **development only**. It builds

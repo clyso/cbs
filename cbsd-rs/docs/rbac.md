@@ -13,17 +13,20 @@ identifies gaps requiring work for feature parity.
 Access control is hierarchical:
 
 ```
-User → Role assignments (with optional scopes)
-         └── Capabilities (set per role)
-                └── Scope checks (per capability invocation)
+User → Role assignments
+         └── Role definition
+               ├── Capabilities (what you can do)
+               └── Scopes (where you can do it)
 ```
 
 - A **user** has zero or more **role assignments**.
-- Each **role** carries a fixed set of **capabilities**.
-- Some capabilities enforce **scope** checks: the user must have
-  an assignment whose scopes satisfy the request.
+- Each **role** defines both **capabilities** and **scopes**.
+- Some capabilities enforce **scope** checks: the user must
+  hold a role whose scopes satisfy the request.
 - The wildcard capability `*` bypasses all scope checks and
   implies every capability.
+- Assigning a role to a user grants all of that role's
+  capabilities within all of that role's scopes.
 
 ### Divergence from Python cbsd
 
@@ -47,7 +50,7 @@ capabilities (`-builds:revoke:any`), no regex expansion.
 | Negative caps | Supported (`-builds:revoke:any`) | Not supported |
 | Management | Edit YAML, restart server | REST API + `cbc` CLI |
 | Groups | Named groups in YAML | Named roles in database |
-| Scopes | Per-group regex patterns | Per-assignment glob patterns |
+| Scopes | Per-group regex patterns | Per-role glob patterns |
 
 ---
 
@@ -56,14 +59,14 @@ capabilities (`-builds:revoke:any`), no regex expansion.
 Three roles are seeded at first startup and cannot be modified
 or deleted.
 
-| Role | Capabilities | Description |
-|------|-------------|-------------|
-| `admin` | `*` | Full access |
-| `builder` | `builds:create`, `builds:revoke:own`, `builds:list:own`, `builds:list:any`, `apikeys:create:own`, `workers:view`, `channels:view` | Create and manage own builds |
-| `viewer` | `builds:list:any`, `workers:view` | Read-only access |
+| Role | Capabilities | Scopes | Description |
+|------|-------------|--------|-------------|
+| `admin` | `*` | (none — global) | Full access |
+| `builder` | `builds:create`, `builds:revoke:own`, `builds:list:own`, `builds:list:any`, `apikeys:create:own`, `workers:view`, `channels:view` | `channel=*`, `repository=*` | Create and manage own builds |
+| `viewer` | `builds:list:any`, `workers:view` | (none — no scope-dependent caps) | Read-only access |
 
 Custom roles can be created with any subset of the supported
-capabilities.
+capabilities and any combination of scopes.
 
 ---
 
@@ -120,8 +123,9 @@ actually added.
 
 ## Scopes
 
-Scopes restrict a role assignment to a subset of resources. They
-are stored per role assignment, not per role.
+Scopes restrict where a role's capabilities apply. They are
+defined on the **role**, not per user assignment — all users
+with the same role share the same scopes.
 
 | Scope type | Format | Purpose | Enforcement |
 |------------|--------|---------|-------------|
@@ -148,11 +152,11 @@ A pattern must contain `/` to be valid (it encodes
 
 ### How scope checks work
 
-At build submission the server checks that the user has **at
-least one role assignment** whose scopes satisfy **all** scope
-requirements of the request. Multiple scope types must be
-satisfied by the **same single assignment** (AND semantics) — not
-spread across assignments.
+At build submission the server checks that the user holds **at
+least one role** whose scopes satisfy **all** scope requirements
+of the request. Multiple scope types must be satisfied by a
+**single role** (AND semantics) — the system does not combine
+scopes across different roles.
 
 ### Divergence from Python cbsd
 
@@ -161,12 +165,11 @@ group. Each group defines independent patterns for project,
 registry, and repository. There is no single-assignment AND
 constraint — each scope type is checked independently.
 
-`cbsd-rs` uses **glob patterns** per assignment with
-single-assignment AND semantics. This is stricter: a user with
-one assignment covering channel `ces-devel/*` and a separate
-assignment covering registry `harbor.clyso.com/ces-prod/*`
-cannot combine them to build for `ces-devel` pushing to
-`ces-prod`.
+`cbsd-rs` uses **glob patterns** per role with single-role AND
+semantics. This is stricter: a user holding one role covering
+channel `ces-devel/*` and a separate role covering registry
+`harbor.clyso.com/ces-prod/*` cannot combine them to build for
+`ces-devel` pushing to `ces-prod`.
 
 ---
 
@@ -178,17 +181,18 @@ cannot combine them to build for `ces-devel` pushing to
 cbc admin roles list
 cbc admin roles get NAME
 cbc admin roles create NAME --cap CAP [--cap CAP ...]
-    [--description DESC]
+    [--scope TYPE=PATTERN ...] [--description DESC]
 cbc admin roles update NAME --cap CAP [--cap CAP ...]
+    [--scope TYPE=PATTERN ...]
 cbc admin roles delete NAME [--force]
 ```
 
 | Command | Notes |
 |---------|-------|
-| `list` | Prints all roles with capabilities |
-| `get` | Shows name, description, builtin flag, capabilities |
-| `create` | At least one `--cap` required; custom roles only |
-| `update` | Replaces the entire capability set |
+| `list` | Prints all roles |
+| `get` | Shows name, description, builtin flag, capabilities, scopes |
+| `create` | At least one `--cap` required; `--scope` defines where the caps apply |
+| `update` | Replaces the entire capability and scope set |
 | `delete` | Fails if role has assignments unless `--force` |
 
 ### Users
@@ -198,10 +202,9 @@ cbc admin users list
 cbc admin users get EMAIL
 cbc admin users activate EMAIL
 cbc admin users deactivate EMAIL
-cbc admin users roles set EMAIL --role ROLESPEC [...]
-cbc admin users roles add EMAIL --role ROLE
-    [--scope TYPE=PATTERN ...]
-cbc admin users roles remove EMAIL --role ROLENAME
+cbc admin users roles set EMAIL --role NAME [--role NAME ...]
+cbc admin users roles add EMAIL --role NAME
+cbc admin users roles remove EMAIL --role NAME
 ```
 
 | Command | Notes |
@@ -210,30 +213,13 @@ cbc admin users roles remove EMAIL --role ROLENAME
 | `get` | Email, name, active, roles+scopes, effective caps |
 | `activate` | Idempotent; re-enables account |
 | `deactivate` | Revokes tokens + API keys; blocked for last admin |
-| `roles set` | Replaces all assignments (ROLESPEC with inline scopes) |
-| `roles add` | Adds one role, optional `--scope` flags |
+| `roles set` | Replaces all role assignments (flat role names) |
+| `roles add` | Adds one role |
 | `roles remove` | Removes one role; blocked for last admin |
 
-#### ROLESPEC syntax (for `roles set`)
-
-```
-NAME[:TYPE=PATTERN[,TYPE=PATTERN,...]]
-```
-
-| Example | Effect |
-|---------|--------|
-| `builder` | Assign `builder`, no scopes |
-| `builder:channel=ces/*` | Scope to any type in `ces` |
-| `builder:channel=ces/dev,repository=myrepo` | Two scopes |
-| `admin` | Full access, no scopes needed |
-
-#### `--scope` flag syntax (for `roles add`)
-
-```
---scope TYPE=PATTERN
-```
-
-Multiple flags can be combined on a single call.
+Scopes are defined on roles, not at assignment time. To
+give a user different scopes, assign them a role that
+carries those scopes.
 
 ### Channels and Types
 
@@ -349,7 +335,7 @@ assignments and the computed effective capability set.
 ### Features fully implemented in cbsd-rs
 
 - Dynamic role management (CRUD via REST API and CLI)
-- User-role assignment with scoped capabilities
+- Role-level scoped capabilities with user assignment
 - `builds:create` with channel/registry/repository scoping
 - `builds:list:own` / `builds:list:any` with ownership filtering
 - `builds:revoke:own` / `builds:revoke:any` with ownership
