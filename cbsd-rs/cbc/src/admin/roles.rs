@@ -50,6 +50,9 @@ struct CreateArgs {
     /// Capability to grant (repeatable)
     #[arg(long = "cap")]
     caps: Vec<String>,
+    /// Scope in TYPE=PATTERN format (repeatable, e.g. channel=ces-devel/*)
+    #[arg(long)]
+    scope: Vec<String>,
     /// Role description
     #[arg(long)]
     description: Option<String>,
@@ -68,6 +71,9 @@ struct UpdateArgs {
     /// Capability to set (repeatable, replaces entire set)
     #[arg(long = "cap")]
     caps: Vec<String>,
+    /// Scope in TYPE=PATTERN format (repeatable, replaces entire set)
+    #[arg(long)]
+    scope: Vec<String>,
 }
 
 #[derive(Args)]
@@ -98,12 +104,23 @@ struct RoleDetail {
     description: String,
     builtin: bool,
     caps: Vec<String>,
+    #[serde(default)]
+    scopes: Vec<ScopeItem>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct ScopeItem {
+    #[serde(rename = "type")]
+    pub(crate) scope_type: String,
+    pub(crate) pattern: String,
 }
 
 #[derive(Serialize)]
 struct CreateRoleBody {
     name: String,
     caps: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<ScopeItem>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
 }
@@ -112,6 +129,7 @@ struct CreateRoleBody {
 struct UpdateRoleBody {
     name: String,
     caps: Vec<String>,
+    scopes: Vec<ScopeItem>,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +137,30 @@ struct SimpleResponse {
     #[allow(dead_code)]
     #[serde(default)]
     detail: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Scope parsing
+// ---------------------------------------------------------------------------
+
+/// Parse a scope string in the format `TYPE=PATTERN`.
+pub(crate) fn parse_scope(s: &str) -> Result<ScopeItem, Error> {
+    let (scope_type, pattern) = s.split_once('=').ok_or_else(|| {
+        Error::Other(format!(
+            "invalid scope '{s}': expected TYPE=PATTERN (e.g. channel=ces-devel/*)"
+        ))
+    })?;
+
+    if scope_type.is_empty() || pattern.is_empty() {
+        return Err(Error::Other(format!(
+            "invalid scope '{s}': both type and pattern must be non-empty"
+        )));
+    }
+
+    Ok(ScopeItem {
+        scope_type: scope_type.to_string(),
+        pattern: pattern.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -182,9 +224,16 @@ async fn cmd_create(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
+    let scopes: Vec<ScopeItem> = args
+        .scope
+        .iter()
+        .map(|s| parse_scope(s))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let body = CreateRoleBody {
         name: args.name.clone(),
         caps: args.caps,
+        scopes,
         description: args.description,
     };
 
@@ -229,6 +278,19 @@ async fn cmd_get(
         }
     }
 
+    if role.scopes.is_empty() {
+        println!("    scopes: (none)");
+    } else {
+        for (i, scope) in role.scopes.iter().enumerate() {
+            let entry = format!("{} = {}", scope.scope_type, scope.pattern);
+            if i == 0 {
+                println!("    scopes: {entry}");
+            } else {
+                println!("            {entry}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -245,10 +307,18 @@ async fn cmd_update(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
+    let scopes: Vec<ScopeItem> = args
+        .scope
+        .iter()
+        .map(|s| parse_scope(s))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let n_caps = args.caps.len();
+    let n_scopes = scopes.len();
     let body = UpdateRoleBody {
         name: args.name.clone(),
         caps: args.caps,
+        scopes,
     };
 
     match client
@@ -256,7 +326,10 @@ async fn cmd_update(
         .await
     {
         Ok(_) => {
-            println!("role '{}' updated ({n_caps} capabilities)", args.name);
+            println!(
+                "role '{}' updated ({n_caps} capabilities, {n_scopes} scopes)",
+                args.name
+            );
             Ok(())
         }
         Err(Error::Api {

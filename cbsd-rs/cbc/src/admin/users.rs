@@ -81,7 +81,7 @@ enum UserRolesCommands {
 struct RolesSetArgs {
     /// User email address
     email: String,
-    /// Role with optional scopes: NAME or NAME:TYPE=PAT[,TYPE=PAT,...]
+    /// Role name (repeatable)
     #[arg(long)]
     role: Vec<String>,
 }
@@ -93,9 +93,6 @@ struct RolesAddArgs {
     /// Role name
     #[arg(long)]
     role: String,
-    /// Scope in TYPE=PATTERN format (repeatable)
-    #[arg(long)]
-    scope: Vec<String>,
 }
 
 #[derive(Args)]
@@ -125,29 +122,16 @@ struct UserRoleItem {
     scopes: Vec<ScopeItem>,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
-struct ScopeItem {
-    #[serde(rename = "type")]
-    scope_type: String,
-    pattern: String,
-}
+use super::roles::ScopeItem;
 
 #[derive(Serialize)]
 struct ReplaceUserRolesBody {
-    roles: Vec<RoleAssignment>,
-}
-
-#[derive(Serialize)]
-struct RoleAssignment {
-    role: String,
-    #[serde(default)]
-    scopes: Vec<ScopeItem>,
+    roles: Vec<String>,
 }
 
 #[derive(Serialize)]
 struct AddUserRoleBody {
     role: String,
-    scopes: Vec<ScopeItem>,
 }
 
 #[derive(Deserialize)]
@@ -178,55 +162,6 @@ struct RoleDetail {
     #[allow(dead_code)]
     builtin: bool,
     caps: Vec<String>,
-}
-
-// ---------------------------------------------------------------------------
-// Scope parsing
-// ---------------------------------------------------------------------------
-
-/// Parse a `--role` value in the format `NAME` or `NAME:TYPE=PAT[,TYPE=PAT,...]`.
-fn parse_role_spec(spec: &str) -> Result<RoleAssignment, Error> {
-    let (name, scope_str) = match spec.split_once(':') {
-        Some((n, s)) => (n, Some(s)),
-        None => (spec, None),
-    };
-
-    if name.is_empty() {
-        return Err(Error::Other("empty role name".to_string()));
-    }
-
-    let scopes = match scope_str {
-        Some(s) if !s.is_empty() => s
-            .split(',')
-            .map(parse_scope)
-            .collect::<Result<Vec<_>, _>>()?,
-        _ => Vec::new(),
-    };
-
-    Ok(RoleAssignment {
-        role: name.to_string(),
-        scopes,
-    })
-}
-
-/// Parse a scope string in the format `TYPE=PATTERN`.
-fn parse_scope(s: &str) -> Result<ScopeItem, Error> {
-    let (scope_type, pattern) = s.split_once('=').ok_or_else(|| {
-        Error::Other(format!(
-            "invalid scope '{s}': expected TYPE=PATTERN (e.g. channel=ces-devel)"
-        ))
-    })?;
-
-    if scope_type.is_empty() || pattern.is_empty() {
-        return Err(Error::Other(format!(
-            "invalid scope '{s}': both type and pattern must be non-empty"
-        )));
-    }
-
-    Ok(ScopeItem {
-        scope_type: scope_type.to_string(),
-        pattern: pattern.to_string(),
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -447,21 +382,15 @@ async fn cmd_roles_set(
         return Err(Error::Other("at least one --role is required".to_string()));
     }
 
-    let assignments: Vec<RoleAssignment> = args
-        .role
-        .iter()
-        .map(|r| parse_role_spec(r))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let role_names: Vec<String> = assignments.iter().map(|a| a.role.clone()).collect();
-
-    let body = ReplaceUserRolesBody { roles: assignments };
+    let body = ReplaceUserRolesBody {
+        roles: args.role.clone(),
+    };
 
     let _resp: serde_json::Value = client
         .put_json(&format!("permissions/users/{}/roles", args.email), &body)
         .await?;
 
-    println!("user '{}' roles set: {}", args.email, role_names.join(", "));
+    println!("user '{}' roles set: {}", args.email, args.role.join(", "));
     Ok(())
 }
 
@@ -478,15 +407,8 @@ async fn cmd_roles_add(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let scopes: Vec<ScopeItem> = args
-        .scope
-        .iter()
-        .map(|s| parse_scope(s))
-        .collect::<Result<Vec<_>, _>>()?;
-
     let body = AddUserRoleBody {
         role: args.role.clone(),
-        scopes,
     };
 
     let _resp: serde_json::Value = client

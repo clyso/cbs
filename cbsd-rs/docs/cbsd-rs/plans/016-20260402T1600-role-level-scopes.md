@@ -308,7 +308,7 @@ client-side feature increment.
 
 | # | Commit | Status |
 |---|--------|--------|
-| 1 | docs | Pending |
-| 2 | scope matching + bug fixes | Pending |
-| 3 | server role-level scopes | Pending |
-| 4 | cbc client | Pending |
+| 1 | docs | Done |
+| 2 | scope matching + bug fixes | Done |
+| 3 | server role-level scopes | Done |
+| 4 | cbc client | Done |
