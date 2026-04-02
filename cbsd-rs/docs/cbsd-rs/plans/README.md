@@ -24,8 +24,9 @@ The Rust workspace lives at `cbsd-rs/` in the repository root.
 | [Phase 9](007-20260318T0725-cbscore-wrapper.md) | cbscore wrapper — Python subprocess bridge | 1 | Done |
 | [Phase 10](008-20260318T1713-periodic-builds.md) | Periodic build scheduling (cron, retry, CRUD API) | 1 | Done |
 | [Phase 11](009-20260320T0800-dev-oauth-bypass.md) | Dev mode OAuth bypass | 1 | Done |
+| [Phase 12](016-20260402T1600-role-level-scopes.md) | Role-level scopes | 4 | Pending |
 
-**Total:** 25 commits across 13 phases.
+**Total:** 29 commits across 14 phases.
 
 ## Dependency Graph
 
