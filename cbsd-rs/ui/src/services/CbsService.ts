@@ -20,9 +20,11 @@ import type { BuildStatusResponse, UserResponse } from '@/utils/types/cbs';
 
 export abstract class CbsService {
   static login() {
-    window.location.href = ApiHelper.getApiUrl(
-      '/auth/login?next=/dashboard/home',
-    );
+    window.location.href = ApiHelper.getApiUrl('/auth/login?client=web');
+  }
+
+  static async logout(): Promise<void> {
+    await apiClient.post(ApiHelper.getApiUrl('/auth/logout'));
   }
 
   static async getUser(): Promise<UserResponse> {

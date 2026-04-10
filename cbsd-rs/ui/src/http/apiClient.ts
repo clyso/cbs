@@ -17,23 +17,19 @@
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 
-const axiosInstance = axios.create();
-
-axiosInstance.interceptors.request.use((config) => {
-  const authStore = useAuthStore();
-
-  if (authStore.token) {
-    config.headers.Authorization = `Bearer ${authStore.token}`;
-  }
-
-  return config;
-});
+const axiosInstance = axios.create({ withCredentials: true });
 
 axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      window.location.href = '/login';
+      const authStore = useAuthStore();
+
+      // Don't redirect while fetchUser is in flight — let the error propagate
+      // so the access guard can handle it, otherwise we get a reload loop.
+      if (!authStore.isLoading) {
+        window.location.href = '/login';
+      }
     }
 
     return Promise.reject(error);

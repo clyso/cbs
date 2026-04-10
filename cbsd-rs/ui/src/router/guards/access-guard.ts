@@ -19,8 +19,14 @@ import type { NavigationGuard } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 import { RouteName } from '@/utils/types/router';
 
-const accessGuard: NavigationGuard = (to, _from, next) => {
-  const { isAuthenticated } = storeToRefs(useAuthStore());
+const accessGuard: NavigationGuard = async (to, _from, next) => {
+  const authStore = useAuthStore();
+
+  if (!authStore.isAuthenticated) {
+    await authStore.fetchUser();
+  }
+
+  const { isAuthenticated } = storeToRefs(authStore);
 
   if (isAuthenticated.value && to.meta.isAuth?.()) {
     next({ name: RouteName.HOME });
