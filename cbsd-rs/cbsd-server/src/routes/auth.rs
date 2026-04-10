@@ -32,6 +32,25 @@ use crate::auth::paseto;
 use crate::config::WEB_SESSION_IDLE_SECS;
 use crate::db;
 
+/// Return the OpenAPI spec fragment for the auth routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(
+        login,
+        callback,
+        logout,
+        whoami,
+        revoke_token,
+        revoke_all_tokens,
+        create_api_key_handler,
+        list_api_keys_handler,
+        revoke_api_key_handler,
+    ))]
+    struct AuthApi;
+    AuthApi::openapi()
+}
+
 /// Build the auth sub-router: `/api/auth/*`.
 ///
 /// Rate limiting: `/login` and `/callback` are limited to 10 req/min per IP
@@ -106,7 +125,7 @@ pub struct CallbackQuery {
     dev_email: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct WhoamiResponse {
     email: String,
     name: String,
@@ -114,24 +133,24 @@ struct WhoamiResponse {
     effective_caps: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct RevokeAllBody {
     user_email: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateApiKeyBody {
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct CreateApiKeyResponse {
     key: String,
     prefix: String,
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ApiKeyItem {
     prefix: String,
     name: String,
@@ -142,6 +161,15 @@ struct ApiKeyItem {
 // GET /api/auth/login
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/login",
+    tag = "auth",
+    params(("client" = Option<String>, Query, description = "Client type: 'cli' or 'web'")),
+    responses(
+        (status = 302, description = "Redirect to Google OAuth or callback"),
+    )
+)]
 async fn login(
     State(state): State<AppState>,
     Query(params): Query<LoginQuery>,
@@ -192,6 +220,15 @@ async fn login(
 // GET /api/auth/callback
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/callback",
+    tag = "auth",
+    responses(
+        (status = 302, description = "OAuth callback — redirects to UI or CLI token page"),
+        (status = 400, description = "Bad request", body = ErrorDetail),
+    )
+)]
 async fn callback(
     State(state): State<AppState>,
     Query(params): Query<CallbackQuery>,
@@ -331,6 +368,16 @@ async fn callback(
 // GET /api/auth/whoami
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/whoami",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Current user info", body = WhoamiResponse),
+        (status = 401, description = "Unauthorized", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn whoami(
     State(state): State<AppState>,
     user: AuthUser,
@@ -361,6 +408,17 @@ async fn whoami(
 
 /// Self-revoke: revokes the bearer token used in the current request.
 /// Cookie-authenticated users should use POST /api/auth/logout instead.
+#[utoipa::path(
+    post,
+    path = "/api/auth/token/revoke",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Token revoked"),
+        (status = 400, description = "Bad request", body = ErrorDetail),
+        (status = 401, description = "Unauthorized", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn revoke_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -406,6 +464,18 @@ async fn revoke_token(
 // ---------------------------------------------------------------------------
 
 /// Revoke all tokens for a user. Requires the target user to exist.
+#[utoipa::path(
+    post,
+    path = "/api/auth/tokens/revoke-all",
+    tag = "auth",
+    request_body = RevokeAllBody,
+    responses(
+        (status = 200, description = "Tokens revoked"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "User not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn revoke_all_tokens(
     State(state): State<AppState>,
     user: AuthUser,
@@ -452,6 +522,15 @@ async fn revoke_all_tokens(
 /// Does NOT use the `AuthUser` extractor — the session may contain an
 /// expired or revoked token that fails validation. The user should
 /// always be able to log out.
+#[utoipa::path(
+    post,
+    path = "/api/auth/logout",
+    tag = "auth",
+    responses(
+        (status = 200, description = "Logged out"),
+        (status = 500, description = "Session error", body = ErrorDetail),
+    )
+)]
 async fn logout(
     State(state): State<AppState>,
     session: Session,
@@ -481,6 +560,17 @@ async fn logout(
 // POST /api/auth/api-keys
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/auth/api-keys",
+    tag = "auth",
+    request_body = CreateApiKeyBody,
+    responses(
+        (status = 201, description = "API key created", body = CreateApiKeyResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn create_api_key_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -532,6 +622,16 @@ async fn create_api_key_handler(
 // GET /api/auth/api-keys
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/auth/api-keys",
+    tag = "auth",
+    responses(
+        (status = 200, description = "List of API keys", body = Vec<ApiKeyItem>),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_api_keys_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -567,6 +667,18 @@ async fn list_api_keys_handler(
 // DELETE /api/auth/api-keys/:prefix
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api/auth/api-keys/{prefix}",
+    tag = "auth",
+    params(("prefix" = String, Path, description = "API key prefix")),
+    responses(
+        (status = 200, description = "API key revoked"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn revoke_api_key_handler(
     State(state): State<AppState>,
     user: AuthUser,

@@ -30,7 +30,7 @@ use crate::scheduler::tag_format;
 // Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct PeriodicTaskResponse {
     id: String,
     cron_expr: String,
@@ -94,10 +94,11 @@ fn task_to_response(row: PeriodicTaskRow) -> PeriodicTaskResponse {
 // Request types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateTaskBody {
     cron_expr: String,
     tag_format: String,
+    #[schema(value_type = Object)]
     descriptor: serde_json::Value,
     #[serde(default = "default_priority")]
     priority: String,
@@ -108,10 +109,11 @@ fn default_priority() -> String {
     "normal".to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct UpdateTaskBody {
     cron_expr: Option<String>,
     tag_format: Option<String>,
+    #[schema(value_type = Object)]
     descriptor: Option<serde_json::Value>,
     priority: Option<String>,
     summary: Option<String>,
@@ -120,6 +122,23 @@ struct UpdateTaskBody {
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
+
+/// Return the OpenAPI spec fragment for the periodic routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(
+        create_task,
+        list_tasks,
+        get_task,
+        update_task,
+        delete_task,
+        enable_task,
+        disable_task,
+    ))]
+    struct PeriodicApi;
+    PeriodicApi::openapi()
+}
 
 /// Build the periodic tasks sub-router: `/api/periodic/*`.
 pub fn router() -> Router<AppState> {
@@ -138,6 +157,18 @@ pub fn router() -> Router<AppState> {
 // ---------------------------------------------------------------------------
 
 /// Create a new periodic build task.
+#[utoipa::path(
+    post,
+    path = "/api/periodic",
+    tag = "periodic",
+    request_body = CreateTaskBody,
+    responses(
+        (status = 201, description = "Task created", body = PeriodicTaskResponse),
+        (status = 400, description = "Invalid cron expression or descriptor", body = ErrorDetail),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn create_task(
     State(state): State<AppState>,
     user: AuthUser,
@@ -243,6 +274,16 @@ async fn create_task(
 // ---------------------------------------------------------------------------
 
 /// List all periodic build tasks.
+#[utoipa::path(
+    get,
+    path = "/api/periodic",
+    tag = "periodic",
+    responses(
+        (status = 200, description = "List of periodic tasks", body = Vec<PeriodicTaskResponse>),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_tasks(
     State(state): State<AppState>,
     user: AuthUser,
@@ -270,6 +311,18 @@ async fn list_tasks(
 // ---------------------------------------------------------------------------
 
 /// Get a single periodic build task by ID.
+#[utoipa::path(
+    get,
+    path = "/api/periodic/{id}",
+    tag = "periodic",
+    params(("id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Periodic task", body = PeriodicTaskResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn get_task(
     State(state): State<AppState>,
     user: AuthUser,
@@ -298,6 +351,20 @@ async fn get_task(
 // ---------------------------------------------------------------------------
 
 /// Update a periodic build task. At least one field must be provided.
+#[utoipa::path(
+    put,
+    path = "/api/periodic/{id}",
+    tag = "periodic",
+    params(("id" = String, Path, description = "Task ID")),
+    request_body = UpdateTaskBody,
+    responses(
+        (status = 200, description = "Updated task", body = PeriodicTaskResponse),
+        (status = 400, description = "Bad request", body = ErrorDetail),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn update_task(
     State(state): State<AppState>,
     user: AuthUser,
@@ -447,6 +514,18 @@ async fn update_task(
 // ---------------------------------------------------------------------------
 
 /// Delete a periodic build task.
+#[utoipa::path(
+    delete,
+    path = "/api/periodic/{id}",
+    tag = "periodic",
+    params(("id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Task deleted"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn delete_task(
     State(state): State<AppState>,
     user: AuthUser,
@@ -489,6 +568,18 @@ async fn delete_task(
 // ---------------------------------------------------------------------------
 
 /// Enable a periodic build task. Resets retry state.
+#[utoipa::path(
+    put,
+    path = "/api/periodic/{id}/enable",
+    tag = "periodic",
+    params(("id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Task enabled", body = PeriodicTaskResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn enable_task(
     State(state): State<AppState>,
     user: AuthUser,
@@ -531,6 +622,18 @@ async fn enable_task(
 // ---------------------------------------------------------------------------
 
 /// Disable a periodic build task. Clears retry_at.
+#[utoipa::path(
+    put,
+    path = "/api/periodic/{id}/disable",
+    tag = "periodic",
+    params(("id" = String, Path, description = "Task ID")),
+    responses(
+        (status = 200, description = "Task disabled", body = PeriodicTaskResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn disable_task(
     State(state): State<AppState>,
     user: AuthUser,

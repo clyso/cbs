@@ -26,8 +26,26 @@ use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
 use crate::components;
 use crate::db;
+use crate::db::builds::{BuildListRecord, BuildRecord};
 use crate::queue::QueuedBuild;
 use crate::ws;
+
+/// Return the OpenAPI spec fragment for the builds routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(
+        submit_build,
+        list_builds,
+        get_build,
+        revoke_build,
+        logs_tail,
+        logs_follow,
+        logs_full,
+    ))]
+    struct BuildsApi;
+    BuildsApi::openapi()
+}
 
 /// Build the builds sub-router: `/api/builds/*`.
 pub fn router() -> Router<AppState> {
@@ -45,14 +63,14 @@ pub fn router() -> Router<AppState> {
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct SubmitBuildBody {
     descriptor: BuildDescriptor,
     #[serde(default)]
     priority: Priority,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct SubmitBuildResponse {
     id: i64,
     state: String,
@@ -60,7 +78,7 @@ struct SubmitBuildResponse {
     warning: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct ListBuildsQuery {
     user: Option<String>,
     state: Option<String>,
@@ -70,6 +88,18 @@ struct ListBuildsQuery {
 // POST /api/builds/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/builds",
+    tag = "builds",
+    request_body = SubmitBuildBody,
+    responses(
+        (status = 202, description = "Build queued", body = SubmitBuildResponse),
+        (status = 400, description = "Invalid request", body = ErrorDetail),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn submit_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -240,6 +270,17 @@ pub async fn insert_build_internal(
 // GET /api/builds/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/builds",
+    tag = "builds",
+    params(ListBuildsQuery),
+    responses(
+        (status = 200, description = "List of builds", body = Vec<BuildListRecord>),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_builds(
     State(state): State<AppState>,
     user: AuthUser,
@@ -278,6 +319,18 @@ async fn list_builds(
 // GET /api/builds/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/builds/{id}",
+    tag = "builds",
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = 200, description = "Build record", body = BuildRecord),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn get_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -313,6 +366,19 @@ async fn get_build(
 // DELETE /api/builds/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api/builds/{id}",
+    tag = "builds",
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = 200, description = "Revoke accepted"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+        (status = 409, description = "Already in terminal state", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn revoke_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -408,8 +474,9 @@ async fn revoke_build(
 // GET /api/builds/{id}/logs/tail?n=30
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
 struct LogsTailQuery {
+    /// Number of log lines to return (default 30, max 10000).
     #[serde(default = "default_tail_n")]
     n: u32,
 }
@@ -421,6 +488,20 @@ fn default_tail_n() -> u32 {
 /// Maximum number of lines the tail endpoint will return.
 const MAX_TAIL_LINES: u32 = 10_000;
 
+#[utoipa::path(
+    get,
+    path = "/api/builds/{id}/logs/tail",
+    tag = "builds",
+    params(
+        ("id" = i64, Path, description = "Build ID"),
+        LogsTailQuery,
+    ),
+    responses(
+        (status = 200, description = "Last N log lines"),
+        (status = 404, description = "Build or log not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn logs_tail(
     State(state): State<AppState>,
     user: AuthUser,
@@ -493,6 +574,17 @@ async fn logs_tail(
 // GET /api/builds/{id}/logs/follow
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/builds/{id}/logs/follow",
+    tag = "builds",
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = 200, description = "SSE stream of log lines (text/event-stream)"),
+        (status = 404, description = "Build not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn logs_follow(
     State(state): State<AppState>,
     user: AuthUser,
@@ -532,6 +624,17 @@ async fn logs_follow(
 // GET /api/builds/{id}/logs
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/builds/{id}/logs",
+    tag = "builds",
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = 200, description = "Full log file (application/octet-stream)"),
+        (status = 404, description = "Build or log not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn logs_full(
     State(state): State<AppState>,
     user: AuthUser,

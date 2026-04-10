@@ -22,6 +22,25 @@ use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
 use crate::db;
 
+/// Return the OpenAPI spec fragment for the channels routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(
+        create_channel,
+        list_channels,
+        get_channel,
+        update_channel,
+        delete_channel,
+        add_type,
+        update_type,
+        delete_type,
+        set_default_type,
+    ))]
+    struct ChannelsApi;
+    ChannelsApi::openapi()
+}
+
 /// Build the channels sub-router: `/api/channels/*`.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -40,14 +59,14 @@ pub fn router() -> Router<AppState> {
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct CreateChannelBody {
     name: String,
     #[serde(default)]
     description: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct UpdateChannelBody {
     #[serde(default)]
     name: Option<String>,
@@ -55,7 +74,7 @@ struct UpdateChannelBody {
     description: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct AddTypeBody {
     type_name: String,
     project: String,
@@ -63,7 +82,7 @@ struct AddTypeBody {
     prefix_template: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct UpdateTypeBody {
     #[serde(default)]
     project: Option<String>,
@@ -71,12 +90,12 @@ struct UpdateTypeBody {
     prefix_template: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct SetDefaultTypeBody {
     type_id: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct ChannelResponse {
     id: i64,
     name: String,
@@ -87,7 +106,7 @@ struct ChannelResponse {
     updated_at: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct TypeResponse {
     id: i64,
     type_name: String,
@@ -192,6 +211,17 @@ async fn user_can_view_channel(
 // POST /api/channels
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/channels",
+    tag = "channels",
+    request_body = CreateChannelBody,
+    responses(
+        (status = 201, description = "Channel created", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn create_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -251,6 +281,16 @@ async fn create_channel(
 // GET /api/channels
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/channels",
+    tag = "channels",
+    responses(
+        (status = 200, description = "List of channels", body = Vec<ChannelResponse>),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_channels(
     State(state): State<AppState>,
     user: AuthUser,
@@ -278,6 +318,18 @@ async fn list_channels(
 // GET /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api/channels/{id}",
+    tag = "channels",
+    params(("id" = i64, Path, description = "Channel ID")),
+    responses(
+        (status = 200, description = "Channel detail", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Channel not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn get_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -303,6 +355,19 @@ async fn get_channel(
 // PUT /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/api/channels/{id}",
+    tag = "channels",
+    params(("id" = i64, Path, description = "Channel ID")),
+    request_body = UpdateChannelBody,
+    responses(
+        (status = 200, description = "Updated channel", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Channel not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn update_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -364,6 +429,18 @@ async fn update_channel(
 // DELETE /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{id}",
+    tag = "channels",
+    params(("id" = i64, Path, description = "Channel ID")),
+    responses(
+        (status = 200, description = "Channel deleted"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Channel not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn delete_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -396,6 +473,19 @@ async fn delete_channel(
 // POST /api/channels/{id}/types
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api/channels/{id}/types",
+    tag = "channels",
+    params(("id" = i64, Path, description = "Channel ID")),
+    request_body = AddTypeBody,
+    responses(
+        (status = 201, description = "Type added", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Channel not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn add_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -481,6 +571,22 @@ async fn add_type(
 // PUT /api/channels/{id}/types/{tid}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/api/channels/{id}/types/{tid}",
+    tag = "channels",
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+        ("tid" = i64, Path, description = "Type ID"),
+    ),
+    request_body = UpdateTypeBody,
+    responses(
+        (status = 200, description = "Type updated", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn update_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -541,6 +647,21 @@ async fn update_type(
 // DELETE /api/channels/{id}/types/{tid}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api/channels/{id}/types/{tid}",
+    tag = "channels",
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+        ("tid" = i64, Path, description = "Type ID"),
+    ),
+    responses(
+        (status = 200, description = "Type deleted", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn delete_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -595,6 +716,19 @@ async fn delete_type(
 // PUT /api/channels/{id}/default-type
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/api/channels/{id}/default-type",
+    tag = "channels",
+    params(("id" = i64, Path, description = "Channel ID")),
+    request_body = SetDefaultTypeBody,
+    responses(
+        (status = 200, description = "Default type set", body = ChannelResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn set_default_type(
     State(state): State<AppState>,
     user: AuthUser,

@@ -26,7 +26,7 @@ struct ComponentYaml {
 }
 
 /// Information about a discovered component.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ComponentInfo {
     pub name: String,
     pub versions: Vec<String>,

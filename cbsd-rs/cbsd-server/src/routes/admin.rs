@@ -25,6 +25,23 @@ use crate::auth::api_keys;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
 
+/// Return the OpenAPI spec fragment for the admin routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(
+        deactivate_user,
+        activate_user,
+        queue_status,
+        register_worker,
+        deregister_worker,
+        regenerate_worker_token,
+        set_user_default_channel,
+    ))]
+    struct AdminApi;
+    AdminApi::openapi()
+}
+
 /// Build the admin sub-router: `/api/admin/*`.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -49,6 +66,19 @@ pub fn router() -> Router<AppState> {
 
 /// Deactivate a user: set active=0, bulk-revoke tokens + API keys, purge LRU
 /// cache. Transactional with last-admin guard. Idempotent.
+#[utoipa::path(
+    put,
+    path = "/api/admin/users/{email}/deactivate",
+    tag = "admin",
+    params(("email" = String, Path, description = "User email")),
+    responses(
+        (status = 200, description = "User deactivated"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "User not found", body = ErrorDetail),
+        (status = 409, description = "Last admin guard", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn deactivate_user(
     State(state): State<AppState>,
     user: AuthUser,
@@ -163,6 +193,18 @@ async fn deactivate_user(
 // ---------------------------------------------------------------------------
 
 /// Reactivate a user. Idempotent.
+#[utoipa::path(
+    put,
+    path = "/api/admin/users/{email}/activate",
+    tag = "admin",
+    params(("email" = String, Path, description = "User email")),
+    responses(
+        (status = 200, description = "User activated"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "User not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn activate_user(
     State(state): State<AppState>,
     user: AuthUser,
@@ -207,6 +249,16 @@ async fn activate_user(
 // ---------------------------------------------------------------------------
 
 /// Return the number of pending builds per priority lane.
+#[utoipa::path(
+    get,
+    path = "/api/admin/queue",
+    tag = "admin",
+    responses(
+        (status = 200, description = "Queue depth per priority lane"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn queue_status(
     State(state): State<AppState>,
     user: AuthUser,
@@ -247,13 +299,13 @@ fn is_valid_worker_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct RegisterWorkerBody {
     name: String,
     arch: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 struct RegisterWorkerResponse {
     worker_id: String,
     name: String,
@@ -281,6 +333,19 @@ fn build_worker_token(worker_id: &str, name: &str, api_key: &str, arch: &str) ->
 ///
 /// SECURITY: The response body contains the plaintext API key (inside the
 /// worker token). Ensure no response-body logging middleware captures it.
+#[utoipa::path(
+    post,
+    path = "/api/admin/workers",
+    tag = "admin",
+    request_body = RegisterWorkerBody,
+    responses(
+        (status = 201, description = "Worker registered", body = RegisterWorkerResponse),
+        (status = 400, description = "Invalid request", body = ErrorDetail),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 409, description = "Name already exists", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn register_worker(
     State(state): State<AppState>,
     user: AuthUser,
@@ -389,6 +454,18 @@ async fn register_worker(
 /// Deregister a worker: revoke its API key, purge cache, delete DB row,
 /// and force-disconnect the live WebSocket connection (re-queuing any
 /// in-flight build via the dead-worker resolution mechanism).
+#[utoipa::path(
+    delete,
+    path = "/api/admin/workers/{id}",
+    tag = "admin",
+    params(("id" = String, Path, description = "Worker ID")),
+    responses(
+        (status = 200, description = "Worker deregistered"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Worker not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn deregister_worker(
     State(state): State<AppState>,
     user: AuthUser,
@@ -478,6 +555,18 @@ async fn deregister_worker(
 /// Rotate a worker's API key: revoke old key, create new one, return new
 /// worker token. Crash-safe: insert new → update FK → revoke old → commit.
 /// Force-disconnects the worker so it must reconnect with the new key.
+#[utoipa::path(
+    post,
+    path = "/api/admin/workers/{id}/regenerate-token",
+    tag = "admin",
+    params(("id" = String, Path, description = "Worker ID")),
+    responses(
+        (status = 200, description = "New worker token", body = RegisterWorkerResponse),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "Worker not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn regenerate_worker_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -625,12 +714,25 @@ async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
 // PUT /api/admin/users/{email}/default-channel
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct SetDefaultChannelBody {
     channel_id: i64,
 }
 
 /// Set a user's default channel for build submission.
+#[utoipa::path(
+    put,
+    path = "/api/admin/users/{email}/default-channel",
+    tag = "admin",
+    params(("email" = String, Path, description = "User email")),
+    request_body = SetDefaultChannelBody,
+    responses(
+        (status = 200, description = "Default channel set"),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+        (status = 404, description = "User or channel not found", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn set_user_default_channel(
     State(state): State<AppState>,
     user: AuthUser,

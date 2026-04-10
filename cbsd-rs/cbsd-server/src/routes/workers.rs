@@ -27,13 +27,22 @@ use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
 use crate::ws::liveness::WorkerState;
 
+/// Return the OpenAPI spec fragment for the workers routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(list_workers))]
+    struct WorkersApi;
+    WorkersApi::openapi()
+}
+
 /// Build the workers sub-router: `/api/workers`.
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(list_workers))
 }
 
 /// Response item for the merged worker listing.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct WorkerInfoResponse {
     worker_id: String,
     name: String,
@@ -51,6 +60,16 @@ struct WorkerInfoResponse {
 /// Merges the `workers` DB table (all registered) with the in-memory
 /// `BuildQueue.workers` map to produce a unified view including offline
 /// workers.
+#[utoipa::path(
+    get,
+    path = "/api/workers",
+    tag = "workers",
+    responses(
+        (status = 200, description = "List of workers", body = Vec<WorkerInfoResponse>),
+        (status = 403, description = "Forbidden", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_workers(
     State(state): State<AppState>,
     user: AuthUser,

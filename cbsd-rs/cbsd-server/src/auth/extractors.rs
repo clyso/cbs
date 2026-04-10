@@ -125,7 +125,7 @@ fn scope_pattern_matches(pattern: &str, value: &str) -> bool {
 }
 
 /// Error response body matching FastAPI's `{"detail": "..."}` shape.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, utoipa::ToSchema)]
 pub struct ErrorDetail {
     pub detail: String,
 }

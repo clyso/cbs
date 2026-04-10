@@ -22,7 +22,7 @@ use sqlx::{Row, SqlitePool};
 /// by cbscore after a successful build. It is stored as TEXT in SQLite but
 /// deserialized to `serde_json::Value` so the API returns a nested JSON object.
 /// The list endpoint excludes this field for performance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct BuildRecord {
     pub id: i64,
     pub descriptor: String,
@@ -49,7 +49,7 @@ pub struct BuildRecord {
 
 /// A build record for list responses. Identical to `BuildRecord` but
 /// without the potentially large `build_report` field.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct BuildListRecord {
     pub id: i64,
     pub descriptor: String,

@@ -34,6 +34,7 @@ use crate::auth::oauth::OAuthState;
 use crate::components::ComponentInfo;
 use crate::config::ServerConfig;
 use crate::logs::writer::SharedLogWriter;
+use crate::openapi;
 use crate::queue::SharedBuildQueue;
 use crate::routes;
 
@@ -138,7 +139,10 @@ pub fn build_router(
     //   3. TraceLayer — logs request/response with the assigned ID
     //   4. PropagateRequestId — copies x-request-id to the response
     //   5. SessionManagerLayer — session handling for OAuth
-    Router::new()
+    // Build the stateful app router, then convert to Router<()> via with_state.
+    // The swagger UI is merged afterwards because SwaggerUi only converts to
+    // Router<()> — it carries no application state.
+    let app = Router::new()
         .nest(
             "/api",
             api.route("/ws/worker", get(ws::handler::ws_upgrade)),
@@ -151,7 +155,9 @@ pub fn build_router(
             X_REQUEST_ID.clone(),
             MakeRequestUuid,
         ))
-        .with_state(state)
+        .with_state(state);
+
+    app.merge(openapi::router())
 }
 
 async fn health() -> Json<serde_json::Value> {

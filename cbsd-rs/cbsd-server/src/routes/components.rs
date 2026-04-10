@@ -21,6 +21,15 @@ use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail};
 use crate::components::ComponentInfo;
 
+/// Return the OpenAPI spec fragment for the components routes.
+pub(crate) fn openapi() -> utoipa::openapi::OpenApi {
+    use utoipa::OpenApi;
+    #[derive(OpenApi)]
+    #[openapi(paths(list_components))]
+    struct ComponentsApi;
+    ComponentsApi::openapi()
+}
+
 /// Build the components sub-router: `/api/components/*`.
 pub fn router() -> Router<AppState> {
     Router::new().route("/", get(list_components))
@@ -32,6 +41,16 @@ pub fn router() -> Router<AppState> {
 
 /// List all known components. Requires authentication but no specific
 /// capability.
+#[utoipa::path(
+    get,
+    path = "/api/components",
+    tag = "components",
+    responses(
+        (status = 200, description = "List of available build components", body = Vec<ComponentInfo>),
+        (status = 401, description = "Unauthorized", body = ErrorDetail),
+    ),
+    security(("bearer_auth" = []))
+)]
 async fn list_components(
     State(state): State<AppState>,
     _user: AuthUser,
