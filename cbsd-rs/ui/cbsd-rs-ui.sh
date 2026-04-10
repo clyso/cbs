@@ -30,13 +30,6 @@ case "${1}" in
     ;;
 
   dev)
-    # enable once we have the actual UI available
-    #
-    # yarn dev --port 3000 --host 0.0.0.0
-    echo "UI not available yet; serving default index.html"
-    mkdir ./build || true
-    cp ./index.html ./build/index.html
-    npm install http-server -g
-    http-server -p 3000 -a 0.0.0.0 ./build
+    yarn dev --port 3000 --host 0.0.0.0
     ;;
 esac

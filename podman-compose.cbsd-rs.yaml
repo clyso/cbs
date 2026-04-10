@@ -125,6 +125,9 @@ volumes:
   # Avoids re-downloading crates on every container restart.
   cbsd-rs-cargo-registry:
   cbsd-rs-cargo-git:
-  # Persistent node_modules for the UI. Avoids re-downloading on every
-  # container restart.
+  # node_modules for the UI dev container.
+  # Populated once by the update-ui-deps.
+  # update-ui-deps is NOT started automatically on 'up' — run it manually once,
+  # or whenever package.json / yarn.lock change:
+  # ./do-cbsd-rs-compose.sh update-ui-deps
   cbsd-rs-ui-node-modules:

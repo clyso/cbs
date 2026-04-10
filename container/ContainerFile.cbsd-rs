@@ -16,6 +16,7 @@
 #   cbsd-rs-ui         production UI (nginx + static files)
 #   cbsd-rs-dev-server dev server (cargo-watch, source bind-mounted)
 #   cbsd-rs-dev-worker dev worker (cargo-watch + cbscore + podman)
+#   node-deps          yarn install only — used to populate the dev node_modules volume
 #   cbsd-rs-dev-ui     dev UI (node + yarn)
 #
 # Rust toolchain version is pinned via RUST_VERSION and shared between
@@ -245,6 +246,26 @@ VOLUME ["/cbs/ccache"]
 ENV CBSD_CONFIG=/cbs/config/worker.yaml
 
 ENTRYPOINT ["/entrypoint.sh", "worker-dev"]
+
+# ==========================================================================
+# Node deps: yarn install — used to populate the dev node_modules volume.
+#
+# Only package.json and yarn.lock are copied so that the layer is only
+# invalidated when dependencies change, not on every source edit.
+# The resulting node_modules live at /cbs/src/node_modules and are
+# transferred into the named volume by the ui-deps compose service.
+# ==========================================================================
+
+FROM docker.io/library/node:lts-slim AS node-deps
+
+# Install to /cbs/staging so node_modules are not masked by the named
+# volume that ui-deps mounts at /cbs/src/node_modules. The ui-deps
+# compose service copies them into the volume at container startup.
+WORKDIR /cbs/staging
+
+COPY cbsd-rs/ui/package.json cbsd-rs/ui/yarn.lock ./
+
+RUN yarn install --frozen-lockfile
 
 # ==========================================================================
 # Development UI image

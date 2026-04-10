@@ -50,6 +50,36 @@ down() {
     -f "${compose_file}" --profile "${compose_profile}" down || true
 }
 
+update_ui_deps() {
+  # Populates the cbsd-rs-ui-node-modules volume with node_modules.
+  # Run once before the first 'up --dev', and again whenever
+  # package.json or yarn.lock change.
+  #
+  # Builds the node-deps image stage (yarn install only), then copies
+  # the resulting node_modules into the named volume. Podman does not
+  # auto-populate named volumes from image content (unlike Docker).
+  echo "=> building node-deps image"
+  podman build \
+    --target node-deps \
+    -t cbsd-rs-node-deps \
+    -f "${ourdir}/container/ContainerFile.cbsd-rs" \
+    "${ourdir}" || {
+    echo "error: failed to build node-deps image" >/dev/stderr
+    exit 1
+  }
+
+  echo "=> copying node_modules into volume"
+  podman run --rm \
+    -v cbs_cbsd-rs-ui-node-modules:/cbs/src/node_modules:Z \
+    cbsd-rs-node-deps \
+    /bin/sh -c "cp -a /cbs/staging/node_modules/. /cbs/src/node_modules/" || {
+    echo "error: failed to populate node_modules volume" >/dev/stderr
+    exit 1
+  }
+
+  echo "=> node_modules volume populated"
+}
+
 up() {
   extra_args=
   [[ -n "${rebuild}" ]] &&
@@ -319,11 +349,13 @@ usage() {
 usage: $0 <COMMAND> [OPTIONS]
 
 Commands:
-  prepare       Set up directory structure and generate config files
-  up            Build images and bring up the compose environment
-  down          Bring down the compose environment
-  sqlx-prepare  Regenerate the sqlx offline query cache; needed only when
-                adding or modifying sqlx query!() macros or SQL migrations
+  prepare        Set up directory structure and generate config files
+  up             Build images and bring up the compose environment
+  down           Bring down the compose environment
+  update-ui-deps Populate the node_modules volume (run once before first
+                 'up --dev', and after package.json / yarn.lock changes)
+  sqlx-prepare   Regenerate the sqlx offline query cache; needed only when
+                 adding or modifying sqlx query!() macros or SQL migrations
 
 Options for 'prepare':
   --google-client-secrets <PATH>   Path to Google OAuth2 client secrets JSON
@@ -489,6 +521,9 @@ case "${cmd}" in
     ;;
   down)
     down
+    ;;
+  update-ui-deps)
+    update_ui_deps
     ;;
   sqlx-prepare)
     sqlx_prepare
