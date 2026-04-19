@@ -181,6 +181,22 @@ pub async fn insert_api_key_in_tx(
     Ok(result.last_insert_rowid())
 }
 
+/// Record successful use of an API key. Sets `first_used_at` once (if
+/// NULL) and always updates `last_used_at`. Fire-and-forget — callers
+/// should log errors and proceed rather than failing the request.
+pub async fn mark_api_key_used(pool: &SqlitePool, api_key_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE api_keys
+         SET first_used_at = COALESCE(first_used_at, unixepoch()),
+             last_used_at  = unixepoch()
+         WHERE id = ? AND revoked = 0",
+        api_key_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Get the key prefix for an API key by its row ID. Used to purge the
 /// LRU cache after revocation when only the row ID is known.
 pub async fn get_key_prefix_by_id(
@@ -195,4 +211,107 @@ pub async fn get_key_prefix_by_id(
     .await?;
 
     Ok(row.map(|r| r.key_prefix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn test_pool() -> SqlitePool {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let url = format!(
+            "file:api_keys_test_{pid}_{id}?mode=memory&cache=shared",
+            pid = std::process::id(),
+        );
+        let options = SqliteConnectOptions::from_str(&url)
+            .expect("valid sqlite URL")
+            .pragma("foreign_keys", "ON")
+            .pragma("busy_timeout", "5000");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .min_connections(1)
+            .connect_with(options)
+            .await
+            .expect("pool");
+        sqlx::migrate!("../migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+        pool
+    }
+
+    async fn seed_user(pool: &SqlitePool, email: &str) {
+        sqlx::query!(
+            "INSERT INTO users (email, name, active, is_robot) VALUES (?, ?, 1, 0)",
+            email,
+            email,
+        )
+        .execute(pool)
+        .await
+        .expect("seed user");
+    }
+
+    #[tokio::test]
+    async fn mark_api_key_used_preserves_first_used_at_across_calls() {
+        let pool = test_pool().await;
+        seed_user(&pool, "alice@example.com").await;
+        let key_id = insert_api_key(&pool, "ci", "alice@example.com", "hash-a", "pfx000000aaa")
+            .await
+            .unwrap();
+
+        mark_api_key_used(&pool, key_id).await.unwrap();
+        let row = sqlx::query!(
+            "SELECT first_used_at, last_used_at FROM api_keys WHERE id = ?",
+            key_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let first_at = row.first_used_at.expect("first_used_at set on first call");
+        assert!(row.last_used_at.is_some());
+
+        sqlx::query!("UPDATE api_keys SET last_used_at = 0 WHERE id = ?", key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        mark_api_key_used(&pool, key_id).await.unwrap();
+        let row = sqlx::query!(
+            "SELECT first_used_at, last_used_at FROM api_keys WHERE id = ?",
+            key_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.first_used_at, Some(first_at));
+        assert_ne!(row.last_used_at, Some(0));
+    }
+
+    #[tokio::test]
+    async fn mark_api_key_used_skips_revoked_rows() {
+        let pool = test_pool().await;
+        seed_user(&pool, "bob@example.com").await;
+        let key_id = insert_api_key(&pool, "ci", "bob@example.com", "hash-b", "pfx000000bbb")
+            .await
+            .unwrap();
+        sqlx::query!("UPDATE api_keys SET revoked = 1 WHERE id = ?", key_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        mark_api_key_used(&pool, key_id).await.unwrap();
+        let row = sqlx::query!(
+            "SELECT first_used_at, last_used_at FROM api_keys WHERE id = ?",
+            key_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(row.first_used_at.is_none());
+        assert!(row.last_used_at.is_none());
+    }
 }

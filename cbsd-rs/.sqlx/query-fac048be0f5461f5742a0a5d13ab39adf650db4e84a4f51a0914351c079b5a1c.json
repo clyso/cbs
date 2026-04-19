@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT first_used_at, last_used_at FROM robot_tokens WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "first_used_at",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_used_at",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "fac048be0f5461f5742a0a5d13ab39adf650db4e84a4f51a0914351c079b5a1c"
+}

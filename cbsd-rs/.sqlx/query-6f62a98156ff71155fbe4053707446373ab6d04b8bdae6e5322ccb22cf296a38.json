@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT first_used_at, last_used_at FROM api_keys WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "first_used_at",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_used_at",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "6f62a98156ff71155fbe4053707446373ab6d04b8bdae6e5322ccb22cf296a38"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE robot_tokens SET last_used_at = 0 WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "44f78b585d3599f869c5beacbeef7210505b02d444804f228d10d90e1ba76ce7"
+}

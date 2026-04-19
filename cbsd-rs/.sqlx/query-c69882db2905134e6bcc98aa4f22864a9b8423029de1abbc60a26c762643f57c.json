@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT first_used_at, last_used_at FROM tokens WHERE token_hash = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "first_used_at",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "last_used_at",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "c69882db2905134e6bcc98aa4f22864a9b8423029de1abbc60a26c762643f57c"
+}

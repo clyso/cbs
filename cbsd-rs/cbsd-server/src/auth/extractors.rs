@@ -204,7 +204,15 @@ async fn validate_paseto(token_str: &str, state: &AppState) -> Result<AuthUser, 
     }
 
     tracing::debug!(user = %payload.user, "auth: token valid, loading user");
-    load_authed_user(&state.pool, &payload.user).await
+    let auth_user = load_authed_user(&state.pool, &payload.user).await?;
+
+    // Usage tracking — never fail the request on a write error; the auth
+    // path continues to succeed even if the update is lost.
+    if let Err(e) = db::tokens::mark_token_used(&state.pool, &hash).await {
+        tracing::warn!("failed to mark token used: {e}");
+    }
+
+    Ok(auth_user)
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -238,7 +246,17 @@ impl FromRequestParts<AppState> for AuthUser {
                     auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
                 })?;
 
-                return load_authed_user(&state.pool, &cached.owner_email).await;
+                let auth_user = load_authed_user(&state.pool, &cached.owner_email).await?;
+
+                // Usage tracking — warn-and-swallow on failure, inline await
+                // so the request already holds the pool connection.
+                if let Err(e) =
+                    db::api_keys::mark_api_key_used(&state.pool, cached.api_key_id).await
+                {
+                    tracing::warn!("failed to mark api key used: {e}");
+                }
+
+                return Ok(auth_user);
             }
 
             // PASETO token path
