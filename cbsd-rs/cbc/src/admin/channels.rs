@@ -212,7 +212,7 @@ pub async fn set_user_default_channel(
 
     let body = SetDefaultChannelBody { channel_id };
     let resp: DetailResponse = client
-        .put_json(&format!("admin/users/{email}/default-channel"), &body)
+        .put_json(&format!("admin/entity/{email}/default-channel"), &body)
         .await?;
 
     println!("{}", resp.detail);

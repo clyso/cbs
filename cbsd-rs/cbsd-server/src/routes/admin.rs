@@ -10,7 +10,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
 
-//! Route handlers for `/api/admin/*`: user management and worker registration.
+//! Route handlers for `/api/admin/*`: entity management, worker registration.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -24,12 +24,22 @@ use crate::app::AppState;
 use crate::auth::api_keys;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::db;
+use crate::routes::permissions::ScopeBody;
 
 /// Build the admin sub-router: `/api/admin/*`.
 pub fn router() -> Router<AppState> {
+    let entity_router = Router::new()
+        .route("/{email}/deactivate", put(deactivate_entity))
+        .route("/{email}/activate", put(activate_entity))
+        .route("/{email}/default-channel", put(set_entity_default_channel))
+        .route("/{email}/roles", get(get_entity_roles))
+        .route("/{email}/roles", put(replace_entity_roles))
+        .route("/{email}/roles", post(add_entity_role))
+        .route("/{email}/roles/{role}", delete(remove_entity_role));
+
     Router::new()
-        .route("/users/{email}/deactivate", put(deactivate_user))
-        .route("/users/{email}/activate", put(activate_user))
+        .route("/entities", get(list_entities))
+        .nest("/entity", entity_router)
         .route("/queue", get(queue_status))
         .route("/workers", post(register_worker))
         .route("/workers/{id}", delete(deregister_worker))
@@ -37,19 +47,15 @@ pub fn router() -> Router<AppState> {
             "/workers/{id}/regenerate-token",
             post(regenerate_worker_token),
         )
-        .route(
-            "/users/{email}/default-channel",
-            put(set_user_default_channel),
-        )
 }
 
 // ---------------------------------------------------------------------------
-// PUT /api/admin/users/{email}/deactivate
+// PUT /api/admin/entity/{email}/deactivate
 // ---------------------------------------------------------------------------
 
-/// Deactivate a user: set active=0, bulk-revoke tokens + API keys, purge LRU
+/// Deactivate an entity: set active=0, bulk-revoke tokens + API keys, purge LRU
 /// cache. Transactional with last-admin guard. Idempotent.
-async fn deactivate_user(
+async fn deactivate_entity(
     State(state): State<AppState>,
     user: AuthUser,
     Path(email): Path<String>,
@@ -73,7 +79,7 @@ async fn deactivate_user(
     // Idempotent: if already deactivated, return success
     if !target.active {
         return Ok(Json(
-            serde_json::json!({"detail": format!("user '{email}' already deactivated")}),
+            serde_json::json!({"detail": format!("entity '{email}' already deactivated")}),
         ));
     }
 
@@ -139,23 +145,23 @@ async fn deactivate_user(
     }
 
     tracing::info!(
-        "user {} deactivated user '{email}' (revoked {tokens_revoked} tokens, {keys_revoked} API keys)",
+        "user {} deactivated entity '{email}' (revoked {tokens_revoked} tokens, {keys_revoked} API keys)",
         user.email
     );
 
     Ok(Json(serde_json::json!({
-        "detail": format!("user '{email}' deactivated"),
+        "detail": format!("entity '{email}' deactivated"),
         "tokens_revoked": tokens_revoked,
         "api_keys_revoked": keys_revoked,
     })))
 }
 
 // ---------------------------------------------------------------------------
-// PUT /api/admin/users/{email}/activate
+// PUT /api/admin/entity/{email}/activate
 // ---------------------------------------------------------------------------
 
-/// Reactivate a user. Idempotent.
-async fn activate_user(
+/// Reactivate an entity. Idempotent.
+async fn activate_entity(
     State(state): State<AppState>,
     user: AuthUser,
     Path(email): Path<String>,
@@ -187,10 +193,10 @@ async fn activate_user(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
     })?;
 
-    tracing::info!("user {} activated user '{email}'", user.email);
+    tracing::info!("user {} activated entity '{email}'", user.email);
 
     Ok(Json(
-        serde_json::json!({"detail": format!("user '{email}' activated")}),
+        serde_json::json!({"detail": format!("entity '{email}' activated")}),
     ))
 }
 
@@ -614,7 +620,7 @@ async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// PUT /api/admin/users/{email}/default-channel
+// PUT /api/admin/entity/{email}/default-channel
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -622,8 +628,8 @@ struct SetDefaultChannelBody {
     channel_id: i64,
 }
 
-/// Set a user's default channel for build submission.
-async fn set_user_default_channel(
+/// Set an entity's default channel for build submission.
+async fn set_entity_default_channel(
     State(state): State<AppState>,
     user: AuthUser,
     Path(email): Path<String>,
@@ -665,7 +671,7 @@ async fn set_user_default_channel(
         })?;
 
     tracing::info!(
-        "user {} set default channel for '{}' to {}",
+        "user {} set default channel for entity '{}' to {}",
         user.email,
         email,
         body.channel_id,
@@ -684,4 +690,306 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
     } else {
         false
     }
+}
+
+fn require_cap(user: &AuthUser, cap: &str) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap(cap) {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            &format!("missing required capability: {cap}"),
+        ));
+    }
+    Ok(())
+}
+
+async fn last_admin_guard(pool: &sqlx::SqlitePool) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
+    let count = db::roles::count_active_wildcard_holders(pool)
+        .await
+        .map_err(|_| {
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to check admin count",
+            )
+        })?;
+    if count == 0 {
+        return Err(auth_error(
+            StatusCode::CONFLICT,
+            "operation would remove the last admin — at least one active entity must hold the wildcard (*) capability",
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Entity role management types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct EntityRoleItem {
+    role: String,
+    scopes: Vec<ScopeBody>,
+}
+
+#[derive(Serialize)]
+struct EntityWithRolesItem {
+    email: String,
+    name: String,
+    active: bool,
+    roles: Vec<EntityRoleItem>,
+}
+
+#[derive(Deserialize)]
+struct ReplaceEntityRolesBody {
+    roles: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct AddEntityRoleBody {
+    role: String,
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/entities
+// ---------------------------------------------------------------------------
+
+async fn list_entities(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<Json<Vec<EntityWithRolesItem>>, (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:view")?;
+
+    let entities = sqlx::query!(
+        r#"SELECT email AS "email!", name AS "name!", active AS "active!" FROM users ORDER BY email"#,
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to list entities: {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list entities")
+    })?;
+
+    let mut result = Vec::with_capacity(entities.len());
+    for row in entities {
+        let email = row.email;
+        let name = row.name;
+        let active: bool = row.active != 0;
+
+        let entity_roles = db::roles::get_user_roles(&state.pool, &email)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to get roles for entity '{email}': {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            })?;
+
+        let roles = entity_roles
+            .into_iter()
+            .map(|ur| EntityRoleItem {
+                role: ur.role_name,
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
+            })
+            .collect();
+
+        result.push(EntityWithRolesItem {
+            email,
+            name,
+            active,
+            roles,
+        });
+    }
+
+    Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/entity/{email}/roles
+// ---------------------------------------------------------------------------
+
+async fn get_entity_roles(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(email): Path<String>,
+) -> Result<Json<Vec<EntityRoleItem>>, (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:view")?;
+
+    let entity_roles = db::roles::get_user_roles(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get roles for entity '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
+
+    Ok(Json(
+        entity_roles
+            .into_iter()
+            .map(|ur| EntityRoleItem {
+                role: ur.role_name,
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
+            })
+            .collect(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/admin/entity/{email}/roles
+// ---------------------------------------------------------------------------
+
+async fn replace_entity_roles(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(email): Path<String>,
+    Json(body): Json<ReplaceEntityRolesBody>,
+) -> Result<Json<Vec<EntityRoleItem>>, (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:manage")?;
+
+    for role_name in &body.roles {
+        if db::roles::get_role(&state.pool, role_name)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to get role '{role_name}': {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            })?
+            .is_none()
+        {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!("role '{role_name}' does not exist"),
+            ));
+        }
+    }
+
+    let role_refs: Vec<&str> = body.roles.iter().map(String::as_str).collect();
+    db::roles::set_user_roles(&state.pool, &email, &role_refs)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to set roles for entity '{email}': {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to set entity roles",
+            )
+        })?;
+
+    last_admin_guard(&state.pool).await?;
+
+    tracing::info!("user {} replaced roles for entity '{email}'", user.email);
+
+    let entity_roles = db::roles::get_user_roles(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get roles for entity '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
+
+    Ok(Json(
+        entity_roles
+            .into_iter()
+            .map(|ur| EntityRoleItem {
+                role: ur.role_name,
+                scopes: ur.scopes.into_iter().map(Into::into).collect(),
+            })
+            .collect(),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/entity/{email}/roles
+// ---------------------------------------------------------------------------
+
+async fn add_entity_role(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(email): Path<String>,
+    Json(body): Json<AddEntityRoleBody>,
+) -> Result<(StatusCode, Json<EntityRoleItem>), (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:manage")?;
+
+    db::roles::get_role(&state.pool, &body.role)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get role '{}': {e}", body.role);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| {
+            auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!("role '{}' does not exist", body.role),
+            )
+        })?;
+
+    db::roles::add_user_role(&state.pool, &email, &body.role)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "failed to add role '{}' to entity '{email}': {e}",
+                body.role
+            );
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to add entity role",
+            )
+        })?;
+
+    let scopes = db::roles::get_role_scopes(&state.pool, &body.role)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get scopes for role '{}': {e}", body.role);
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
+
+    tracing::info!(
+        "user {} added role '{}' to entity '{email}'",
+        user.email,
+        body.role
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(EntityRoleItem {
+            role: body.role,
+            scopes: scopes.into_iter().map(Into::into).collect(),
+        }),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/entity/{email}/roles/{role}
+// ---------------------------------------------------------------------------
+
+async fn remove_entity_role(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((email, role)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:manage")?;
+
+    let removed = db::roles::remove_user_role(&state.pool, &email, &role)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                "failed to remove role '{}' from entity '{email}': {e}",
+                role
+            );
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to remove entity role",
+            )
+        })?;
+
+    if !removed {
+        return Err(auth_error(
+            StatusCode::NOT_FOUND,
+            "role assignment not found",
+        ));
+    }
+
+    last_admin_guard(&state.pool).await?;
+
+    tracing::info!(
+        "user {} removed role '{}' from entity '{email}'",
+        user.email,
+        role
+    );
+
+    Ok(Json(
+        serde_json::json!({"detail": format!("role '{role}' removed from entity '{email}'")}),
+    ))
 }

@@ -205,7 +205,7 @@ async fn cmd_list(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let users: Vec<UserWithRoles> = client.get("permissions/users").await?;
+    let users: Vec<UserWithRoles> = client.get("admin/entities").await?;
 
     if users.is_empty() {
         println!("no users found");
@@ -242,7 +242,7 @@ async fn cmd_get(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let users: Vec<UserWithRoles> = client.get("permissions/users").await?;
+    let users: Vec<UserWithRoles> = client.get("admin/entities").await?;
 
     let user = users.iter().find(|u| u.email == args.email);
     let user = match user {
@@ -321,7 +321,7 @@ async fn cmd_activate(
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let _resp: SimpleResponse = client
-        .put_empty(&format!("admin/users/{}/activate", args.email))
+        .put_empty(&format!("admin/entity/{}/activate", args.email))
         .await?;
 
     println!("user '{}' activated", args.email);
@@ -342,7 +342,7 @@ async fn cmd_deactivate(
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     match client
-        .put_empty::<DeactivateResponse>(&format!("admin/users/{}/deactivate", args.email))
+        .put_empty::<DeactivateResponse>(&format!("admin/entity/{}/deactivate", args.email))
         .await
     {
         Ok(resp) => {
@@ -387,7 +387,7 @@ async fn cmd_roles_set(
     };
 
     let _resp: serde_json::Value = client
-        .put_json(&format!("permissions/users/{}/roles", args.email), &body)
+        .put_json(&format!("admin/entity/{}/roles", args.email), &body)
         .await?;
 
     println!("user '{}' roles set: {}", args.email, args.role.join(", "));
@@ -412,7 +412,7 @@ async fn cmd_roles_add(
     };
 
     let _resp: serde_json::Value = client
-        .post(&format!("permissions/users/{}/roles", args.email), &body)
+        .post(&format!("admin/entity/{}/roles", args.email), &body)
         .await?;
 
     println!("role '{}' added to user '{}'", args.role, args.email);
@@ -433,10 +433,7 @@ async fn cmd_roles_remove(
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
     let _resp: SimpleResponse = client
-        .delete(&format!(
-            "permissions/users/{}/roles/{}",
-            args.email, args.role,
-        ))
+        .delete(&format!("admin/entity/{}/roles/{}", args.email, args.role,))
         .await?;
 
     println!("role '{}' removed from '{}'", args.role, args.email);
