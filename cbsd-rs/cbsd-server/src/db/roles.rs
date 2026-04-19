@@ -12,7 +12,7 @@
 
 //! Database operations for roles, capabilities, and user-role assignments.
 
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 /// A role as stored in the database.
 pub struct RoleRecord {
@@ -428,6 +428,27 @@ pub async fn count_active_wildcard_holders(pool: &SqlitePool) -> Result<i64, sql
            WHERE u.active = 1 AND rc.cap = '*'"#,
     )
     .fetch_one(pool)
+    .await?;
+
+    Ok(row.cnt)
+}
+
+/// Transactional variant of [`count_active_wildcard_holders`].
+///
+/// Used inside an existing transaction (e.g. in `deactivate_entity`) so that
+/// the count reflects the deactivation that was just applied but not yet
+/// committed.
+pub async fn count_active_wildcard_holders_tx(
+    tx: &mut SqliteConnection,
+) -> Result<i64, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"SELECT COUNT(DISTINCT u.email) AS "cnt!"
+           FROM users u
+           JOIN user_roles ur ON u.email = ur.user_email
+           JOIN role_caps rc ON ur.role_name = rc.role_name
+           WHERE u.active = 1 AND rc.cap = '*'"#,
+    )
+    .fetch_one(&mut *tx)
     .await?;
 
     Ok(row.cnt)

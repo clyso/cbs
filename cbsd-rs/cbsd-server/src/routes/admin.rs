@@ -95,20 +95,12 @@ async fn deactivate_user(
     })?;
 
     // Last-admin guard within transaction: count remaining active wildcard holders
-    let count = sqlx::query!(
-        r#"SELECT COUNT(DISTINCT u.email) AS "cnt!"
-         FROM users u
-         JOIN user_roles ur ON u.email = ur.user_email
-         JOIN role_caps rc ON ur.role_name = rc.role_name
-         WHERE u.active = 1 AND rc.cap = '*'"#,
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| {
-        tracing::error!("failed to check admin count: {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-    })?
-    .cnt;
+    let count = db::roles::count_active_wildcard_holders_tx(&mut tx)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to check admin count: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
     if count == 0 {
         // Rollback: transaction will be dropped without commit
         return Err(auth_error(
