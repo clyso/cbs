@@ -433,18 +433,6 @@ pub async fn count_active_wildcard_holders(pool: &SqlitePool) -> Result<i64, sql
     Ok(row.cnt)
 }
 
-/// Check if any user is assigned to a given role.
-pub async fn has_assignments(pool: &SqlitePool, role_name: &str) -> Result<bool, sqlx::Error> {
-    let row = sqlx::query!(
-        r#"SELECT EXISTS(SELECT 1 FROM user_roles WHERE role_name = ?) AS "has_any!""#,
-        role_name,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(row.has_any != 0)
-}
-
 /// Check if a role is builtin.
 pub async fn is_role_builtin(pool: &SqlitePool, role_name: &str) -> Result<bool, sqlx::Error> {
     let row = sqlx::query!("SELECT builtin FROM roles WHERE name = ?", role_name,)

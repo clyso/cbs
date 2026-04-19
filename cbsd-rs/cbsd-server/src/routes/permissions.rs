@@ -12,7 +12,7 @@
 
 //! Route handlers for `/api/permissions/*`: roles and user-role management.
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -92,12 +92,6 @@ struct RoleListItem {
     description: String,
     builtin: bool,
     created_at: i64,
-}
-
-#[derive(Deserialize)]
-struct DeleteRoleQuery {
-    #[serde(default)]
-    force: bool,
 }
 
 #[derive(Deserialize)]
@@ -495,7 +489,6 @@ async fn delete_role(
     State(state): State<AppState>,
     user: AuthUser,
     Path(name): Path<String>,
-    Query(params): Query<DeleteRoleQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:manage")?;
 
@@ -511,23 +504,6 @@ async fn delete_role(
             StatusCode::CONFLICT,
             "cannot delete a builtin role",
         ));
-    }
-
-    // Check for existing assignments unless force=true
-    if !params.force {
-        let has = db::roles::has_assignments(&state.pool, &name)
-            .await
-            .map_err(|e| {
-                tracing::error!("failed to check assignments for role '{name}': {e}");
-                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-            })?;
-
-        if has {
-            return Err(auth_error(
-                StatusCode::CONFLICT,
-                "role has active assignments — use ?force=true to delete anyway",
-            ));
-        }
     }
 
     // If role has wildcard, check last-admin guard before deleting

@@ -54,6 +54,9 @@ struct RegisterArgs {
 struct DeregisterArgs {
     /// Worker ID (full UUID or unique prefix)
     id: String,
+    /// Confirm this irreversible operation
+    #[arg(long = "yes-i-really-mean-it")]
+    yes_i_really_mean_it: bool,
 }
 
 #[derive(Args)]
@@ -269,6 +272,11 @@ async fn cmd_deregister(
     debug: bool,
     no_tls_verify: bool,
 ) -> Result<(), Error> {
+    if !args.yes_i_really_mean_it {
+        eprintln!("this is a destructive operation; pass --yes-i-really-mean-it to confirm");
+        return Err(Error::Other("confirmation required".into()));
+    }
+
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 

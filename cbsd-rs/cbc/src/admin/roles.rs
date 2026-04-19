@@ -80,9 +80,9 @@ struct UpdateArgs {
 struct DeleteArgs {
     /// Role name
     name: String,
-    /// Delete even if role has active assignments
-    #[arg(long)]
-    force: bool,
+    /// Confirm this irreversible operation
+    #[arg(long = "yes-i-really-mean-it")]
+    yes_i_really_mean_it: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -359,30 +359,16 @@ async fn cmd_delete(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let path = if args.force {
-        format!("permissions/roles/{}?force=true", args.name)
-    } else {
-        format!("permissions/roles/{}", args.name)
-    };
+    if !args.yes_i_really_mean_it {
+        eprintln!("this is a destructive operation; pass --yes-i-really-mean-it to confirm");
+        return Err(Error::Other("confirmation required".into()));
+    }
 
+    let path = format!("permissions/roles/{}", args.name);
     match client.delete::<SimpleResponse>(&path).await {
         Ok(_) => {
             println!("role '{}' deleted", args.name);
             Ok(())
-        }
-        Err(Error::Api {
-            status: 409,
-            message,
-        }) => {
-            if !args.force {
-                eprintln!("role has active assignments -- use --force");
-            } else {
-                eprintln!("error: {message}");
-            }
-            Err(Error::Api {
-                status: 409,
-                message,
-            })
         }
         Err(e) => Err(e),
     }
