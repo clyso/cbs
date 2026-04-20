@@ -113,6 +113,8 @@ struct UserWithRoles {
     email: String,
     name: String,
     active: bool,
+    #[serde(default)]
+    is_robot: bool,
     roles: Vec<UserRoleItem>,
 }
 
@@ -205,7 +207,7 @@ async fn cmd_list(
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let users: Vec<UserWithRoles> = client.get("admin/entities").await?;
+    let users: Vec<UserWithRoles> = client.get("admin/entities?type=user").await?;
 
     if users.is_empty() {
         println!("no users found");
@@ -239,10 +241,18 @@ async fn cmd_get(
     debug: bool,
     no_tls_verify: bool,
 ) -> Result<(), Error> {
+    if args.email.starts_with("robot+") {
+        eprintln!(
+            "'{}' looks like a robot account — use 'cbc admin robots get <name>'",
+            args.email
+        );
+        return Err(Error::Other("not a user account".into()));
+    }
+
     let config = Config::load(config_path)?;
     let client = CbcClient::new(&config.host, &config.token, debug, no_tls_verify)?;
 
-    let users: Vec<UserWithRoles> = client.get("admin/entities").await?;
+    let users: Vec<UserWithRoles> = client.get("admin/entities?type=user").await?;
 
     let user = users.iter().find(|u| u.email == args.email);
     let user = match user {
@@ -252,6 +262,14 @@ async fn cmd_get(
             return Err(Error::Other(format!("user '{}' not found", args.email)));
         }
     };
+
+    if user.is_robot {
+        eprintln!(
+            "'{}' is a robot account — use 'cbc admin robots get <name>'",
+            args.email
+        );
+        return Err(Error::Other("not a user account".into()));
+    }
 
     let active = if user.active { "yes" } else { "no" };
 

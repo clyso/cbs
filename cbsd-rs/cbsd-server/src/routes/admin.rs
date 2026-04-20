@@ -670,7 +670,8 @@ async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
 
 #[derive(Deserialize)]
 struct SetDefaultChannelBody {
-    channel_id: i64,
+    #[serde(default)]
+    channel_id: Option<i64>,
 }
 
 /// Set an entity's default channel for build submission.
@@ -696,40 +697,42 @@ async fn set_entity_default_channel(
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "user not found"))?;
 
-    // Verify channel exists.
-    db::channels::get_channel_by_id(&state.pool, body.channel_id)
-        .await
-        .map_err(|e| {
-            tracing::error!("failed to look up channel {}: {e}", body.channel_id);
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-        })?
-        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "channel not found"))?;
-
-    // Robots cannot be assigned to a channel whose types use ${username}.
-    if target.is_robot {
-        let types = db::channels::list_types_for_channel(&state.pool, body.channel_id)
+    if let Some(channel_id) = body.channel_id {
+        // Verify channel exists.
+        db::channels::get_channel_by_id(&state.pool, channel_id)
             .await
             .map_err(|e| {
-                tracing::error!("failed to list types for channel {}: {e}", body.channel_id);
+                tracing::error!("failed to look up channel {channel_id}: {e}");
                 auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-            })?;
+            })?
+            .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "channel not found"))?;
 
-        let bad_type = types
-            .iter()
-            .find(|t| crate::channels::prefix_template_contains_username(&t.prefix_template));
-        if let Some(t) = bad_type {
-            return Err(auth_error(
-                StatusCode::BAD_REQUEST,
-                &format!(
-                    "channel type '{}' uses the ${{username}} template — \
-                     robot accounts cannot be assigned to such channels",
-                    t.type_name
-                ),
-            ));
+        // Robots cannot be assigned to a channel whose types use ${username}.
+        if target.is_robot {
+            let types = db::channels::list_types_for_channel(&state.pool, channel_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("failed to list types for channel {channel_id}: {e}");
+                    auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+                })?;
+
+            let bad_type = types
+                .iter()
+                .find(|t| crate::channels::prefix_template_contains_username(&t.prefix_template));
+            if let Some(t) = bad_type {
+                return Err(auth_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!(
+                        "channel type '{}' uses the ${{username}} template — \
+                         robot accounts cannot be assigned to such channels",
+                        t.type_name
+                    ),
+                ));
+            }
         }
     }
 
-    db::users::set_default_channel(&state.pool, &email, Some(body.channel_id))
+    db::users::set_default_channel(&state.pool, &email, body.channel_id)
         .await
         .map_err(|e| {
             tracing::error!("failed to set default channel for '{email}': {e}");
@@ -739,16 +742,19 @@ async fn set_entity_default_channel(
             )
         })?;
 
+    let detail = match body.channel_id {
+        Some(id) => format!("default channel set to {id}"),
+        None => "default channel cleared".to_string(),
+    };
+
     tracing::info!(
-        "user {} set default channel for entity '{}' to {}",
+        "user {} set default channel for entity '{}' to {:?}",
         user.email,
         email,
         body.channel_id,
     );
 
-    Ok(Json(serde_json::json!({
-        "detail": format!("default channel set to {}", body.channel_id),
-    })))
+    Ok(Json(serde_json::json!({"detail": detail})))
 }
 
 fn require_cap(user: &AuthUser, cap: &str) -> Result<(), (StatusCode, Json<ErrorDetail>)> {

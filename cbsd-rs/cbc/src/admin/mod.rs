@@ -15,6 +15,7 @@
 
 pub mod channels;
 pub mod queue;
+pub mod robots;
 pub mod roles;
 pub mod users;
 
@@ -38,6 +39,8 @@ enum AdminCommands {
     Roles(roles::RolesArgs),
     /// User management and role assignments
     Users(users::UsersArgs),
+    /// Robot account management
+    Robots(robots::RobotsArgs),
     /// Build queue status
     Queue,
     /// Channel and type management
@@ -67,6 +70,7 @@ pub async fn run(
     match args.command {
         AdminCommands::Roles(a) => roles::run(a, config_path, debug, no_tls_verify).await,
         AdminCommands::Users(a) => users::run(a, config_path, debug, no_tls_verify).await,
+        AdminCommands::Robots(a) => robots::run(a, config_path, debug, no_tls_verify).await,
         AdminCommands::Queue => queue::run(config_path, debug, no_tls_verify).await,
         AdminCommands::Channel(a) => channels::run(a, config_path, debug, no_tls_verify).await,
         AdminCommands::UserSetDefaultChannel(a) => {
