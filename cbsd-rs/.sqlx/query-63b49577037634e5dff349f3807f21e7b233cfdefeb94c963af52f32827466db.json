@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO users (email, name, is_robot) VALUES ('robot+ci@robots', 'robot:ci', 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "63b49577037634e5dff349f3807f21e7b233cfdefeb94c963af52f32827466db"
+}

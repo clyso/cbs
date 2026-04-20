@@ -128,6 +128,17 @@ async fn submit_build(
         .await
         .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e))?;
 
+    // Robots may not submit to channels whose type uses the ${username} template,
+    // since that would silently embed a synthetic email prefix in the image path.
+    if user_record.is_robot
+        && crate::channels::prefix_template_contains_username(&resolved.prefix_template)
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "robot accounts cannot submit builds to channels that use the ${username} prefix template",
+        ));
+    }
+
     let (build_id, pending_count) = insert_build_internal(
         &state,
         descriptor,

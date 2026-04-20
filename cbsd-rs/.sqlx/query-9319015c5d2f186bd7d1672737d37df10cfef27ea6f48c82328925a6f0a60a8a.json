@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(\n                SELECT 1 FROM robot_tokens\n                WHERE robot_email = ? AND revoked = 0\n           ) AS \"has!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "has!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9319015c5d2f186bd7d1672737d37df10cfef27ea6f48c82328925a6f0a60a8a"
+}

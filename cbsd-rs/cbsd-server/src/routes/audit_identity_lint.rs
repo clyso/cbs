@@ -30,8 +30,13 @@ use std::path::PathBuf;
 /// Files whose every `user.email` occurrence in a `tracing::` macro is
 /// guaranteed to be a human caller (see module docstring for rationale).
 const HUMAN_ONLY_ROUTES: &[&str] = &[
-    "admin.rs",       // admin:* caps — robots cannot hold
-    "auth.rs",        // robots can't authenticate via SSO, API-key, or session
+    "admin.rs", // admin:* caps — robots cannot hold
+    // Every handler in `auth.rs` that logs `user.email` rejects non-human
+    // callers upfront: `/token/revoke` returns 400 for both `cbsk_` and
+    // `cbrk_` bearers; `/tokens/revoke-all` and `/api-keys` reject
+    // `is_robot` callers before any logging. This is enforced in code,
+    // not merely by cap design.
+    "auth.rs",
     "channels.rs",    // channels:manage cap — robots cannot hold
     "periodic.rs",    // periodic:* caps — robots cannot hold
     "permissions.rs", // permissions:manage cap — robots cannot hold

@@ -14,7 +14,7 @@
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +31,9 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list_robots))
         .route("/{name}", get(get_robot))
         .route("/{name}", delete(tombstone_robot))
+        .route("/{name}/token", post(create_or_rotate_token))
+        .route("/{name}/token", delete(revoke_robot_token))
+        .route("/{name}/description", put(set_robot_description))
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +67,28 @@ struct CreateRobotResponse {
     created_at: i64,
     roles: Vec<String>,
     revived: bool,
+}
+
+#[derive(Deserialize)]
+struct RotateTokenBody {
+    /// Required per design v4. `"YYYY-MM-DD"` or `null`; absent → 400.
+    expires: serde_json::Value,
+    /// Must be true to replace an existing non-revoked token.
+    #[serde(default)]
+    renew: bool,
+}
+
+#[derive(Serialize)]
+struct RotateTokenResponse {
+    token: String,
+    token_prefix: String,
+    expires_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SetDescriptionBody {
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// List item for `GET /api/admin/robots` — design v4 § REST API "List
@@ -485,6 +510,203 @@ async fn tombstone_robot(
     })))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/admin/robots/{name}/token
+// ---------------------------------------------------------------------------
+
+/// Issue a new token for a robot, optionally revoking any existing one.
+///
+/// If the robot already has a non-revoked token, the caller MUST pass
+/// `renew: true`; otherwise the request is rejected with 409. The whole
+/// re-read → classify → revoke → insert sequence runs under
+/// `BEGIN IMMEDIATE` so two concurrent rotations serialise cleanly and
+/// neither sees a raw `SQLITE_CONSTRAINT_UNIQUE` from the partial unique
+/// index.
+async fn create_or_rotate_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(name): Path<String>,
+    Json(body): Json<RotateTokenBody>,
+) -> Result<(StatusCode, Json<RotateTokenResponse>), (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("robots:manage") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: robots:manage",
+        ));
+    }
+
+    let expires_at = parse_expires_wire(&body.expires)
+        .map_err(|msg| auth_error(StatusCode::BAD_REQUEST, &msg))?;
+
+    let (plaintext_token, token_prefix, token_hash) = token_cache::generate_robot_token_material()
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to generate robot token material: {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to generate robot token",
+            )
+        })?;
+
+    let outcome = db::robots::rotate_token(
+        &state.pool,
+        &name,
+        body.renew,
+        &token_hash,
+        &token_prefix,
+        expires_at,
+    )
+    .await
+    .map_err(|e| match e {
+        db::robots::RotateTokenError::RobotNotFound => {
+            auth_error(StatusCode::NOT_FOUND, "robot not found")
+        }
+        db::robots::RotateTokenError::RobotTombstoned => auth_error(
+            StatusCode::CONFLICT,
+            &format!("robot '{name}' is tombstoned — revive it first"),
+        ),
+        db::robots::RotateTokenError::NonRevokedTokenExists => auth_error(
+            StatusCode::CONFLICT,
+            &format!("robot '{name}' already has an active token — pass renew=true to replace it"),
+        ),
+        db::robots::RotateTokenError::UniqueViolation => auth_error(
+            StatusCode::CONFLICT,
+            &format!("robot '{name}' was modified concurrently; retry the request"),
+        ),
+        db::robots::RotateTokenError::Db(err) => {
+            tracing::error!("failed to rotate token for robot '{name}': {err}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to rotate robot token",
+            )
+        }
+    })?;
+
+    let email = db::robots::name_to_synthetic_email(&name);
+
+    // Purge old cached token entries for this robot.
+    {
+        let mut cache = state.token_cache.lock().await;
+        cache.remove_by_owner(&email);
+    }
+
+    tracing::info!(
+        "user {} {} token for robot '{}' (prefix={})",
+        user.display_identity(),
+        match outcome {
+            db::robots::RotateTokenOutcome::Rotated => "rotated",
+            db::robots::RotateTokenOutcome::Issued => "issued",
+        },
+        name,
+        token_prefix,
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(RotateTokenResponse {
+            token: plaintext_token,
+            token_prefix,
+            expires_at,
+        }),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/admin/robots/{name}/token
+// ---------------------------------------------------------------------------
+
+/// Revoke all non-revoked tokens for a robot without tombstoning it.
+/// Idempotent — revoking when no active token exists returns 200.
+async fn revoke_robot_token(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("robots:manage") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: robots:manage",
+        ));
+    }
+
+    let robot = db::robots::get_robot_by_name(&state.pool, &name)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get robot '{name}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "robot not found"))?;
+
+    let revoked = db::robots::revoke_all_active_tokens(&state.pool, &robot.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to revoke tokens for robot '{name}': {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to revoke robot token",
+            )
+        })?;
+
+    // Purge cached token entries for this robot.
+    {
+        let mut cache = state.token_cache.lock().await;
+        cache.remove_by_owner(&robot.email);
+    }
+
+    tracing::info!(
+        "user {} revoked {revoked} token(s) for robot '{name}'",
+        user.display_identity(),
+    );
+
+    Ok(Json(serde_json::json!({
+        "detail": format!("revoked {revoked} token(s) for robot '{name}'"),
+        "tokens_revoked": revoked,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// PUT /api/admin/robots/{name}/description
+// ---------------------------------------------------------------------------
+
+async fn set_robot_description(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(name): Path<String>,
+    Json(body): Json<SetDescriptionBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if !user.has_cap("robots:manage") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: robots:manage",
+        ));
+    }
+
+    let email = db::robots::name_to_synthetic_email(&name);
+
+    let updated = db::robots::set_description(&state.pool, &email, body.description.as_deref())
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to set description for robot '{name}': {e}");
+            auth_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to update robot description",
+            )
+        })?;
+
+    if !updated {
+        return Err(auth_error(StatusCode::NOT_FOUND, "robot not found"));
+    }
+
+    tracing::info!(
+        "user {} updated description for robot '{name}'",
+        user.display_identity(),
+    );
+
+    Ok(Json(
+        serde_json::json!({"detail": format!("description updated for robot '{name}'")}),
+    ))
+}
+
 #[cfg(test)]
 mod handler_tests {
     use super::*;
@@ -536,6 +758,53 @@ mod handler_tests {
         match tombstone_robot(State(state), caller, Path("ghost".to_string())).await {
             Err((status, _)) => assert_eq!(status, StatusCode::FORBIDDEN),
             Ok(_) => panic!("missing robots:manage must 403"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rotate_token_of_unknown_robot_returns_404() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("alice@example.com", "Alice", false, &["robots:manage"]);
+        let body = RotateTokenBody {
+            expires: serde_json::Value::Null,
+            renew: false,
+        };
+
+        match create_or_rotate_token(State(state), caller, Path("ghost".to_string()), Json(body))
+            .await
+        {
+            Err((status, _)) => assert_eq!(status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("unknown robot name must 404 on rotate"),
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_token_of_unknown_robot_returns_404() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("alice@example.com", "Alice", false, &["robots:manage"]);
+
+        match revoke_robot_token(State(state), caller, Path("ghost".to_string())).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("unknown robot name must 404 on standalone revoke"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_description_of_unknown_robot_returns_404() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("alice@example.com", "Alice", false, &["robots:manage"]);
+        let body = SetDescriptionBody {
+            description: Some("new desc".to_string()),
+        };
+
+        match set_robot_description(State(state), caller, Path("ghost".to_string()), Json(body))
+            .await
+        {
+            Err((status, _)) => assert_eq!(status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("unknown robot name must 404 on set-description"),
         }
     }
 }

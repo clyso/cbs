@@ -405,6 +405,12 @@ async fn revoke_token(
             "use DELETE /api/auth/api-keys/:prefix to revoke API keys",
         ));
     }
+    if auth_header.starts_with("cbrk_") {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "robot accounts cannot self-revoke — use DELETE /api/admin/robots/{name}/token",
+        ));
+    }
 
     let hash = paseto::token_hash(auth_header);
     db::tokens::revoke_token(&state.pool, &hash)
@@ -428,6 +434,13 @@ async fn revoke_all_tokens(
     user: AuthUser,
     Json(body): Json<RevokeAllBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    if user.is_robot {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "robot accounts cannot call revoke-all-tokens — use DELETE /api/admin/robots/{name}/token",
+        ));
+    }
+
     if !user.has_cap("permissions:manage") {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -503,6 +516,13 @@ async fn create_api_key_handler(
     user: AuthUser,
     Json(body): Json<CreateApiKeyBody>,
 ) -> Result<(StatusCode, Json<CreateApiKeyResponse>), (StatusCode, Json<ErrorDetail>)> {
+    if user.is_robot {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "robot accounts cannot create API keys — use POST /api/admin/robots/{name}/token",
+        ));
+    }
+
     if !user.has_cap("apikeys:create:own") {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -616,4 +636,96 @@ async fn revoke_api_key_handler(
 
     tracing::info!("revoked API key (prefix={}) for {}", prefix, user.email);
     Ok(Json(serde_json::json!({"detail": "API key revoked"})))
+}
+
+#[cfg(test)]
+mod handler_tests {
+    use super::*;
+    use crate::routes::test_support::{auth_user, test_app_state, test_pool};
+
+    #[tokio::test]
+    async fn create_api_key_rejects_robot_caller_with_400() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let robot = auth_user(
+            "robot+ci@robots",
+            "robot:ci",
+            true,
+            // A robot caller must be rejected even if it somehow carried
+            // the cap; this test exercises the coexistence guard that
+            // runs before the cap check.
+            &["apikeys:create:own"],
+        );
+        let body = CreateApiKeyBody {
+            name: "mine".to_string(),
+        };
+
+        match create_api_key_handler(State(state), robot, Json(body)).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("robot caller must be rejected before API-key creation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_all_tokens_rejects_robot_caller_with_400() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let robot = auth_user("robot+ci@robots", "robot:ci", true, &["permissions:manage"]);
+        let body = RevokeAllBody {
+            user_email: "victim@example.com".to_string(),
+        };
+
+        match revoke_all_tokens(State(state), robot, Json(body)).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("robot caller must be rejected before revoke-all-tokens"),
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_token_rejects_cbrk_bearer_with_400() {
+        use axum::http::{HeaderMap, HeaderValue};
+
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let robot = auth_user("robot+ci@robots", "robot:ci", true, &[]);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static(
+                "Bearer cbrk_deadbeef00000000000000000000000000000000000000000000000000000000",
+            ),
+        );
+
+        match revoke_token(State(state), robot, headers).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!(
+                "robot caller presenting a cbrk_ bearer must be rejected — \
+                 revoke_token cannot revoke robot tokens"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn revoke_token_rejects_cbsk_bearer_with_400() {
+        use axum::http::{HeaderMap, HeaderValue};
+
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("alice@example.com", "Alice", false, &[]);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            HeaderValue::from_static(
+                "Bearer cbsk_deadbeef00000000000000000000000000000000000000000000000000000000",
+            ),
+        );
+
+        match revoke_token(State(state), caller, headers).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!(
+                "cbsk_ bearer must be rejected by revoke_token — \
+                 guards API keys against the wrong revoke endpoint"
+            ),
+        }
+    }
 }

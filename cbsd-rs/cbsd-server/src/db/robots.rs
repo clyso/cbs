@@ -624,6 +624,172 @@ async fn tombstone_robot_inner(
     revoke_all_active_tokens_in_conn(&mut *conn, email).await
 }
 
+/// Outcome of `rotate_token`: whether a non-revoked predecessor was
+/// replaced (`Rotated`, only legal when `renew=true`) or the robot had
+/// no active token and a fresh one was issued (`Issued`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotateTokenOutcome {
+    Issued,
+    Rotated,
+}
+
+/// Error surface of `rotate_token`. Each variant maps to a distinct HTTP
+/// status at the route layer so the caller can surface a clear error
+/// without inspecting `sqlx::Error` strings.
+#[derive(Debug)]
+pub enum RotateTokenError {
+    RobotNotFound,
+    RobotTombstoned,
+    /// A non-revoked row exists and the caller did not pass `renew=true`.
+    NonRevokedTokenExists,
+    /// Residual UNIQUE constraint violation on the partial unique index
+    /// (e.g. a concurrent rotation committed between the re-read and our
+    /// INSERT). Always maps to 409 so callers never see a raw 500.
+    UniqueViolation,
+    Db(sqlx::Error),
+}
+
+impl std::fmt::Display for RotateTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RobotNotFound => f.write_str("robot not found"),
+            Self::RobotTombstoned => f.write_str("robot is tombstoned"),
+            Self::NonRevokedTokenExists => f.write_str("robot already has an active token"),
+            Self::UniqueViolation => f.write_str("concurrent modification detected"),
+            Self::Db(e) => write!(f, "database error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for RotateTokenError {}
+
+impl From<sqlx::Error> for RotateTokenError {
+    fn from(e: sqlx::Error) -> Self {
+        if super::is_unique_violation(&e) {
+            Self::UniqueViolation
+        } else {
+            Self::Db(e)
+        }
+    }
+}
+
+/// Rotate (or issue) a robot's token under `BEGIN IMMEDIATE`.
+///
+/// Re-reads the `users` row under the reserved lock and classifies the
+/// robot state before writing, so two concurrent rotate requests are
+/// serialised at lock acquisition. The "non-revoked token exists without
+/// renew=true" check is inside the transaction and sees the latest
+/// committed state — a concurrent rotation that committed first will be
+/// observed by the loser and surfaced as 409, never as 500.
+pub async fn rotate_token(
+    pool: &SqlitePool,
+    name: &str,
+    renew: bool,
+    token_hash: &str,
+    token_prefix: &str,
+    expires_at: Option<i64>,
+) -> Result<RotateTokenOutcome, RotateTokenError> {
+    let email = name_to_synthetic_email(name);
+    let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+
+    match rotate_token_inner(
+        &mut conn,
+        &email,
+        renew,
+        token_hash,
+        token_prefix,
+        expires_at,
+    )
+    .await
+    {
+        Ok(outcome) => {
+            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            Ok(outcome)
+        }
+        Err(e) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(e)
+        }
+    }
+}
+
+async fn rotate_token_inner(
+    conn: &mut SqliteConnection,
+    email: &str,
+    renew: bool,
+    token_hash: &str,
+    token_prefix: &str,
+    expires_at: Option<i64>,
+) -> Result<RotateTokenOutcome, RotateTokenError> {
+    let row = sqlx::query!(
+        r#"SELECT active AS "active!", is_robot AS "is_robot!"
+           FROM users WHERE email = ?"#,
+        email,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    match row {
+        None => return Err(RotateTokenError::RobotNotFound),
+        Some(r) if r.is_robot == 0 => return Err(RotateTokenError::RobotNotFound),
+        Some(r) if r.active == 0 => return Err(RotateTokenError::RobotTombstoned),
+        _ => {}
+    }
+
+    let has_non_revoked = sqlx::query!(
+        r#"SELECT EXISTS(
+                SELECT 1 FROM robot_tokens
+                WHERE robot_email = ? AND revoked = 0
+           ) AS "has!: i64""#,
+        email,
+    )
+    .fetch_one(&mut *conn)
+    .await?
+    .has != 0;
+
+    if has_non_revoked && !renew {
+        return Err(RotateTokenError::NonRevokedTokenExists);
+    }
+
+    revoke_all_active_tokens_in_conn(&mut *conn, email).await?;
+
+    sqlx::query!(
+        "INSERT INTO robot_tokens (robot_email, token_hash, token_prefix, expires_at)
+         VALUES (?, ?, ?, ?)",
+        email,
+        token_hash,
+        token_prefix,
+        expires_at,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(if has_non_revoked {
+        RotateTokenOutcome::Rotated
+    } else {
+        RotateTokenOutcome::Issued
+    })
+}
+
+/// Update a robot's description.
+pub async fn set_description(
+    pool: &SqlitePool,
+    robot_email: &str,
+    description: Option<&str>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query!(
+        "UPDATE users SET robot_description = ?, updated_at = unixepoch()
+         WHERE email = ? AND is_robot = 1",
+        description,
+        robot_email,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 /// Check whether the robot has at least one non-revoked token.
 pub async fn has_non_revoked_token(pool: &SqlitePool, email: &str) -> Result<bool, sqlx::Error> {
     let row = sqlx::query!(
@@ -864,6 +1030,291 @@ mod tests {
             row.created_at > 1,
             "revive must reset created_at to current epoch"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_rotation_leaves_exactly_one_active_token() {
+        let pool = test_pool().await;
+
+        // Seed a live robot with one active token.
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        // Fire N concurrent rotations with renew=true. BEGIN IMMEDIATE
+        // serialises them at lock acquisition; each successive winner
+        // revokes the prior winner's token and inserts its own. Final
+        // state: exactly one non-revoked row; all others revoked. No
+        // 500s, no raw SQLITE_CONSTRAINT_UNIQUE surface.
+        let mut handles = Vec::new();
+        for i in 0..4 {
+            let pool = pool.clone();
+            let hash = format!("hash-{i:020x}");
+            let prefix = format!("pfx{i:09}");
+            handles.push(tokio::spawn(async move {
+                rotate_token(&pool, "ci", true, &hash, &prefix, None).await
+            }));
+        }
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(RotateTokenOutcome::Rotated | RotateTokenOutcome::Issued) => {}
+                Err(RotateTokenError::UniqueViolation) => {
+                    // Also acceptable — never a 500.
+                }
+                Err(e) => panic!("unexpected rotation error: {e}"),
+            }
+        }
+
+        // Verify the partial unique invariant.
+        let email = name_to_synthetic_email("ci");
+        let row = sqlx::query!(
+            r#"SELECT COUNT(*) AS "count!: i64"
+               FROM robot_tokens
+               WHERE robot_email = ? AND revoked = 0"#,
+            email,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row.count, 1,
+            "exactly one non-revoked token must remain after concurrent rotation"
+        );
+    }
+
+    #[tokio::test]
+    async fn rotate_without_renew_on_active_token_is_rejected() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        let err = rotate_token(&pool, "ci", false, "hash1", "pfx000000001", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RotateTokenError::NonRevokedTokenExists));
+    }
+
+    #[tokio::test]
+    async fn rotate_without_renew_after_standalone_revoke_issues_fresh_token() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        let email = name_to_synthetic_email("ci");
+        revoke_all_active_tokens(&pool, &email).await.unwrap();
+
+        // No non-revoked row exists; renew=false should still succeed.
+        let outcome = rotate_token(&pool, "ci", false, "hash1", "pfx000000001", None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, RotateTokenOutcome::Issued);
+    }
+
+    #[tokio::test]
+    async fn rotate_on_tombstoned_robot_is_rejected() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        let email = name_to_synthetic_email("ci");
+        tombstone_robot(&pool, &email).await.unwrap();
+
+        let err = rotate_token(&pool, "ci", true, "hash1", "pfx000000001", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RotateTokenError::RobotTombstoned));
+    }
+
+    #[tokio::test]
+    async fn rotate_on_unknown_robot_returns_not_found() {
+        let pool = test_pool().await;
+        let err = rotate_token(&pool, "ghost", true, "hash1", "pfx000000001", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RotateTokenError::RobotNotFound));
+    }
+
+    #[tokio::test]
+    async fn rotate_expired_token_without_renew_is_rejected() {
+        // Design § Token Design "token new" semantics: an expired-but-not-
+        // revoked token still blocks `token new` without --renew. The
+        // renew flag is the explicit acknowledgement that an existing
+        // credential is being replaced, regardless of expiry state.
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        // Backdate the token to an already-past expiry.
+        let email = name_to_synthetic_email("ci");
+        sqlx::query!(
+            "UPDATE robot_tokens SET expires_at = 1 WHERE robot_email = ?",
+            email,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let err = rotate_token(&pool, "ci", false, "hash1", "pfx000000001", None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RotateTokenError::NonRevokedTokenExists));
+
+        // The row is unchanged: still expired and not revoked.
+        let row = sqlx::query!(
+            r#"SELECT token_prefix AS "token_prefix!", expires_at, revoked AS "revoked!: i64"
+               FROM robot_tokens WHERE robot_email = ?"#,
+            email,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.token_prefix, "pfx000000000");
+        assert_eq!(row.expires_at, Some(1));
+        assert_eq!(row.revoked, 0);
+    }
+
+    #[tokio::test]
+    async fn rotate_expired_token_with_renew_atomically_replaces() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+
+        let email = name_to_synthetic_email("ci");
+        sqlx::query!(
+            "UPDATE robot_tokens SET expires_at = 1 WHERE robot_email = ?",
+            email,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = rotate_token(&pool, "ci", true, "hash1", "pfx000000001", None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, RotateTokenOutcome::Rotated);
+
+        // Old row is revoked; new row is the sole non-revoked row.
+        let rows = sqlx::query!(
+            r#"SELECT token_prefix AS "token_prefix!", revoked AS "revoked!: i64"
+               FROM robot_tokens WHERE robot_email = ?
+               ORDER BY id"#,
+            email,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].token_prefix, "pfx000000000");
+        assert_eq!(rows[0].revoked, 1, "old token must be explicitly revoked");
+        assert_eq!(rows[1].token_prefix, "pfx000000001");
+        assert_eq!(rows[1].revoked, 0);
+    }
+
+    #[tokio::test]
+    async fn standalone_revoke_is_idempotent() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash0", "pfx000000000", &[])
+            .await
+            .unwrap();
+        let email = name_to_synthetic_email("ci");
+
+        let first = revoke_all_active_tokens(&pool, &email).await.unwrap();
+        assert_eq!(first, 1);
+
+        // Second call is a no-op; design mandates idempotent 200.
+        let second = revoke_all_active_tokens(&pool, &email).await.unwrap();
+        assert_eq!(second, 0);
+
+        // Robot stays active; revoke is not a tombstone.
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert!(row.active);
+        assert_eq!(row.token_state, "revoked");
+    }
+
+    #[tokio::test]
+    async fn set_description_updates_and_clears() {
+        let pool = test_pool().await;
+        create_or_revive(
+            &pool,
+            "ci",
+            Some("first"),
+            None,
+            "hash0",
+            "pfx000000000",
+            &[],
+        )
+        .await
+        .unwrap();
+        let email = name_to_synthetic_email("ci");
+
+        assert!(
+            set_description(&pool, &email, Some("second"))
+                .await
+                .unwrap()
+        );
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.description.as_deref(), Some("second"));
+
+        assert!(set_description(&pool, &email, None).await.unwrap());
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.description, None);
+
+        // Non-existent robot returns false; no row affected.
+        assert!(
+            !set_description(&pool, "robot+ghost@robots", Some("x"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn get_robot_token_status_reflects_lifecycle() {
+        let pool = test_pool().await;
+
+        // None state.
+        let email = name_to_synthetic_email("ci");
+        sqlx::query!(
+            "INSERT INTO users (email, name, is_robot) VALUES (?, 'robot:ci', 1)",
+            email,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.token_state, "none");
+
+        // Active state (no expiry).
+        sqlx::query!(
+            "INSERT INTO robot_tokens (robot_email, token_hash, token_prefix, expires_at)
+             VALUES (?, 'h', 'p', NULL)",
+            email,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.token_state, "active");
+
+        // Expired state (non-revoked, past expiry).
+        sqlx::query!(
+            "UPDATE robot_tokens SET expires_at = 1 WHERE robot_email = ?",
+            email,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.token_state, "expired");
+
+        // Revoked state (all rows revoked).
+        revoke_all_active_tokens(&pool, &email).await.unwrap();
+        let row = get_robot_by_name(&pool, "ci").await.unwrap().unwrap();
+        assert_eq!(row.token_state, "revoked");
     }
 
     #[tokio::test]

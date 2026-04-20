@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE users SET robot_description = ?, updated_at = unixepoch()\n         WHERE email = ? AND is_robot = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7bebdc4994a9a2a68761dd7973e875607555f26dd08d7e08b8f503d0d5f5e6a5"
+}

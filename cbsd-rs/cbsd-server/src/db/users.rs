@@ -107,6 +107,77 @@ pub async fn is_user_active(pool: &SqlitePool, email: &str) -> Result<bool, sqlx
     Ok(row.is_some_and(|r| r.active != 0))
 }
 
+/// Filter for `list_entities_filtered`.
+pub enum EntityFilter {
+    User,
+    Robot,
+    All,
+}
+
+/// A summary row returned by `list_entities_filtered`.
+pub struct EntitySummary {
+    pub email: String,
+    pub name: String,
+    pub active: bool,
+    pub is_robot: bool,
+}
+
+/// List entities filtered by kind. Uses three separate compile-time checked
+/// queries because `sqlx::query!` does not support dynamic WHERE clauses.
+pub async fn list_entities_filtered(
+    pool: &SqlitePool,
+    filter: EntityFilter,
+) -> Result<Vec<EntitySummary>, sqlx::Error> {
+    macro_rules! to_summaries {
+        ($rows:expr) => {
+            $rows
+                .into_iter()
+                .map(|r| EntitySummary {
+                    email: r.email,
+                    name: r.name,
+                    active: r.active != 0,
+                    is_robot: r.is_robot != 0,
+                })
+                .collect::<Vec<_>>()
+        };
+    }
+
+    let result = match filter {
+        EntityFilter::User => {
+            let rows = sqlx::query!(
+                r#"SELECT email AS "email!", name AS "name!", active AS "active!",
+                          is_robot AS "is_robot!"
+                   FROM users WHERE is_robot = 0 ORDER BY email"#,
+            )
+            .fetch_all(pool)
+            .await?;
+            to_summaries!(rows)
+        }
+        EntityFilter::Robot => {
+            let rows = sqlx::query!(
+                r#"SELECT email AS "email!", name AS "name!", active AS "active!",
+                          is_robot AS "is_robot!"
+                   FROM users WHERE is_robot = 1 ORDER BY email"#,
+            )
+            .fetch_all(pool)
+            .await?;
+            to_summaries!(rows)
+        }
+        EntityFilter::All => {
+            let rows = sqlx::query!(
+                r#"SELECT email AS "email!", name AS "name!", active AS "active!",
+                          is_robot AS "is_robot!"
+                   FROM users ORDER BY email"#,
+            )
+            .fetch_all(pool)
+            .await?;
+            to_summaries!(rows)
+        }
+    };
+
+    Ok(result)
+}
+
 /// Set a user's default channel. Pass `None` to clear.
 pub async fn set_default_channel(
     pool: &SqlitePool,
@@ -178,5 +249,46 @@ mod tests {
             .unwrap();
         assert_eq!(user.name, "Alice");
         assert!(!user.is_robot);
+    }
+
+    #[tokio::test]
+    async fn list_entities_filtered_respects_type_filter() {
+        let pool = test_pool().await;
+
+        // Seed one human and one robot.
+        create_or_update_user(&pool, "alice@example.com", "Alice")
+            .await
+            .unwrap();
+        sqlx::query!(
+            "INSERT INTO users (email, name, is_robot) VALUES ('robot+ci@robots', 'robot:ci', 1)"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // type=user → one human, no robot.
+        let users = list_entities_filtered(&pool, EntityFilter::User)
+            .await
+            .unwrap();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].email, "alice@example.com");
+        assert!(!users[0].is_robot);
+
+        // type=robot → one robot, no human.
+        let robots = list_entities_filtered(&pool, EntityFilter::Robot)
+            .await
+            .unwrap();
+        assert_eq!(robots.len(), 1);
+        assert_eq!(robots[0].email, "robot+ci@robots");
+        assert!(robots[0].is_robot);
+
+        // type=all → both, sorted by email.
+        let all = list_entities_filtered(&pool, EntityFilter::All)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+        // "alice@example.com" sorts before "robot+ci@robots" lexically.
+        assert_eq!(all[0].email, "alice@example.com");
+        assert_eq!(all[1].email, "robot+ci@robots");
     }
 }

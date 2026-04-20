@@ -30,6 +30,39 @@ use crate::db::users::UserRecord;
 pub struct ResolvedChannel {
     pub channel_id: i64,
     pub channel_type_id: i64,
+    /// The raw prefix template before variable substitution.
+    pub prefix_template: String,
+}
+
+/// Return true if the prefix template contains the `${username}` variable.
+pub fn prefix_template_contains_username(template: &str) -> bool {
+    template.contains("${username}")
+}
+
+#[cfg(test)]
+mod username_predicate_tests {
+    use super::*;
+
+    #[test]
+    fn detects_username_placeholder() {
+        assert!(prefix_template_contains_username("${username}"));
+        assert!(prefix_template_contains_username("${username}/dev"));
+        assert!(prefix_template_contains_username("ci/${username}/nightly"));
+        assert!(prefix_template_contains_username(
+            "${registry}/${username}/${channel}"
+        ));
+    }
+
+    #[test]
+    fn rejects_absent_or_similar_tokens() {
+        assert!(!prefix_template_contains_username(""));
+        assert!(!prefix_template_contains_username("ci/nightly"));
+        assert!(!prefix_template_contains_username("${user}"));
+        assert!(!prefix_template_contains_username("${USERNAME}"));
+        assert!(!prefix_template_contains_username("$username"));
+        assert!(!prefix_template_contains_username("username"));
+        assert!(!prefix_template_contains_username("${channel}"));
+    }
 }
 
 /// Resolve channel and type from a build descriptor, validate scopes,
@@ -143,6 +176,7 @@ pub async fn resolve_and_rewrite(
     Ok(ResolvedChannel {
         channel_id: resolved.channel_id,
         channel_type_id: resolved.channel_type_id,
+        prefix_template: resolved.prefix_template,
     })
 }
 

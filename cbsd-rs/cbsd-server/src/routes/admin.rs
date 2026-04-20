@@ -12,7 +12,7 @@
 
 //! Route handlers for `/api/admin/*`: entity management, worker registration.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -687,8 +687,8 @@ async fn set_entity_default_channel(
         ));
     }
 
-    // Verify target user exists.
-    db::users::get_user(&state.pool, &email)
+    // Verify target entity exists.
+    let target = db::users::get_user(&state.pool, &email)
         .await
         .map_err(|e| {
             tracing::error!("failed to look up user '{email}': {e}");
@@ -704,6 +704,30 @@ async fn set_entity_default_channel(
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "channel not found"))?;
+
+    // Robots cannot be assigned to a channel whose types use ${username}.
+    if target.is_robot {
+        let types = db::channels::list_types_for_channel(&state.pool, body.channel_id)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to list types for channel {}: {e}", body.channel_id);
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            })?;
+
+        let bad_type = types
+            .iter()
+            .find(|t| crate::channels::prefix_template_contains_username(&t.prefix_template));
+        if let Some(t) = bad_type {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "channel type '{}' uses the ${{username}} template — \
+                     robot accounts cannot be assigned to such channels",
+                    t.type_name
+                ),
+            ));
+        }
+    }
 
     db::users::set_default_channel(&state.pool, &email, Some(body.channel_id))
         .await
@@ -770,6 +794,7 @@ struct EntityWithRolesItem {
     email: String,
     name: String,
     active: bool,
+    is_robot: bool,
     roles: Vec<EntityRoleItem>,
 }
 
@@ -787,27 +812,44 @@ struct AddEntityRoleBody {
 // GET /api/admin/entities
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct ListEntitiesQuery {
+    #[serde(rename = "type")]
+    entity_type: Option<String>,
+}
+
 async fn list_entities(
     State(state): State<AppState>,
     user: AuthUser,
+    Query(query): Query<ListEntitiesQuery>,
 ) -> Result<Json<Vec<EntityWithRolesItem>>, (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:view")?;
 
-    let entities = sqlx::query!(
-        r#"SELECT email AS "email!", name AS "name!", active AS "active!" FROM users ORDER BY email"#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("failed to list entities: {e}");
-        auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list entities")
-    })?;
+    let filter = match query.entity_type.as_deref() {
+        Some("user") => db::users::EntityFilter::User,
+        Some("robot") => db::users::EntityFilter::Robot,
+        Some("all") | None => db::users::EntityFilter::All,
+        Some(other) => {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid type filter '{other}': expected user, robot, or all"),
+            ));
+        }
+    };
+
+    let entities = db::users::list_entities_filtered(&state.pool, filter)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to list entities: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to list entities")
+        })?;
 
     let mut result = Vec::with_capacity(entities.len());
     for row in entities {
         let email = row.email;
         let name = row.name;
-        let active: bool = row.active != 0;
+        let active = row.active;
+        let is_robot = row.is_robot;
 
         let entity_roles = db::roles::get_user_roles(&state.pool, &email)
             .await
@@ -828,6 +870,7 @@ async fn list_entities(
             email,
             name,
             active,
+            is_robot,
             roles,
         });
     }
@@ -1086,4 +1129,38 @@ async fn remove_entity_role(
     Ok(Json(
         serde_json::json!({"detail": format!("role '{role}' removed from entity '{email}'")}),
     ))
+}
+
+#[cfg(test)]
+mod handler_tests {
+    use super::*;
+    use crate::routes::test_support::{auth_user, test_app_state, test_pool};
+
+    #[tokio::test]
+    async fn list_entities_rejects_unknown_type_filter_with_400() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("admin@example.com", "Admin", false, &["permissions:view"]);
+        let query = ListEntitiesQuery {
+            entity_type: Some("garbage".to_string()),
+        };
+
+        match list_entities(State(state), caller, Query(query)).await {
+            Err((status, _)) => assert_eq!(status, StatusCode::BAD_REQUEST),
+            Ok(_) => panic!("unknown ?type= value must return 400"),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_entities_accepts_absent_type_filter_as_all() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let caller = auth_user("admin@example.com", "Admin", false, &["permissions:view"]);
+        let query = ListEntitiesQuery { entity_type: None };
+
+        match list_entities(State(state), caller, Query(query)).await {
+            Ok(Json(rows)) => assert!(rows.is_empty(), "empty DB yields empty entity list"),
+            Err((status, _)) => panic!("expected Ok, got {status}"),
+        }
+    }
 }
