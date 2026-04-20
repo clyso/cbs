@@ -21,10 +21,11 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::app::AppState;
-use crate::auth::api_keys;
-use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
+use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error, first_robot_forbidden_cap};
+use crate::auth::token_cache;
 use crate::db;
 use crate::routes::permissions::ScopeBody;
+use crate::routes::robots;
 
 /// Build the admin sub-router: `/api/admin/*`.
 pub fn router() -> Router<AppState> {
@@ -40,6 +41,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/entities", get(list_entities))
         .nest("/entity", entity_router)
+        .nest("/robots", robots::router())
         .route("/queue", get(queue_status))
         .route("/workers", post(register_worker))
         .route("/workers/{id}", delete(deregister_worker))
@@ -120,7 +122,21 @@ async fn deactivate_entity(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
     })?;
 
-    // Bulk-revoke tokens and API keys (outside transaction — idempotent)
+    // Purge LRU cache entries for this entity
+    {
+        let mut cache = state.token_cache.lock().await;
+        cache.remove_by_owner(&email);
+    }
+
+    if target.is_robot {
+        // Robot disable: leave tokens intact (tokens are revoked only on tombstone)
+        tracing::info!("user {} disabled robot '{email}'", user.display_identity());
+        return Ok(Json(serde_json::json!({
+            "detail": format!("entity '{email}' deactivated"),
+        })));
+    }
+
+    // Human: bulk-revoke PASETO tokens and API keys (outside transaction — idempotent)
     let tokens_revoked = db::tokens::revoke_all_for_user(&state.pool, &email)
         .await
         .map_err(|e| {
@@ -138,15 +154,9 @@ async fn deactivate_entity(
             )
         })?;
 
-    // Purge LRU cache entries for this user
-    {
-        let mut cache = state.api_key_cache.lock().await;
-        cache.remove_by_owner(&email);
-    }
-
     tracing::info!(
         "user {} deactivated entity '{email}' (revoked {tokens_revoked} tokens, {keys_revoked} API keys)",
-        user.email
+        user.display_identity()
     );
 
     Ok(Json(serde_json::json!({
@@ -174,13 +184,33 @@ async fn activate_entity(
     }
 
     // Verify target user exists
-    db::users::get_user(&state.pool, &email)
+    let target = db::users::get_user(&state.pool, &email)
         .await
         .map_err(|e| {
             tracing::error!("failed to look up user '{email}': {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
         .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "user not found"))?;
+
+    // Robots require a non-revoked token to be re-activated (otherwise they
+    // would be active but unable to authenticate). Return 400 rather than
+    // 409 to signal a request-shape problem the caller must resolve (by
+    // going through POST /api/admin/robots); 409 would imply "state
+    // conflict, retry later", which is misleading here.
+    if target.is_robot {
+        let has_token = db::robots::has_non_revoked_token(&state.pool, &email)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to check robot token for '{email}': {e}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            })?;
+        if !has_token {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                "cannot activate robot with no token — use POST /api/admin/robots to revive it with a new token",
+            ));
+        }
+    }
 
     sqlx::query!(
         "UPDATE users SET active = 1, updated_at = unixepoch() WHERE email = ?",
@@ -193,7 +223,18 @@ async fn activate_entity(
         auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
     })?;
 
-    tracing::info!("user {} activated entity '{email}'", user.email);
+    // Purge cache entries for this entity so the previous active=0 rejection
+    // (AuthUser::load rejects deactivated users) does not survive in the LRU.
+    // The next auth event reloads fresh state.
+    {
+        let mut cache = state.token_cache.lock().await;
+        cache.remove_by_owner(&email);
+    }
+
+    tracing::info!(
+        "user {} activated entity '{email}'",
+        user.display_identity()
+    );
 
     Ok(Json(
         serde_json::json!({"detail": format!("entity '{email}' activated")}),
@@ -310,13 +351,15 @@ async fn register_worker(
 
     // Generate key material BEFORE the transaction (argon2 is CPU-bound)
     let (plaintext_key, prefix, hash) =
-        api_keys::generate_api_key_material().await.map_err(|e| {
-            tracing::error!("failed to generate API key material: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to generate API key",
-            )
-        })?;
+        token_cache::generate_api_key_material()
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to generate API key material: {e}");
+                auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to generate API key",
+                )
+            })?;
 
     // Atomic transaction: insert API key + worker row
     let mut tx = state.pool.begin().await.map_err(|e| {
@@ -329,7 +372,7 @@ async fn register_worker(
         db::api_keys::insert_api_key_in_tx(&mut tx, &api_key_name, &user.email, &hash, &prefix)
             .await
             .map_err(|e| {
-                if is_unique_violation(&e) {
+                if db::is_unique_violation(&e) {
                     return auth_error(StatusCode::CONFLICT, "worker name already exists");
                 }
                 tracing::error!("failed to insert API key: {e}");
@@ -346,7 +389,7 @@ async fn register_worker(
     )
     .await
     .map_err(|e| {
-        if is_unique_violation(&e) {
+        if db::is_unique_violation(&e) {
             return auth_error(StatusCode::CONFLICT, "worker name already exists");
         }
         tracing::error!("failed to insert worker: {e}");
@@ -447,7 +490,7 @@ async fn deregister_worker(
         .ok()
         .flatten()
     {
-        let mut cache = state.api_key_cache.lock().await;
+        let mut cache = state.token_cache.lock().await;
         cache.remove_by_prefix(&prefix);
     }
 
@@ -500,13 +543,15 @@ async fn regenerate_worker_token(
 
     // Generate new key material BEFORE the transaction
     let (plaintext_key, prefix, hash) =
-        api_keys::generate_api_key_material().await.map_err(|e| {
-            tracing::error!("failed to generate API key material: {e}");
-            auth_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to generate API key",
-            )
-        })?;
+        token_cache::generate_api_key_material()
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to generate API key material: {e}");
+                auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to generate API key",
+                )
+            })?;
 
     // Atomic: insert new key → update FK → revoke old key
     let mut tx = state.pool.begin().await.map_err(|e| {
@@ -553,7 +598,7 @@ async fn regenerate_worker_token(
         .ok()
         .flatten()
     {
-        let mut cache = state.api_key_cache.lock().await;
+        let mut cache = state.token_cache.lock().await;
         cache.remove_by_prefix(&old_prefix);
     }
 
@@ -680,16 +725,6 @@ async fn set_entity_default_channel(
     Ok(Json(serde_json::json!({
         "detail": format!("default channel set to {}", body.channel_id),
     })))
-}
-
-/// Check if a sqlx error is a UNIQUE constraint violation.
-fn is_unique_violation(e: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db_err) = e {
-        // SQLite error code 2067 = SQLITE_CONSTRAINT_UNIQUE
-        db_err.code().is_some_and(|c| c == "2067")
-    } else {
-        false
-    }
 }
 
 fn require_cap(user: &AuthUser, cap: &str) -> Result<(), (StatusCode, Json<ErrorDetail>)> {
@@ -841,6 +876,18 @@ async fn replace_entity_roles(
 ) -> Result<Json<Vec<EntityRoleItem>>, (StatusCode, Json<ErrorDetail>)> {
     require_cap(&user, "permissions:manage")?;
 
+    // Refuse to assign roles holding forbidden caps to robot targets. The
+    // auth-time strip still guards the cap surface at request time; this
+    // assignment-time reject is defense in depth.
+    let target_is_robot = db::users::get_user(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to look up entity '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .map(|u| u.is_robot)
+        .unwrap_or(false);
+
     for role_name in &body.roles {
         if db::roles::get_role(&state.pool, role_name)
             .await
@@ -854,6 +901,24 @@ async fn replace_entity_roles(
                 StatusCode::BAD_REQUEST,
                 &format!("role '{role_name}' does not exist"),
             ));
+        }
+
+        if target_is_robot {
+            let caps = db::roles::get_role_caps(&state.pool, role_name)
+                .await
+                .map_err(|e| {
+                    tracing::error!("failed to load caps for role '{role_name}': {e}");
+                    auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+                })?;
+
+            if let Some(forbidden) = first_robot_forbidden_cap(&caps) {
+                return Err(auth_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!(
+                        "role '{role_name}' carries cap '{forbidden}' which robots cannot hold"
+                    ),
+                ));
+            }
         }
     }
 
@@ -914,6 +979,35 @@ async fn add_entity_role(
                 &format!("role '{}' does not exist", body.role),
             )
         })?;
+
+    // Assignment-time forbidden-cap reject for robot targets.
+    let target_is_robot = db::users::get_user(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to look up entity '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .map(|u| u.is_robot)
+        .unwrap_or(false);
+
+    if target_is_robot {
+        let caps = db::roles::get_role_caps(&state.pool, &body.role)
+            .await
+            .map_err(|e| {
+                tracing::error!("failed to load caps for role '{}': {e}", body.role);
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            })?;
+
+        if let Some(forbidden) = first_robot_forbidden_cap(&caps) {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "role '{}' carries cap '{forbidden}' which robots cannot hold",
+                    body.role
+                ),
+            ));
+        }
+    }
 
     db::roles::add_user_role(&state.pool, &email, &body.role)
         .await

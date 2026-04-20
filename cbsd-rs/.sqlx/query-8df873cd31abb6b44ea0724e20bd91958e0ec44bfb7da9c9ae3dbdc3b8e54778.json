@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH best_token AS (\n               SELECT robot_email, revoked, token_prefix, expires_at,\n                      first_used_at, last_used_at,\n                      created_at AS token_created_at,\n                      ROW_NUMBER() OVER (PARTITION BY robot_email\n                                         ORDER BY revoked ASC, id DESC) AS rn\n               FROM robot_tokens\n           )\n           SELECT u.email              AS \"email!\",\n                  u.name               AS \"display_name!\",\n                  u.robot_description,\n                  u.active             AS \"active!\",\n                  u.created_at         AS \"created_at!\",\n                  bt.revoked           AS \"token_revoked?: i64\",\n                  bt.token_prefix      AS \"token_prefix?\",\n                  bt.expires_at        AS \"token_expires_at?\",\n                  bt.first_used_at     AS \"token_first_used_at?\",\n                  bt.last_used_at      AS \"token_last_used_at?\",\n                  bt.token_created_at  AS \"token_created_at?\"\n           FROM users u\n           LEFT JOIN best_token bt\n             ON bt.robot_email = u.email AND bt.rn = 1\n           WHERE u.is_robot = 1\n           ORDER BY u.email",
+  "describe": {
+    "columns": [
+      {
+        "name": "email!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "display_name!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "robot_description",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "active!",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at!",
+        "ordinal": 4,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_revoked?: i64",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_prefix?",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "token_expires_at?",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_first_used_at?",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_last_used_at?",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_created_at?",
+        "ordinal": 10,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "8df873cd31abb6b44ea0724e20bd91958e0ec44bfb7da9c9ae3dbdc3b8e54778"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email AS \"email!\", name AS \"name!\", active, default_channel_id\n         FROM users WHERE email = ?",
+  "query": "SELECT email AS \"email!\", name AS \"name!\", active, default_channel_id, is_robot\n         FROM users WHERE email = ?",
   "describe": {
     "columns": [
       {
@@ -22,6 +22,11 @@
         "name": "default_channel_id",
         "ordinal": 3,
         "type_info": "Integer"
+      },
+      {
+        "name": "is_robot",
+        "ordinal": 4,
+        "type_info": "Integer"
       }
     ],
     "parameters": {
@@ -31,8 +36,9 @@
       true,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "889cd6074ec3548bcea8846302125bc63114149ba5a20cf1a7a040187d76528b"
+  "hash": "c4a7da2c9a3e04d6bc935bbe02e8ef2db418e7996628d55f5f53ac48decacc26"
 }

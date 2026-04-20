@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE robot_tokens SET revoked = 1 WHERE robot_email = ? AND revoked = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "03cedb02255dcc4684e67be089dd7e7db23ec954e6287ffc202fc0f52851c4db"
+}

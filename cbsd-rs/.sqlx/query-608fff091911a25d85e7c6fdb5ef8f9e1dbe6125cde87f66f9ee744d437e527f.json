@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE users\n         SET active = 1,\n             name = ?,\n             robot_description = ?,\n             default_channel_id = NULL,\n             created_at = unixepoch(),\n             updated_at = unixepoch()\n         WHERE email = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "608fff091911a25d85e7c6fdb5ef8f9e1dbe6125cde87f66f9ee744d437e527f"
+}

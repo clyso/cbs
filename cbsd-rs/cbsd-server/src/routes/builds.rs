@@ -56,6 +56,9 @@ struct SubmitBuildBody {
 struct SubmitBuildResponse {
     id: i64,
     state: String,
+    /// Whether the submitter is a robot account; siblings `user_email` in
+    /// the body to let clients render the display identity correctly.
+    is_robot: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     warning: Option<String>,
 }
@@ -148,7 +151,7 @@ async fn submit_build(
 
     tracing::info!(
         "user {} submitted build {build_id} (priority={:?})",
-        user.email,
+        user.display_identity(),
         body.priority,
     );
 
@@ -157,6 +160,7 @@ async fn submit_build(
         Json(SubmitBuildResponse {
             id: build_id,
             state: "queued".to_string(),
+            is_robot: user.is_robot,
             warning,
         }),
     ))
@@ -359,7 +363,7 @@ async fn revoke_build(
                     auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
                 })?;
 
-            tracing::info!("user {} revoked queued build {id}", user.email);
+            tracing::info!("user {} revoked queued build {id}", user.display_identity());
 
             Ok(Json(
                 serde_json::json!({"detail": format!("build {id} revoked")}),
@@ -376,7 +380,7 @@ async fn revoke_build(
 
             tracing::info!(
                 "user {} requested revoke of {state_name} build {id}",
-                user.email,
+                user.display_identity(),
                 state_name = build.state,
             );
 
@@ -387,7 +391,7 @@ async fn revoke_build(
         "revoking" => {
             tracing::info!(
                 "user {} revoke of build {id} — already revoking",
-                user.email
+                user.display_identity()
             );
             Ok(Json(
                 serde_json::json!({"detail": format!("build {id} already revoking")}),

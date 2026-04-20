@@ -54,7 +54,7 @@ pub async fn ws_upgrade(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-    let cached = crate::auth::api_keys::verify_api_key(&state.pool, &state.api_key_cache, token)
+    let cached = crate::auth::token_cache::verify_api_key(&state.pool, &state.token_cache, token)
         .await
         .map_err(|e| {
             tracing::warn!("ws upgrade rejected: {e}");
@@ -62,7 +62,7 @@ pub async fn ws_upgrade(
         })?;
 
     // Look up the registered worker bound to this API key
-    let worker_row = db::workers::get_worker_by_api_key_id(&state.pool, cached.api_key_id)
+    let worker_row = db::workers::get_worker_by_api_key_id(&state.pool, cached.token_id)
         .await
         .map_err(|e| {
             tracing::error!("ws upgrade: DB error looking up worker: {e}");
@@ -70,7 +70,7 @@ pub async fn ws_upgrade(
         })?
         .ok_or_else(|| {
             tracing::warn!(
-                api_key_id = cached.api_key_id,
+                token_id = cached.token_id,
                 "ws upgrade rejected: API key is not bound to a registered worker"
             );
             StatusCode::FORBIDDEN

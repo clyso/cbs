@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT token_prefix AS \"token_prefix!\", revoked AS \"revoked!: i64\"\n               FROM robot_tokens WHERE robot_email = ?\n               ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "token_prefix!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "revoked!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "21e262430b73d5f02b8ff2639551c7cb9078e5909d2a5a427be4bfc740a4cccf"
+}

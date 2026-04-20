@@ -425,7 +425,7 @@ pub async fn count_active_wildcard_holders(pool: &SqlitePool) -> Result<i64, sql
            FROM users u
            JOIN user_roles ur ON u.email = ur.user_email
            JOIN role_caps rc ON ur.role_name = rc.role_name
-           WHERE u.active = 1 AND rc.cap = '*'"#,
+           WHERE u.active = 1 AND rc.cap = '*' AND u.is_robot = 0"#,
     )
     .fetch_one(pool)
     .await?;
@@ -446,7 +446,7 @@ pub async fn count_active_wildcard_holders_tx(
            FROM users u
            JOIN user_roles ur ON u.email = ur.user_email
            JOIN role_caps rc ON ur.role_name = rc.role_name
-           WHERE u.active = 1 AND rc.cap = '*'"#,
+           WHERE u.active = 1 AND rc.cap = '*' AND u.is_robot = 0"#,
     )
     .fetch_one(&mut *tx)
     .await?;

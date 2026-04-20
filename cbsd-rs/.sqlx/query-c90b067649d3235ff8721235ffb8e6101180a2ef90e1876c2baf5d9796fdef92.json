@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n                b.id            AS \"id!\",\n                b.descriptor    AS \"descriptor!\",\n                b.descriptor_version AS \"descriptor_version!\",\n                b.user_email    AS \"user_email!\",\n                b.priority      AS \"priority!\",\n                b.state         AS \"state!\",\n                b.worker_id,\n                b.trace_id,\n                b.error,\n                b.submitted_at  AS \"submitted_at!\",\n                b.queued_at     AS \"queued_at!\",\n                b.started_at,\n                b.finished_at,\n                b.build_report,\n                b.channel_id,\n                b.channel_type_id,\n                c.name          AS \"channel_name?\",\n                ct.type_name    AS \"channel_type_name?\"\n         FROM builds b\n         LEFT JOIN channels c ON c.id = b.channel_id\n         LEFT JOIN channel_types ct ON ct.id = b.channel_type_id\n         WHERE b.id = ?",
+  "query": "SELECT\n                b.id            AS \"id!\",\n                b.descriptor    AS \"descriptor!\",\n                b.descriptor_version AS \"descriptor_version!\",\n                b.user_email    AS \"user_email!\",\n                u.is_robot      AS \"is_robot?: i64\",\n                b.priority      AS \"priority!\",\n                b.state         AS \"state!\",\n                b.worker_id,\n                b.trace_id,\n                b.error,\n                b.submitted_at  AS \"submitted_at!\",\n                b.queued_at     AS \"queued_at!\",\n                b.started_at,\n                b.finished_at,\n                b.build_report,\n                b.channel_id,\n                b.channel_type_id,\n                c.name          AS \"channel_name?\",\n                ct.type_name    AS \"channel_type_name?\"\n         FROM builds b\n         LEFT JOIN users u ON u.email = b.user_email\n         LEFT JOIN channels c ON c.id = b.channel_id\n         LEFT JOIN channel_types ct ON ct.id = b.channel_type_id\n         WHERE b.id = ?",
   "describe": {
     "columns": [
       {
@@ -24,73 +24,78 @@
         "type_info": "Text"
       },
       {
-        "name": "priority!",
+        "name": "is_robot?: i64",
         "ordinal": 4,
-        "type_info": "Text"
+        "type_info": "Integer"
       },
       {
-        "name": "state!",
+        "name": "priority!",
         "ordinal": 5,
         "type_info": "Text"
       },
       {
-        "name": "worker_id",
+        "name": "state!",
         "ordinal": 6,
         "type_info": "Text"
       },
       {
-        "name": "trace_id",
+        "name": "worker_id",
         "ordinal": 7,
         "type_info": "Text"
       },
       {
-        "name": "error",
+        "name": "trace_id",
         "ordinal": 8,
         "type_info": "Text"
       },
       {
-        "name": "submitted_at!",
+        "name": "error",
         "ordinal": 9,
-        "type_info": "Integer"
+        "type_info": "Text"
       },
       {
-        "name": "queued_at!",
+        "name": "submitted_at!",
         "ordinal": 10,
         "type_info": "Integer"
       },
       {
-        "name": "started_at",
+        "name": "queued_at!",
         "ordinal": 11,
         "type_info": "Integer"
       },
       {
-        "name": "finished_at",
+        "name": "started_at",
         "ordinal": 12,
         "type_info": "Integer"
       },
       {
-        "name": "build_report",
+        "name": "finished_at",
         "ordinal": 13,
+        "type_info": "Integer"
+      },
+      {
+        "name": "build_report",
+        "ordinal": 14,
         "type_info": "Text"
       },
       {
         "name": "channel_id",
-        "ordinal": 14,
-        "type_info": "Integer"
-      },
-      {
-        "name": "channel_type_id",
         "ordinal": 15,
         "type_info": "Integer"
       },
       {
-        "name": "channel_name?",
+        "name": "channel_type_id",
         "ordinal": 16,
+        "type_info": "Integer"
+      },
+      {
+        "name": "channel_name?",
+        "ordinal": 17,
         "type_info": "Text"
       },
       {
         "name": "channel_type_name?",
-        "ordinal": 17,
+        "ordinal": 18,
         "type_info": "Text"
       }
     ],
@@ -102,6 +107,7 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       true,
@@ -118,5 +124,5 @@
       true
     ]
   },
-  "hash": "bc70fe70fae17ea3f3741c7eee50143b9c5c5c294cdb633aace6bdb8a61cd7ec"
+  "hash": "c90b067649d3235ff8721235ffb8e6101180a2ef90e1876c2baf5d9796fdef92"
 }

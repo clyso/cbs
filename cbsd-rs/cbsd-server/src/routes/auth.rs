@@ -25,10 +25,10 @@ use tower_governor::governor::GovernorConfigBuilder;
 use tower_sessions::Session;
 
 use crate::app::AppState;
-use crate::auth::api_keys;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
 use crate::auth::oauth;
 use crate::auth::paseto;
+use crate::auth::token_cache;
 use crate::config::WEB_SESSION_IDLE_SECS;
 use crate::db;
 
@@ -110,6 +110,7 @@ pub struct CallbackQuery {
 struct WhoamiResponse {
     email: String,
     name: String,
+    is_robot: bool,
     roles: Vec<String>,
     effective_caps: Vec<String>,
 }
@@ -264,12 +265,27 @@ async fn callback(
         info
     };
 
-    // Create or update user in DB
+    // Create or update user in DB. A display name starting with "robot:"
+    // is rejected to prevent identity forgery via the OAuth display-name
+    // field — only service accounts may hold that prefix, and only ever
+    // via `POST /api/admin/robots`.
     let _user = db::users::create_or_update_user(&state.pool, &user_info.email, &user_info.name)
         .await
-        .map_err(|e| {
-            tracing::error!("failed to create/update user: {e}");
-            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to create user")
+        .map_err(|e| match e {
+            db::users::CreateOrUpdateUserError::RobotNamePrefix => {
+                tracing::warn!(
+                    email = %user_info.email,
+                    "SSO forgery guard: rejecting sign-in with 'robot:'-prefixed display name",
+                );
+                auth_error(
+                    StatusCode::FORBIDDEN,
+                    "display name starting with 'robot:' is reserved for service accounts",
+                )
+            }
+            db::users::CreateOrUpdateUserError::Db(err) => {
+                tracing::error!("failed to create/update user: {err}");
+                auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to create user")
+            }
         })?;
 
     // Token lifetime matches max-token-ttl-seconds (default: 6 months).
@@ -351,6 +367,7 @@ async fn whoami(
         effective_caps: user.caps.clone(),
         email: user.email,
         name: user.name,
+        is_robot: user.is_robot,
         roles,
     }))
 }
@@ -501,7 +518,7 @@ async fn create_api_key_handler(
         ));
     }
 
-    let (key, prefix) = api_keys::create_api_key(&state.pool, &body.name, &user.email)
+    let (key, prefix) = token_cache::create_api_key(&state.pool, &body.name, &user.email)
         .await
         .map_err(|e| {
             tracing::error!("failed to create API key for {}: {e}", user.email);
@@ -594,7 +611,7 @@ async fn revoke_api_key_handler(
     }
 
     // Purge from cache
-    let mut cache = state.api_key_cache.lock().await;
+    let mut cache = state.token_cache.lock().await;
     cache.remove_by_prefix(&prefix);
 
     tracing::info!("revoked API key (prefix={}) for {}", prefix, user.email);

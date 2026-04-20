@@ -28,6 +28,10 @@ pub struct BuildRecord {
     pub descriptor: String,
     pub descriptor_version: i64,
     pub user_email: String,
+    /// Whether `user_email` belongs to a robot account. Clients use this to
+    /// render the submitter's display identity without string-parsing the
+    /// synthetic `robot+<name>@robots` email.
+    pub is_robot: bool,
     pub priority: String,
     pub state: String,
     pub worker_id: Option<String>,
@@ -55,6 +59,8 @@ pub struct BuildListRecord {
     pub descriptor: String,
     pub descriptor_version: i64,
     pub user_email: String,
+    /// Whether `user_email` belongs to a robot account.
+    pub is_robot: bool,
     pub priority: String,
     pub state: String,
     pub worker_id: Option<String>,
@@ -110,6 +116,7 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
                 b.descriptor    AS "descriptor!",
                 b.descriptor_version AS "descriptor_version!",
                 b.user_email    AS "user_email!",
+                u.is_robot      AS "is_robot?: i64",
                 b.priority      AS "priority!",
                 b.state         AS "state!",
                 b.worker_id,
@@ -125,6 +132,7 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
                 c.name          AS "channel_name?",
                 ct.type_name    AS "channel_type_name?"
          FROM builds b
+         LEFT JOIN users u ON u.email = b.user_email
          LEFT JOIN channels c ON c.id = b.channel_id
          LEFT JOIN channel_types ct ON ct.id = b.channel_type_id
          WHERE b.id = ?"#,
@@ -140,6 +148,7 @@ pub async fn get_build(pool: &SqlitePool, id: i64) -> Result<Option<BuildRecord>
             descriptor: r.descriptor,
             descriptor_version: r.descriptor_version,
             user_email: r.user_email,
+            is_robot: r.is_robot.unwrap_or(0) != 0,
             priority: r.priority,
             state: r.state,
             worker_id: r.worker_id,
@@ -170,11 +179,12 @@ pub async fn list_builds(
 ) -> Result<Vec<BuildListRecord>, sqlx::Error> {
     // Build the query dynamically based on filters.
     // NOTE: build_report is intentionally excluded from the list query.
-    let base = "SELECT b.id, b.descriptor, b.descriptor_version, b.user_email, b.priority, b.state,
-                       b.worker_id, b.trace_id, b.error, b.submitted_at, b.queued_at,
-                       b.started_at, b.finished_at, b.channel_id, b.channel_type_id,
+    let base = "SELECT b.id, b.descriptor, b.descriptor_version, b.user_email, u.is_robot,
+                       b.priority, b.state, b.worker_id, b.trace_id, b.error, b.submitted_at,
+                       b.queued_at, b.started_at, b.finished_at, b.channel_id, b.channel_type_id,
                        c.name AS channel_name, ct.type_name AS channel_type_name
                 FROM builds b
+                LEFT JOIN users u ON u.email = b.user_email
                 LEFT JOIN channels c ON c.id = b.channel_id
                 LEFT JOIN channel_types ct ON ct.id = b.channel_type_id";
 
@@ -333,11 +343,16 @@ pub async fn set_build_log_finished(pool: &SqlitePool, build_id: i64) -> Result<
 /// Used by `list_builds` which constructs dynamic SQL and returns untyped rows.
 /// Does NOT read `build_report` — the list query omits it for performance.
 fn row_to_build_list_record(r: sqlx::sqlite::SqliteRow) -> BuildListRecord {
+    // `is_robot` comes from a LEFT JOIN on `users`; it is NULL only when the
+    // build's user_email has no matching users row, which is unreachable in
+    // a correctly-maintained DB but safely defaults to false.
+    let is_robot_i64: Option<i64> = r.get("is_robot");
     BuildListRecord {
         id: r.get("id"),
         descriptor: r.get("descriptor"),
         descriptor_version: r.get("descriptor_version"),
         user_email: r.get("user_email"),
+        is_robot: is_robot_i64.unwrap_or(0) != 0,
         priority: r.get("priority"),
         state: r.get("state"),
         worker_id: r.get("worker_id"),

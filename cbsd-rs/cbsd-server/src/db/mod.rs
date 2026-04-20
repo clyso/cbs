@@ -14,6 +14,7 @@ pub mod api_keys;
 pub mod builds;
 pub mod channels;
 pub mod periodic;
+pub mod robots;
 pub mod roles;
 pub mod seed;
 pub mod tokens;
@@ -56,4 +57,11 @@ pub async fn run_migrations(pool: &SqlitePool) {
         .run(pool)
         .await
         .expect("failed to run database migrations");
+}
+
+/// Return true if the error is a SQLite UNIQUE constraint violation.
+///
+/// SQLite extended result code `2067 = SQLITE_CONSTRAINT_UNIQUE`.
+pub fn is_unique_violation(e: &sqlx::Error) -> bool {
+    matches!(e, sqlx::Error::Database(db_err) if db_err.code().as_deref() == Some("2067"))
 }

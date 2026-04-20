@@ -24,6 +24,7 @@ use tower_sessions::Session;
 
 use crate::app::AppState;
 use crate::auth::paseto;
+use crate::auth::token_cache;
 use crate::db;
 
 /// Scope types for per-assignment scope checking.
@@ -52,18 +53,43 @@ impl std::fmt::Display for ScopeType {
     }
 }
 
+/// Capabilities forbidden for robot accounts regardless of role assignments.
+/// Robots cannot hold admin-level privileges or manage their own API keys.
+/// Two layers enforce this: the auth-time strip in `load_authed_user`
+/// (primary guard) and an assignment-time reject on the role-assign paths
+/// (defense in depth — see `first_robot_forbidden_cap`).
+pub(crate) const ROBOT_FORBIDDEN_CAPS: &[&str] = &[
+    "*",
+    "permissions:manage",
+    "robots:manage",
+    "apikeys:create:own",
+];
+
+/// Return the first cap in `caps` that robots are never allowed to hold, or
+/// `None` if the set is safe to assign to a robot target. Used by the
+/// assignment-time reject at the robot-create and entity role-assign paths.
+pub(crate) fn first_robot_forbidden_cap(caps: &[String]) -> Option<&'static str> {
+    caps.iter().find_map(|c| {
+        ROBOT_FORBIDDEN_CAPS
+            .iter()
+            .copied()
+            .find(|forb| *forb == c.as_str())
+    })
+}
+
 /// Authenticated user extracted from `Authorization: Bearer` header or
 /// session cookie (web UI fallback).
 ///
-/// Bearer path distinguishes PASETO tokens from API keys by the `cbsk_`
-/// prefix. Session path reads the PASETO token stored server-side by
-/// the OAuth callback. Capabilities are loaded from the database after
-/// user validation.
+/// Bearer path distinguishes PASETO tokens, API keys (`cbsk_`), and robot
+/// tokens (`cbrk_`) by prefix. Capabilities are loaded from the database
+/// after user validation. Robot accounts have forbidden caps stripped after
+/// the role-based cap set is computed.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub email: String,
     pub name: String,
     pub caps: Vec<String>,
+    pub is_robot: bool,
 }
 
 impl AuthUser {
@@ -76,6 +102,16 @@ impl AuthUser {
     #[allow(dead_code)]
     pub fn has_any_cap(&self, caps: &[&str]) -> bool {
         caps.iter().any(|cap| self.has_cap(cap))
+    }
+
+    /// The display identity: for robots `name` (e.g. `robot:ci`), for
+    /// humans `email`.
+    pub fn display_identity(&self) -> &str {
+        if self.is_robot {
+            &self.name
+        } else {
+            &self.email
+        }
     }
 
     /// Check that at least one of the user's assignments satisfies ALL
@@ -132,8 +168,8 @@ pub fn auth_error(status: StatusCode, msg: &str) -> AuthError {
     )
 }
 
-/// Load an authenticated user from the database. Shared by both PASETO and
-/// API key auth paths to avoid logic duplication.
+/// Load an authenticated user from the database. Shared by all auth paths.
+/// For robot accounts, forbidden caps are stripped from the effective cap set.
 async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, AuthError> {
     let user = db::users::get_user(pool, email)
         .await
@@ -147,7 +183,7 @@ async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, Au
         ));
     }
 
-    let caps = db::roles::get_effective_caps(pool, &user.email)
+    let mut caps = db::roles::get_effective_caps(pool, &user.email)
         .await
         .map_err(|_| {
             auth_error(
@@ -156,10 +192,17 @@ async fn load_authed_user(pool: &SqlitePool, email: &str) -> Result<AuthUser, Au
             )
         })?;
 
+    // Strip caps that robots are never allowed to hold, regardless of roles
+    // (defense in depth — the assignment-time reject is the other layer).
+    if user.is_robot {
+        caps.retain(|c| !ROBOT_FORBIDDEN_CAPS.contains(&c.as_str()));
+    }
+
     Ok(AuthUser {
         email: user.email,
         name: user.name,
         caps,
+        is_robot: user.is_robot,
     })
 }
 
@@ -235,25 +278,45 @@ impl FromRequestParts<AppState> for AuthUser {
 
             // API key path
             if token_str.starts_with("cbsk_") {
-                let cached = crate::auth::api_keys::verify_api_key(
-                    &state.pool,
-                    &state.api_key_cache,
-                    token_str,
-                )
-                .await
-                .map_err(|e| {
-                    tracing::warn!("auth reject: API key error: {e}");
-                    auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
-                })?;
+                let cached =
+                    token_cache::verify_api_key(&state.pool, &state.token_cache, token_str)
+                        .await
+                        .map_err(|e| {
+                            tracing::warn!("auth reject: API key error: {e}");
+                            auth_error(StatusCode::UNAUTHORIZED, &format!("API key error: {e}"))
+                        })?;
 
                 let auth_user = load_authed_user(&state.pool, &cached.owner_email).await?;
 
                 // Usage tracking — warn-and-swallow on failure, inline await
                 // so the request already holds the pool connection.
                 if let Err(e) =
-                    db::api_keys::mark_api_key_used(&state.pool, cached.api_key_id).await
+                    db::api_keys::mark_api_key_used(&state.pool, cached.token_id).await
                 {
                     tracing::warn!("failed to mark api key used: {e}");
+                }
+
+                return Ok(auth_user);
+            }
+
+            // Robot token path
+            if token_str.starts_with("cbrk_") {
+                let cached =
+                    token_cache::verify_robot_token(&state.pool, &state.token_cache, token_str)
+                        .await
+                        .map_err(|e| {
+                            tracing::warn!("auth reject: robot token error: {e}");
+                            auth_error(StatusCode::UNAUTHORIZED, &format!("robot token error: {e}"))
+                        })?;
+
+                let auth_user = load_authed_user(&state.pool, &cached.owner_email).await?;
+
+                // Usage tracking — warn-and-swallow on failure, inline await
+                // so the request already holds the pool connection.
+                if let Err(e) =
+                    db::robots::mark_robot_token_used(&state.pool, cached.token_id).await
+                {
+                    tracing::warn!("failed to mark robot token used: {e}");
                 }
 
                 return Ok(auth_user);
@@ -284,5 +347,48 @@ impl FromRequestParts<AppState> for AuthUser {
 
         tracing::debug!("auth: processing token from session cookie");
         validate_paseto(&token_str, state).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn first_robot_forbidden_cap_rejects_each_forbidden_cap() {
+        for &cap in ROBOT_FORBIDDEN_CAPS {
+            let caps = vec!["builds:create".to_string(), cap.to_string()];
+            let found = first_robot_forbidden_cap(&caps);
+            assert_eq!(found, Some(cap), "expected to flag '{cap}'");
+        }
+    }
+
+    #[test]
+    fn first_robot_forbidden_cap_allows_safe_set() {
+        let caps = vec![
+            "builds:create".to_string(),
+            "builds:list:own".to_string(),
+            "channels:view".to_string(),
+        ];
+        assert_eq!(first_robot_forbidden_cap(&caps), None);
+    }
+
+    #[test]
+    fn display_identity_returns_name_for_robot_and_email_for_human() {
+        let robot = AuthUser {
+            email: "robot+ci@robots".to_string(),
+            name: "robot:ci".to_string(),
+            caps: Vec::new(),
+            is_robot: true,
+        };
+        assert_eq!(robot.display_identity(), "robot:ci");
+
+        let human = AuthUser {
+            email: "alice@example.com".to_string(),
+            name: "Alice".to_string(),
+            caps: Vec::new(),
+            is_robot: false,
+        };
+        assert_eq!(human.display_identity(), "alice@example.com");
     }
 }

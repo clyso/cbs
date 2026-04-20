@@ -647,8 +647,9 @@ async fn set_default_type(
     })))
 }
 
-// NOTE: also defined in routes::admin — kept local to avoid a cross-module
-// public export for a small helper.
+// NOTE: duplicates `db::is_unique_violation` but pre-dates the shared
+// helper and lives outside the robot-accounts phase's scope. Safe to
+// migrate to `db::is_unique_violation` in a future opportunistic cleanup.
 fn is_unique_violation(e: &sqlx::Error) -> bool {
     if let sqlx::Error::Database(db_err) = e {
         db_err.code().is_some_and(|c| c == "2067")

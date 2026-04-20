@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) AS \"cnt!: i64\" FROM robot_tokens\n           WHERE robot_email = ? AND revoked = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "cnt!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6629bdcb8fd66869c1aba347c88a3dae321cb90b520e2ade6d6a45f3a430dc07"
+}

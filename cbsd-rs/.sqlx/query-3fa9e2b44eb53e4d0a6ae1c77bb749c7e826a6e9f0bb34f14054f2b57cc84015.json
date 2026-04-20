@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO robot_tokens\n                 (robot_email, token_hash, token_prefix, revoked)\n             VALUES (?, 'old-hash', 'oldpfx000000', 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "3fa9e2b44eb53e4d0a6ae1c77bb749c7e826a6e9f0bb34f14054f2b57cc84015"
+}

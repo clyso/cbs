@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\", token_hash AS \"token_hash!\",\n                  token_prefix AS \"token_prefix!\", robot_email AS \"robot_email!\",\n                  expires_at\n           FROM robot_tokens\n           WHERE token_prefix = ? AND revoked = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "token_hash!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "token_prefix!",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "robot_email!",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "expires_at",
+        "ordinal": 4,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "6e84fe23d706ad5dd1d9ff0d42548913f4da2fd85e3e6a6fe7be5d23e5c141fd"
+}

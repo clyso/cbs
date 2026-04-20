@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM robot_tokens WHERE robot_email = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "3e77c23ecf7ba2c62e57184aade52aef30e9b52b739aa5bf412d784558550296"
+}

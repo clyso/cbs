@@ -180,7 +180,7 @@ async fn main() {
     };
 
     // Create API key LRU cache (capacity: 512)
-    let api_key_cache = auth::api_keys::ApiKeyCache::new(512);
+    let token_cache = auth::token_cache::TokenCache::new(512);
 
     // Create the in-memory build queue
     let build_queue = Arc::new(tokio::sync::Mutex::new(queue::BuildQueue::new()));
@@ -225,7 +225,7 @@ async fn main() {
         pool: pool.clone(),
         config: Arc::new(config),
         oauth,
-        api_key_cache,
+        token_cache,
         queue: build_queue,
         components: loaded_components,
         worker_senders,

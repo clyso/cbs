@@ -29,8 +29,8 @@ use tower_sessions::service::SignedCookie;
 use tower_sessions_sqlx_store::SqliteStore;
 use tracing::Span;
 
-use crate::auth::api_keys::ApiKeyCache;
 use crate::auth::oauth::OAuthState;
+use crate::auth::token_cache::TokenCache;
 use crate::components::ComponentInfo;
 use crate::config::ServerConfig;
 use crate::logs::writer::SharedLogWriter;
@@ -53,7 +53,7 @@ pub struct AppState {
     pub pool: SqlitePool,
     pub config: Arc<ServerConfig>,
     pub oauth: OAuthState,
-    pub api_key_cache: Arc<Mutex<ApiKeyCache>>,
+    pub token_cache: Arc<Mutex<TokenCache>>,
     pub queue: SharedBuildQueue,
     pub components: Vec<ComponentInfo>,
     /// Per-worker outbound message channels.

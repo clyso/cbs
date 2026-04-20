@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT active AS \"active!\", is_robot AS \"is_robot!\"\n           FROM users WHERE email = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "active!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "is_robot!",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f17521d08ad6d97ab849dc63f2b844ef73231b2b57392db62bb1990bb15a58e9"
+}

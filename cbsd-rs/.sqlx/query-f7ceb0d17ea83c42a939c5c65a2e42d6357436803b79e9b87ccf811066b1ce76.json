@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE robot_tokens\n         SET last_used_at = unixepoch(),\n             first_used_at = COALESCE(first_used_at, unixepoch())\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f7ceb0d17ea83c42a939c5c65a2e42d6357436803b79e9b87ccf811066b1ce76"
+}

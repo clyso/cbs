@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO robot_tokens (robot_email, token_hash, token_prefix, expires_at)\n         VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "ed3253f5c7550b545b4214cc751809c4bac5bb664ef25f6878894ae543ee78da"
+}

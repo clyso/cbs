@@ -17,4 +17,11 @@ pub mod channels;
 pub mod components;
 pub mod periodic;
 pub mod permissions;
+pub mod robots;
 pub mod workers;
+
+#[cfg(test)]
+mod audit_identity_lint;
+
+#[cfg(test)]
+pub(crate) mod test_support;
