@@ -290,8 +290,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
                 // Usage tracking — warn-and-swallow on failure, inline await
                 // so the request already holds the pool connection.
-                if let Err(e) =
-                    db::api_keys::mark_api_key_used(&state.pool, cached.token_id).await
+                if let Err(e) = db::api_keys::mark_api_key_used(&state.pool, cached.token_id).await
                 {
                     tracing::warn!("failed to mark api key used: {e}");
                 }
