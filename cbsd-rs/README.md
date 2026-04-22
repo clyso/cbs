@@ -1,13 +1,13 @@
 # cbsd-rs — CBS Build Service Daemon (Rust)
 
-Rust rewrite of `cbsd/`. Replaces the FastAPI + Celery + Redis stack with
-axum + SQLite + WebSocket. Three binaries:
+Rust rewrite of `cbsd/`. Replaces the FastAPI + Celery + Redis stack with axum +
+SQLite + WebSocket. Three binaries:
 
-- **cbsd-server** — REST API, build queue, periodic build scheduler,
-  SSE log streaming, WebSocket endpoint for workers, Google OAuth + RBAC
+- **cbsd-server** — REST API, build queue, periodic build scheduler, SSE log
+  streaming, WebSocket endpoint for workers, Google OAuth + RBAC
 - **cbsd-worker** — WebSocket client, cbscore build subprocess bridge
-- **cbc** — CLI client for the build service (login, submit builds, stream
-  logs, admin operations)
+- **cbc** — CLI client for the build service (login, submit builds, stream logs,
+  admin operations)
 
 ## Building
 
@@ -21,8 +21,8 @@ so no database is needed for normal builds.
 SQLX_OFFLINE=true cargo build --workspace
 ```
 
-**When modifying queries or migrations** (adds or changes a `query!()` call,
-or touches `migrations/`), regenerate the cache before committing:
+**When modifying queries or migrations** (adds or changes a `query!()` call, or
+touches `migrations/`), regenerate the cache before committing:
 
 ```bash
 export DATABASE_URL=sqlite:///tmp/cbsd-dev.db
@@ -33,20 +33,19 @@ SQLX_OFFLINE=true cargo build --workspace   # verify
 git add .sqlx/
 ```
 
-From the repository root, `./do-cbsd-rs-compose.sh sqlx-prepare` automates
-the database setup and migration steps.
+From the repository root, `./do-cbsd-rs-compose.sh sqlx-prepare` automates the
+database setup and migration steps.
 
 ## Development
 
 ### Prerequisites
 
-- **Rust toolchain** — install via [rustup](https://rustup.rs/). The
-  workspace uses the 2024 edition.
-- **Podman** and **podman-compose** — the dev environment runs server and
-  worker in containers.
-- **cargo-sqlx** — only needed when adding or modifying `query!()` macros
-  or SQL migrations. Install with:
-
+- **Rust toolchain** — install via [rustup](https://rustup.rs/). The workspace
+  uses the 2024 edition.
+- **Podman** and **podman-compose** — the dev environment runs server and worker
+  in containers.
+- **cargo-sqlx** — only needed when adding or modifying `query!()` macros or SQL
+  migrations. Install with:
 
   ```bash
   cargo install sqlx-cli --no-default-features --features sqlite
@@ -56,16 +55,16 @@ the database setup and migration steps.
 - **A cbscore config file** (`cbs-build.config.yaml`) — the worker container
   needs this to run builds. Use an existing one from your host or create a
   minimal placeholder.
-- **A Google OAuth secrets JSON** — the `prepare` script requires this file,
-  but in dev mode its contents are ignored (the server bypasses OAuth). An
-  empty JSON object `{}` saved to a file is sufficient.
+- **A Google OAuth secrets JSON** — the `prepare` script requires this file, but
+  in dev mode its contents are ignored (the server bypasses OAuth). An empty
+  JSON object `{}` saved to a file is sufficient.
 
 ### Bringing up the dev environment
 
 All commands below are run from the **repository root** (not `cbsd-rs/`).
 
-1. **Prepare configuration** — generates server and worker YAML configs
-   under `_local/cbsd-rs/`:
+1. **Prepare configuration** — generates server and worker YAML configs under
+   `_local/cbsd-rs/`:
 
    ```bash
    ./do-cbsd-rs-compose.sh prepare --dev \
@@ -75,10 +74,10 @@ All commands below are run from the **repository root** (not `cbsd-rs/`).
    ```
 
    The `--dev` flag enables two things in the generated config:
-   - **Dev mode** (`dev.enabled: true`) — the server bypasses Google OAuth
-     and auto-authenticates as the seed admin on login.
-   - **Seed workers** — a worker with a pre-shared API key is seeded into
-     the database at startup, so no manual registration is required.
+   - **Dev mode** (`dev.enabled: true`) — the server bypasses Google OAuth and
+     auto-authenticates as the seed admin on login.
+   - **Seed workers** — a worker with a pre-shared API key is seeded into the
+     database at startup, so no manual registration is required.
 
 2. **Start the stack**:
 
@@ -87,8 +86,8 @@ All commands below are run from the **repository root** (not `cbsd-rs/`).
    ```
 
    This builds and starts two containers (`server-dev`, `worker-dev`) with
-   cargo-watch. Rust source changes on the host trigger an incremental
-   rebuild and restart inside the container.
+   cargo-watch. Rust source changes on the host trigger an incremental rebuild
+   and restart inside the container.
 
 3. **Verify**:
 
@@ -114,33 +113,33 @@ dev:
       api-key: "cbsk_<generated-hex>"
 ```
 
-| Option | Effect |
-|--------|--------|
-| `dev.enabled` | Bypasses Google OAuth — login returns a token for the seed admin. Skips OAuth config validation at startup. |
+| Option             | Effect                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dev.enabled`      | Bypasses Google OAuth — login returns a token for the seed admin. Skips OAuth config validation at startup.                                      |
 | `dev.seed-workers` | Pre-registers workers with the given API keys at startup. The worker config uses the matching `api-key` to connect without a registration token. |
 
-The worker's `worker.yaml` is generated with the matching `api-key` and
-`arch` so the two containers connect automatically.
+The worker's `worker.yaml` is generated with the matching `api-key` and `arch`
+so the two containers connect automatically.
 
 ### Logging
 
 Application logging is controlled by two mechanisms:
 
-| Mechanism | Controls | Scope |
-|-----------|----------|-------|
-| `CBSD_DEV=1` env var | Console (stdout) output | Both server and worker |
-| `logging.log-file` in YAML config | File output | Per-binary |
+| Mechanism                         | Controls                | Scope                  |
+| --------------------------------- | ----------------------- | ---------------------- |
+| `CBSD_DEV=1` env var              | Console (stdout) output | Both server and worker |
+| `logging.log-file` in YAML config | File output             | Per-binary             |
 
-**Development mode** (`CBSD_DEV=1`): Console output is always enabled.
-File output is additionally enabled when `logging.log-file` is configured.
-The compose `--dev` profile sets `CBSD_DEV=1` automatically.
+**Development mode** (`CBSD_DEV=1`): Console output is always enabled. File
+output is additionally enabled when `logging.log-file` is configured. The
+compose `--dev` profile sets `CBSD_DEV=1` automatically.
 
 **Production mode** (no `CBSD_DEV`): Console output is disabled. The
-`logging.log-file` config is **required** — the binary refuses to start
-without it.
+`logging.log-file` config is **required** — the binary refuses to start without
+it.
 
-`CBSD_DEV` is independent from `dev.enabled` in `server.yaml`. The server
-config `dev.enabled` controls OAuth bypass and worker seeding. Setting
+`CBSD_DEV` is independent from `dev.enabled` in `server.yaml`. The server config
+`dev.enabled` controls OAuth bypass and worker seeding. Setting
 `dev.enabled: true` without `CBSD_DEV=1` gives OAuth bypass but file-only
 logging. The compose `--dev` flag sets both.
 
@@ -176,16 +175,16 @@ sharing a role get the same permissions.
 
 Three built-in roles are seeded at first startup:
 
-| Role | Capabilities | Scopes |
-|------|-------------|--------|
-| `admin` | `*` (all) | global |
+| Role      | Capabilities                                                                                                                      | Scopes                      |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `admin`   | `*` (all)                                                                                                                         | global                      |
 | `builder` | `builds:create`, `builds:revoke:own`, `builds:list:own`, `builds:list:any`, `apikeys:create:own`, `workers:view`, `channels:view` | `channel=*`, `repository=*` |
-| `viewer` | `builds:list:any`, `workers:view` | — |
+| `viewer`  | `builds:list:any`, `workers:view`                                                                                                 | —                           |
 
 ### Creating custom roles
 
-Roles with scope-dependent capabilities (e.g. `builds:create`) must include
-at least one scope.
+Roles with scope-dependent capabilities (e.g. `builds:create`) must include at
+least one scope.
 
 ```bash
 # A builder restricted to ces-devel channels
@@ -230,18 +229,92 @@ cbc admin users roles remove alice@clyso.com --role devel-builder
 
 ### Scope types
 
-| Type | Checked against | Example |
-|------|----------------|---------|
-| `channel` | `channel/type` composite | `ces-devel/*`, `ces-prod/release` |
-| `registry` | destination image hostname | `harbor.clyso.com/*` |
-| `repository` | component repo name | `ceph`, `*` |
+| Type         | Checked against            | Example                           |
+| ------------ | -------------------------- | --------------------------------- |
+| `channel`    | `channel/type` composite   | `ces-devel/*`, `ces-prod/release` |
+| `registry`   | destination image hostname | `harbor.clyso.com/*`              |
+| `repository` | component repo name        | `ceph`, `*`                       |
 
 Scope patterns support exact match, `prefix/*` wildcard suffix, and `*`
-(global). All scope checks for a request must be satisfied by a **single
-role** — scopes are not combined across roles.
+(global). All scope checks for a request must be satisfied by a **single role**
+— scopes are not combined across roles.
 
 See [docs/rbac.md](docs/rbac.md) for the full RBAC reference including all
 capabilities, enforcement details, and divergences from the Python `cbsd`.
+
+## Robot accounts
+
+Robot accounts are admin-managed service identities for automation (CI
+pipelines, scheduled jobs, other services). Robots authenticate via long-lived
+`cbrk_` bearer tokens — not via Google SSO — and hold no interactive session.
+Their permissions flow through the same role assignments as human users.
+
+```bash
+# Create a robot with one role and a UTC expiry date
+cbc admin robots create ci \
+    --role devel-builder \
+    --expires 2027-01-31 \
+    --description "nightly Ceph builds"
+# → prints a cbrk_... token once; copy it now — it is not stored in plaintext
+
+# Or create a non-expiring token
+cbc admin robots create watchtower --role viewer --no-expires
+```
+
+The plaintext `cbrk_` token is displayed once at creation and never again; only
+an Argon2id hash is persisted. Use it in an `Authorization: Bearer <token>`
+header to authenticate API calls, the same way a PASETO token is used for
+humans.
+
+### Lifecycle
+
+```bash
+# Inspect
+cbc admin robots list
+cbc admin robots get ci     # shows token status, roles, effective caps
+
+# Rotate (replace the active token — old one stops working immediately)
+cbc admin robots token new ci --renew --expires 2028-01-31
+
+# Revoke just the token (leaves the account enabled — re-issue without a revive)
+cbc admin robots token revoke ci --yes-i-really-mean-it
+
+# Disable without destroying the identity (builds history preserved)
+cbc admin robots disable ci
+
+# Tombstone — drops active token, keeps row. A later `create ci` revives
+# the same email but resets description, default-channel, and timestamps;
+# past `builds.user_email` attribution survives the cycle.
+cbc admin robots delete ci --yes-i-really-mean-it
+```
+
+### Coexistence rules
+
+Robot accounts live in the same users table as humans but carry `is_robot = 1`.
+A small set of rules prevents identity confusion:
+
+- Robot names (stored as `robot:<name>`) are reserved — SSO cannot create a
+  human account whose display name starts with `robot:`.
+- Robots cannot self-revoke their token via `POST /api/auth/token/revoke`; use
+  `cbc admin robots token revoke`.
+- Robots cannot create API keys (`cbsk_`) or call `revoke-all-tokens`.
+- A set of capabilities is stripped at auth time regardless of role assignment:
+  `*`, `permissions:manage`, `robots:manage`, `apikeys:create:own`. Assigning a
+  role containing any of those caps to a robot is rejected at assignment time as
+  well.
+- Robots cannot submit builds to channels whose type uses the `${username}`
+  prefix template (the synthetic `robot+<name>@robots` address would leak into
+  the image path).
+
+### Admin capabilities
+
+| Capability      | Grants                                                                                |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `robots:view`   | `GET /api/admin/robots`, `GET /api/admin/robots/{name}`                               |
+| `robots:manage` | create, tombstone, rotate, revoke, set description, set default channel, assign roles |
+
+Robots themselves can never hold `robots:*` caps — robot management is always a
+human operation.
 
 ## Compose deployment (development only)
 
@@ -257,14 +330,14 @@ For production images, use the dedicated build script:
 ./container/build-cbsd-rs.sh all --tag v0.1.0 --push  # tag and push
 ```
 
-The build script embeds the current git commit SHA into the binaries. The
-health endpoint (`/api/health`) reports the version, and workers report
-their version to the server on connect.
+The build script embeds the current git commit SHA into the binaries. The health
+endpoint (`/api/health`) reports the version, and workers report their version
+to the server on connect.
 
-The `do-cbsd-rs-compose.sh` helper script automates config generation and
-image management. It requires two external files — a Google OAuth2 client
-secrets JSON and a cbscore `cbs-build.config.yaml` — that are not committed
-to the repository.
+The `do-cbsd-rs-compose.sh` helper script automates config generation and image
+management. It requires two external files — a Google OAuth2 client secrets JSON
+and a cbscore `cbs-build.config.yaml` — that are not committed to the
+repository.
 
 **Dev quickstart** (pre-configured worker API key, OAuth bypass — no Google
 credentials or REST API calls needed):
@@ -279,8 +352,8 @@ credentials or REST API calls needed):
 
 In dev mode the server bypasses Google OAuth entirely — the login endpoint
 returns a token for the seed admin without contacting Google. The
-`--google-client-secrets` file is still required by the helper script but
-its contents are not used.
+`--google-client-secrets` file is still required by the helper script but its
+contents are not used.
 
 **Staging / prod-like compose** (workers registered via REST API after first
 server start):
@@ -294,15 +367,14 @@ server start):
 # Follow the printed instructions to register a worker via the REST API.
 ```
 
-Run `./do-cbsd-rs-compose.sh --help` for full options including
-`--worker-name`, `--arch`, `--allowed-domain`, and `--rebuild`.
+Run `./do-cbsd-rs-compose.sh --help` for full options including `--worker-name`,
+`--arch`, `--allowed-domain`, and `--rebuild`.
 
 ## Production deployment (systemd)
 
-For production, use the systemd user-service installer in
-`cbsd-rs/systemd/`. It pulls pre-built images from the registry and
-integrates with the host service manager rather than managing the
-container lifecycle through podman-compose.
+For production, use the systemd user-service installer in `cbsd-rs/systemd/`. It
+pulls pre-built images from the registry and integrates with the host service
+manager rather than managing the container lifecycle through podman-compose.
 
 ```bash
 # Install server + worker services for the default deployment
@@ -313,14 +385,14 @@ container lifecycle through podman-compose.
 ./cbsd-rs/systemd/install.sh worker --name host-01
 ```
 
-The installer places systemd unit files under `~/.config/systemd/user/`
-and prints per-service instructions explaining what config files must be
-created before the service can be started.
+The installer places systemd unit files under `~/.config/systemd/user/` and
+prints per-service instructions explaining what config files must be created
+before the service can be started.
 
-**Worker registration** — workers must be registered via the server REST
-API (not pre-seeded at startup). After the server is running and you have
-an admin token, register each worker and copy the returned `worker-token`
-into the worker's `worker.yaml`:
+**Worker registration** — workers must be registered via the server REST API
+(not pre-seeded at startup). After the server is running and you have an admin
+token, register each worker and copy the returned `worker-token` into the
+worker's `worker.yaml`:
 
 ```bash
 curl -X POST http://<server-host>:8080/api/admin/workers \
