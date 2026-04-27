@@ -18,8 +18,9 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
+from cbscommon.process.types import MaybeSecure
+
 from cbscore.config import Config, ConfigError, VaultConfig
-from cbscore.utils import MaybeSecure
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets import logger as parent_logger
 from cbscore.utils.secrets.git import git_url_for

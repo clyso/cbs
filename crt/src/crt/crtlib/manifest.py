@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 
+import asyncio
 import datetime
 import re
 import uuid
@@ -20,6 +21,23 @@ from pathlib import Path
 from typing import cast
 
 import pydantic
+from cbscommon.git.cmds import (
+    git_branch_from,
+    git_checkout,
+    git_cleanup_repo,
+    git_fetch_ref,
+    git_prepare_remote,
+    git_push,
+    git_status,
+)
+from cbscommon.git.exceptions import (
+    GitCreateHeadExistsError,
+    GitError,
+    GitFetchError,
+    GitFetchHeadNotFoundError,
+    GitIsTagError,
+    GitPushError,
+)
 from cbscore.versions.utils import parse_version
 
 from crt.crtlib.apply import ApplyError, apply_manifest
@@ -31,21 +49,6 @@ from crt.crtlib.errors.manifest import (
     NoSuchManifestError,
 )
 from crt.crtlib.errors.stages import MissingStagePatchError
-from crt.crtlib.git_utils import (
-    GitCreateHeadExistsError,
-    GitError,
-    GitFetchError,
-    GitFetchHeadNotFoundError,
-    GitIsTagError,
-    GitPushError,
-    git_branch_from,
-    git_checkout_ref,
-    git_cleanup_repo,
-    git_fetch_ref,
-    git_prepare_remote,
-    git_push,
-    git_status,
-)
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
@@ -81,7 +84,7 @@ def _prepare_repo(
     run_locally: bool = False,
 ) -> None:
     try:
-        git_cleanup_repo(repo_path)
+        asyncio.run(git_cleanup_repo(repo_path))
     except GitError as e:
         msg = f"unable to clean up repository: {e}"
         logger.error(msg)
@@ -90,15 +93,21 @@ def _prepare_repo(
     if not run_locally:
         try:
             base_remote_uri = f"github.com/{base_remote_name}"
-            _ = git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
+            asyncio.run(
+                git_prepare_remote(repo_path, base_remote_uri, base_remote_name, token)
+            )
             push_remote_uri = f"github.com/{push_remote_name}"
-            _ = git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
+            asyncio.run(
+                git_prepare_remote(repo_path, push_remote_uri, push_remote_name, token)
+            )
         except GitError as e:
             raise ManifestError(uuid=manifest_uuid, msg=str(e)) from None
 
         # fetch from base repository, if it exists.
         try:
-            _ = git_fetch_ref(repo_path, target_branch, target_branch, push_remote_name)
+            _ = asyncio.run(
+                git_fetch_ref(repo_path, target_branch, target_branch, push_remote_name)
+            )
         except GitIsTagError as e:
             msg = f"unexpected tag for branch '{target_branch}': {e}"
             logger.error(msg)
@@ -127,21 +136,23 @@ def _prepare_repo(
     try:
         if run_locally:
             try:
-                git_branch_from(repo_path, base_ref, target_branch)
+                asyncio.run(git_branch_from(repo_path, base_ref, target_branch))
             except GitCreateHeadExistsError:
                 msg = f"branch {target_branch} exists"
                 logger.info(msg)
-        _ = git_checkout_ref(
-            repo_path,
-            base_ref,
-            to_branch=target_branch,
-            remote_name=base_remote_name,
-            update_from_remote=False,
-            fetch_if_not_exists=not run_locally,
-        )
-        git_cleanup_repo(repo_path)
+                asyncio.run(
+                    git_checkout(
+                        repo_path,
+                        base_ref,
+                        to_branch=target_branch,
+                        remote_name=base_remote_name,
+                        update_from_remote=False,
+                        fetch_if_not_exists=run_locally,
+                        clean=True,
+                    )
+                )
 
-        logger.debug(f"git status:\n{git_status(repo_path)}")
+        logger.debug(f"git status:\n{asyncio.run(git_status(repo_path))}")
     except GitError as e:
         msg = f"unable to checkout ref '{base_ref}' to '{target_branch}': {e}"
         logger.error(msg)
@@ -339,11 +350,13 @@ def manifest_publish_branch(
     heads_rejected: list[str] = []
     logger.info(f"push '{our_branch}' to '{dst_repo}'")
     try:
-        push_res, heads_updated, heads_rejected = git_push(
-            repo_path,
-            our_branch,
-            dst_repo,
-            ref_to=dst_branch,
+        push_res, heads_updated, heads_rejected = asyncio.run(
+            git_push(
+                repo_path,
+                our_branch,
+                dst_repo,
+                ref_to=dst_branch,
+            )
         )
     except GitPushError as e:
         msg = f"unable to push '{our_branch}': {e}"

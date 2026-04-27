@@ -12,13 +12,17 @@
 # GNU General Public License for more details.
 
 
+import asyncio
 import re
 from datetime import datetime as dt
 from pathlib import Path
 from typing import cast
 
+from cbscommon.git.cmds import git_format_patch, git_patch_id
+from cbscommon.git.exceptions import GitError
+from cbscommon.git.types import SHA
+
 from crt.crtlib.errors import CRTError
-from crt.crtlib.git_utils import SHA, GitError, git_format_patch, git_patch_id
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import AuthorData
 from crt.crtlib.models.patch import PatchInfo, PatchMeta
@@ -141,14 +145,14 @@ def patch_import(
     target_version: str | None = None,
 ) -> None:
     try:
-        patch_id = git_patch_id(repo_path, sha)
+        patch_id = asyncio.run(git_patch_id(repo_path, sha))
     except GitError as e:
         msg = f"unable to obtain patch id for sha '{sha}': {e}"
         logger.error(msg)
         raise PatchError(msg=msg) from None
 
     try:
-        formatted_patch = git_format_patch(repo_path, sha)
+        formatted_patch = asyncio.run(git_format_patch(repo_path, sha))
     except GitError as e:
         msg = f"unable to obtain formatted patch for sha '{sha}': {e}"
         logger.error(msg)
@@ -239,14 +243,14 @@ def patch_add(
     src_version: str | None,
 ) -> PatchMeta:
     try:
-        patch_id = git_patch_id(src_repo_path, sha)
+        patch_id = asyncio.run(git_patch_id(src_repo_path, sha))
     except GitError as e:
         msg = f"unable to obtain patch id for sha '{sha}': {e}"
         logger.error(msg)
         raise PatchError(msg=msg) from None
 
     try:
-        formatted_patch = git_format_patch(src_repo_path, sha)
+        formatted_patch = asyncio.run(git_format_patch(src_repo_path, sha))
     except GitError as e:
         msg = f"unable to obtain formatted patch for sha '{sha}': {e}"
         logger.error(msg)
