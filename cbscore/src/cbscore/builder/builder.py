@@ -79,7 +79,7 @@ class Builder:
         *,
         skip_build: bool = False,
         force: bool = False,
-        tls_verify: bool = True
+        tls_verify: bool = True,
     ) -> None:
         self.desc = desc
         self.config = config
