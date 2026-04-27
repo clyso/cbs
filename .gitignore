@@ -11,3 +11,7 @@ package.json
 yarn.lock
 .venv/
 .claude/agent-memory/
+!tests/resources/cbscore/cbs-build.config.yaml
+.coverage
+reports/
+coverage.xml

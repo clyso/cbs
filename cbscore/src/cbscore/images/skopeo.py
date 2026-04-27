@@ -147,6 +147,8 @@ def skopeo_inspect(img: str, secrets: SecretsMgr, *, tls_verify: bool = True) ->
 
     if retcode != 0:
         msg = f"error inspecting image '{img}': {err}"
+        # Exit code 2 is specifically used by skopeo 1.20.0+ to signal "not found".
+        #
         if retcode == 2 or re.match(r".*not\s+found.*", err):
             logger.debug(msg)
             raise ImageNotFoundError(img) from None

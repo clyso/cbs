@@ -4,18 +4,58 @@ version = "1.0.4"
 description = "Clyso Enterprise Storage Build Service"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "cbscore",
+]
 
 [tool.uv.workspace]
 members = ["cbscore", "cbsdcore", "cbsd", "cbc", "crt"]
 
+[tool.uv.sources]
+cbscore = { workspace = true }
+
 [dependency-groups]
 dev = ["basedpyright==1.37.1", "lefthook==2.0.15", "ruff==0.14.13"]
-test = ["pytest>=8.0", "pytest-asyncio>=0.25"]
+test = [
+    "click>=8.1.8",
+    "httpx>=0.28.1",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=7.0.0",
+    "testcontainers>=4.14.1",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["cbsd/tests"]
+testpaths = ["cbsd/tests", "integrationtests"]
+addopts = """
+    --cov=cbc
+    --cov=cbscore
+    --cov=cbsd
+    --cov=cbsdcore
+    --cov=crt
+    --cov-report=term-missing
+    --cov-report=html:reports/coverage
+    --cov-report=xml:reports/coverage.xml
+"""
+markers = [
+    "version: custom version for the test component ",
+    "container_name: name of the container image",
+    "container_tag: version tag used for the registry"
+]
+
+[tool.coverage.run]
+source = ["cbc", "cbscore", "cbsdcore"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError"
+]
 
 [tool.ruff.lint]
 select = [

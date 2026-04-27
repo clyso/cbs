@@ -83,6 +83,11 @@ if __name__ == "__main__":
             "foo.bar.tld/foo/bar",
             "foo.bar.tld/foo",
         ),
+        (
+            ["127.0.0.1"],
+            "127.0.0.1:5000/foo",
+            "127.0.0.1",
+        ),
     ]
 
     for case in _test_cases:

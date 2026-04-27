@@ -185,6 +185,7 @@ class BuildahContainer:
         secrets: SecretsMgr,
         *,
         sign_with_transit: str | None = None,
+        tls_verify: bool = True,
     ) -> None:
         # output to logger
         async def _out(s: str) -> None:
@@ -252,7 +253,12 @@ class BuildahContainer:
         logger.info(f"pushing image '{uri}' to '{self.version_desc.image.registry}'")
 
         digest_file_fd, digest_file = tempfile.mkstemp(text=True)
-        push_cmd: CmdArgs = ["push", "--digestfile", digest_file]
+        push_cmd: CmdArgs = [
+            "push",
+            f"--tls-verify={tls_verify}",
+            "--digestfile",
+            digest_file,
+        ]
         push_cmd.extend(
             ["--creds", Password(f"{username}:{password}")]
             if username and password
@@ -297,10 +303,18 @@ class BuildahContainer:
             raise BuildahError(msg)
 
 
-async def buildah_new_container(desc: VersionDescriptor) -> BuildahContainer:
+async def buildah_new_container(
+    desc: VersionDescriptor, volumes: dict[str, str] | None = None
+) -> BuildahContainer:
+    volumes = volumes or {}
+    volume_opts: CmdArgs = []
+    for local, inside in volumes.items():
+        volume_opts.extend(["-v", f"{local}:{inside}:Z"])
+
     create_args: CmdArgs = ["from", desc.distro]
+    params = volume_opts + create_args
     try:
-        rc, stdout, stderr = await _buildah_run(create_args)
+        rc, stdout, stderr = await _buildah_run(params)
     except BuildahError as e:
         msg = f"error creating new container: {e}"
         logger.exception(msg)
