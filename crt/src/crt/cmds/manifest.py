@@ -1171,15 +1171,15 @@ def _prepare_release_repo(
         release = load_release(ces_patch_path, release_name)
         release_repo_name = release.base_repo
 
-        git_prepare_remote(
+        _ = git_prepare_remote(
             ceph_repo_path, f"github.com/{release_repo_name}", release_repo_name, token
         )
         if remote_name != release_repo_name:
-            git_prepare_remote(
+            _ = git_prepare_remote(
                 ceph_repo_path, f"github.com/{remote_name}", remote_name, token
             )
-        git_push(ceph_repo_path, release_branch_name, remote_name)
-        git_push(ceph_repo_path, release_tag_name, remote_name)
+        _ = git_push(ceph_repo_path, release_branch_name, remote_name)
+        _ = git_push(ceph_repo_path, release_tag_name, remote_name)
     except GitError as e:
         perror(f"unable to prepare release repository: {e}")
         sys.exit(e.ec if e.ec else errno.ENOTRECOVERABLE)

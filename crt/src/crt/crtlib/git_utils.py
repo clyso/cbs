@@ -15,6 +15,7 @@ import logging
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast, override
 
@@ -814,9 +815,8 @@ def git_format_patch(repo_path: Path, rev: SHA, *, base_rev: SHA | None = None) 
 def git_tag_exists_in_remote(repo_path: Path, remote_name: str, tag_name: str) -> bool:
     try:
         repo = git.Repo(repo_path)
-        raw_tag: str = repo.git.ls_remote(
-            "--tags", remote_name, f"refs/tags/{tag_name}"
-        )
+        ls_remote = cast(Callable[..., str], repo.git.ls_remote)
+        raw_tag: str = ls_remote("--tags", remote_name, f"refs/tags/{tag_name}")
         return bool(raw_tag.strip())
     except git.CommandError as e:
         msg = f"unable to execute git ls-remote --tags {remote_name} refs/tags/{tag_name}: {e}"
