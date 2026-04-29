@@ -25,6 +25,12 @@ from rich.padding import Padding
 from rich.table import Table
 
 from crt.cmds._common import CRTExitError, CRTProgress
+from crt.crtlib.config import (
+    get_release_repo,
+    load_config,
+    resolve_channel,
+)
+from crt.crtlib.errors.config import AmbiguousChannelError, ChannelNotFoundError
 from crt.crtlib.errors.manifest import NoSuchManifestError
 from crt.crtlib.errors.release import NoSuchReleaseError
 from crt.crtlib.git_utils import (
@@ -37,22 +43,25 @@ from crt.crtlib.git_utils import (
     git_get_remote_ref,
     git_prepare_remote,
     git_push,
-    git_remote,
     git_reset_head,
     git_tag,
 )
-from crt.crtlib.manifest import load_manifest_by_name_or_uuid
+from crt.crtlib.manifest import resolve_and_load_manifest
 from crt.crtlib.models.release import Release
-from crt.crtlib.release import load_release, release_exists, store_release
+from crt.crtlib.paths import releases_dir
+from crt.crtlib.release import (
+    create_release_branch,
+    load_release,
+    release_exists,
+    store_release,
+)
 
 from . import (
     Ctx,
     console,
     pass_ctx,
     perror,
-    pinfo,
     psuccess,
-    pwarn,
     with_gh_token,
     with_patches_repo_path,
 )
@@ -188,9 +197,7 @@ def cmd_release():
     type=str,
     required=False,
     metavar="OWNER/REPO",
-    default="clyso/ceph",
-    help="Destination repository.",
-    show_default=True,
+    help="Destination repository (defaults to config's release_repo).",
 )
 @click.option(
     "-c",
@@ -228,7 +235,7 @@ def cmd_release_start(
     from_manifest: str | None,
     from_ref: str | None,
     from_ref_rel_name: str | None,
-    dst_repo: str,
+    dst_repo: str | None,
     allow_dev: bool,
     release_name: str,
 ) -> None:
@@ -242,16 +249,27 @@ def cmd_release_start(
         perror("--ref requires --ref-rel-name to be set.")
         sys.exit(errno.EINVAL)
 
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     # enforce strict naming criteria
     try:
-        prefix, _, minor, patch, suffix = parse_version(release_name)
+        _prefix, _, minor, patch, suffix = parse_version(release_name)
     except ValueError:
         perror(f"invalid release name '{release_name}'")
         sys.exit(errno.EINVAL)
 
-    if not prefix or prefix not in ["ces", "ccs"]:
-        perror(f"invalid release name prefix '{prefix}', expected 'ces' or 'ccs'")
+    try:
+        ns, channel, _channel_config = resolve_channel(store_config, release_name)
+    except (ChannelNotFoundError, AmbiguousChannelError) as e:
+        perror(f"invalid release name prefix: {e}")
         sys.exit(errno.EINVAL)
+
+    if not dst_repo:
+        dst_repo = get_release_repo(store_config, release_name)
 
     if not minor or not patch:
         perror("malformed release name, missing minor or patch version")
@@ -269,10 +287,23 @@ def cmd_release_start(
     base_ref_repo: str
     if from_manifest:
         try:
-            manifest = load_manifest_by_name_or_uuid(patches_repo_path, from_manifest)
+            manifest_ns, manifest_channel, manifest = resolve_and_load_manifest(
+                patches_repo_path, store_config, from_manifest
+            )
+        except AmbiguousChannelError as e:
+            perror(f"ambiguous channel prefix: {e}")
+            sys.exit(errno.EINVAL)
         except Exception as e:
             perror(f"Failed to load manifest '{from_manifest}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
+
+        if (manifest_ns, manifest_channel) != (ns, channel):
+            perror(
+                f"manifest '{from_manifest}' resolves to "
+                + f"{manifest_ns}/{manifest_channel}, but release "
+                + f"'{release_name}' resolves to {ns}/{channel}"
+            )
+            sys.exit(errno.EINVAL)
 
         base_ref_rel_name = manifest.base_release_name
         base_ref = f"release/{manifest.name}"
@@ -293,12 +324,26 @@ def cmd_release_start(
     release_base_branch = f"release-base/{release_name}"
     release_base_tag = f"release-base-{release_name}"
 
-    if release_exists(patches_repo_path, release_name):
+    if release_exists(patches_repo_path, ns, channel, release_name):
         perror(f"release metadata for '{release_name}' already exists")
         sys.exit(errno.EEXIST)
 
     progress = CRTProgress(console)
     progress.start()
+
+    # create or checkout a release branch in the CRT store repository
+    progress.new_task("create store release branch")
+    try:
+        store_branch = create_release_branch(patches_repo_path, ns, release_name)
+    except Exception as e:
+        progress.stop_error()
+        perror(f"failed to create store release branch: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+    if release_exists(patches_repo_path, ns, channel, release_name):
+        progress.stop_error()
+        perror(f"release metadata for '{release_name}' already exists")
+        sys.exit(errno.EEXIST)
+    progress.done_task()
 
     progress.new_task("prepare repositories")
     try:
@@ -372,11 +417,14 @@ def cmd_release_start(
         sys.exit(errno.ENOTRECOVERABLE)
 
     progress.done_task()
+
     progress.stop()
 
     try:
         store_release(
             patches_repo_path,
+            ns,
+            channel,
             Release(
                 name=release_name,
                 base_release_name=base_ref_rel_name,
@@ -386,6 +434,7 @@ def cmd_release_start(
                 release_base_branch=release_base_branch,
                 release_base_tag=release_base_tag,
                 release_branch=f"release/{release_name}",
+                store_branch=store_branch,
             ),
         )
     except Exception as e:
@@ -403,134 +452,84 @@ def cmd_release_start(
     summary_table.add_row("Release base branch", release_base_branch)
     summary_table.add_row("Release base tag", release_base_tag)
     summary_table.add_row("Is local", str(ctx.run_locally))
+    summary_table.add_row("Store branch", store_branch)
 
     console.print(Padding(summary_table, (1, 0, 1, 0)))
 
 
-@cmd_release.command("list", help="List existing releases.")
+@cmd_release.command("list", help="List existing releases from the registry.")
 @click.option(
-    "-c",
-    "--ceph-repo",
-    "ceph_repo_path",
-    type=click.Path(
-        exists=True,
-        dir_okay=True,
-        file_okay=False,
-        writable=True,
-        readable=True,
-        resolve_path=True,
-        path_type=Path,
-    ),
-    envvar="CRT_CEPH_REPO_PATH",
-    required=True,
-    help="Path to the staging ceph git repository.",
-)
-@click.option(
-    "-d",
-    "--dst-repo",
-    "dst_repo",
+    "-n",
+    "--namespace",
+    "filter_ns",
     type=str,
     required=False,
-    metavar="OWNER/REPO",
-    default="clyso/ceph",
-    help="Destination repository.",
-    show_default=True,
+    metavar="NAMESPACE",
+    help="Filter by namespace.",
+)
+@click.option(
+    "-C",
+    "--channel",
+    "filter_channel",
+    type=str,
+    required=False,
+    metavar="CHANNEL",
+    help="Filter by channel.",
 )
 @with_patches_repo_path
-@with_gh_token
-@pass_ctx
 def cmd_release_list(
-    ctx: Ctx,
-    gh_token: str,
     patches_repo_path: Path,
-    ceph_repo_path: Path,
-    dst_repo: str,
+    filter_ns: str | None,
+    filter_channel: str | None,
 ) -> None:
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     progress = CRTProgress(console)
     progress.start()
 
     table = Table(show_header=True, show_lines=True, box=rich.box.HORIZONTALS)
     table.add_column("Name", justify="left", style="bold cyan", no_wrap=True)
+    table.add_column("Namespace", justify="left", style="magenta", no_wrap=True)
+    table.add_column("Channel", justify="left", style="magenta", no_wrap=True)
     table.add_column("Base", justify="left", style="magenta", no_wrap=True)
     table.add_column("Status", justify="left", no_wrap=True)
 
-    if ctx.run_locally:
-        progress.new_task("get remote")
-        if not (remote := git_remote(ceph_repo_path, dst_repo)):
-            pinfo(f"remote {dst_repo} doesn't exist locally")
-            console.print(Padding(table, (1, 0, 1, 0)))
-            progress.done_task()
-            progress.stop()
-            return
-        progress.done_task()
-        progress.stop()
-    else:
-        progress.new_task("prepare remote")
-        try:
-            remote = git_prepare_remote(
-                ceph_repo_path, f"github.com/{dst_repo}", dst_repo, gh_token
-            )
-        except GitError as e:
-            perror(f"unable to prepare remote repository '{dst_repo}': {e}")
-            progress.stop_error()
-            sys.exit(errno.ENOTRECOVERABLE)
-
-        progress.done_task()
-        progress.stop()
-
-    remote_releases: list[str] = []
-    remote_base_releases: list[str] = []
-    releases_meta: dict[str, Release | None] = {}
-
-    for r in remote.refs:
-        ref_name = r.name[len(dst_repo) + 1 :]
-        m = re.match(r"(release|release-base)/((?:ces|ccs)-.+)", ref_name)
-        if not m:
+    for ns_name, ns_config in store_config.namespaces.items():
+        if filter_ns and ns_name != filter_ns:
             continue
+        for ch_name in ns_config.channels:
+            if filter_channel and ch_name != filter_channel:
+                continue
 
-        if len(m.groups()) != 2:
-            pwarn(f"unexpected release: {m.groups()}")
-            continue
+            rel_dir = releases_dir(patches_repo_path, ns_name, ch_name)
+            if not rel_dir.exists():
+                continue
 
-        rel_type = cast(str, m.group(1))
-        rel_name = cast(str, m.group(2))
+            for rel_path in sorted(rel_dir.glob("*.json")):
+                try:
+                    release = load_release(
+                        patches_repo_path, ns_name, ch_name, rel_path.stem
+                    )
+                except Exception as e:
+                    perror(f"error loading release '{rel_path.stem}': {e}")
+                    continue
 
-        if rel_type not in ["release", "release-base"]:
-            perror(f"unknown release type '{rel_type}'")
-            continue
-
-        rel_meta: Release | None = None
-        try:
-            rel_meta = load_release(patches_repo_path, rel_name)
-        except NoSuchReleaseError:
-            pwarn(f"release '{rel_name}' missing metadata")
-        except Exception as e:
-            perror(f"failed to load release '{rel_name}': {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
-
-        releases_meta[rel_name] = rel_meta
-
-        if rel_type == "release":
-            remote_releases.append(rel_name)
-        elif rel_type == "release-base":
-            remote_base_releases.append(rel_name)
-
-    not_released: list[str] = []
-    for r in remote_base_releases:
-        if r not in remote_releases:
-            not_released.append(r)
-
-    for r in remote_releases:
-        rel = releases_meta.get(r)
-        table.add_row(
-            r, rel.base_release_name if rel else "n/a", "[green]released[/green]"
-        )
-
-    for r in not_released:
-        rel = releases_meta.get(r)
-        table.add_row(
-            r, rel.base_release_name if rel else "n/a", "[yellow]not released[/yellow]"
-        )
+                status = (
+                    "[green]published[/green]"
+                    if release.is_published
+                    else "[yellow]unpublished[/yellow]"
+                )
+                table.add_row(
+                    release.name,
+                    ns_name,
+                    ch_name,
+                    release.base_release_name,
+                    status,
+                )
 
     console.print(Padding(table, (1, 0, 1, 0)))
 
@@ -546,10 +545,11 @@ def cmd_release_list(
 )
 @with_patches_repo_path
 def cmd_release_info(patches_repo_path: Path, release_name: str | None) -> None:
-    releases_path = patches_repo_path / "ceph" / "releases"
-    if not releases_path.exists():
-        pwarn(f"releases directory '{releases_path}' does not exist")
-        sys.exit(errno.ENOENT)
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     table = Table(show_header=False, show_lines=True, box=rich.box.HORIZONTALS)
     table.add_column("name", justify="left", style="bold cyan", no_wrap=True)
@@ -575,20 +575,26 @@ def cmd_release_info(patches_repo_path: Path, release_name: str | None) -> None:
 
         table.add_row(release.name, info_table)
 
-    for r in releases_path.glob("*.json"):
-        if release_name and r.stem != release_name:
-            continue
+    for ns_name, ns_config in store_config.namespaces.items():
+        for ch_name in ns_config.channels:
+            rel_dir = releases_dir(patches_repo_path, ns_name, ch_name)
+            if not rel_dir.exists():
+                continue
 
-        try:
-            release = load_release(patches_repo_path, r.stem)
-        except NoSuchReleaseError:
-            perror(f"unexpected error loading release '{r.stem}'")
-            sys.exit(errno.ENOTRECOVERABLE)
-        except Exception as e:
-            perror(f"failed to load release '{r.stem}': {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
+            for r in rel_dir.glob("*.json"):
+                if release_name and r.stem != release_name:
+                    continue
 
-        _add_info_row(release)
+                try:
+                    release = load_release(patches_repo_path, ns_name, ch_name, r.stem)
+                except NoSuchReleaseError:
+                    perror(f"unexpected error loading release '{r.stem}'")
+                    sys.exit(errno.ENOTRECOVERABLE)
+                except Exception as e:
+                    perror(f"failed to load release '{r.stem}': {e}")
+                    sys.exit(errno.ENOTRECOVERABLE)
+
+                _add_info_row(release)
 
     console.print(Padding(table, (1, 0, 1, 0)))
 
@@ -631,7 +637,19 @@ def cmd_release_finish(
     release_name: str,
 ) -> None:
     try:
-        release = load_release(patches_repo_path, release_name)
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, _channel_config = resolve_channel(store_config, release_name)
+    except (ChannelNotFoundError, AmbiguousChannelError) as e:
+        perror(f"invalid release name prefix: {e}")
+        sys.exit(errno.EINVAL)
+
+    try:
+        release = load_release(patches_repo_path, ns, channel, release_name)
     except NoSuchReleaseError:
         perror(f"release '{release_name}' does not exist")
         sys.exit(errno.ENOENT)
@@ -644,13 +662,26 @@ def cmd_release_finish(
         sys.exit(errno.EEXIST)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(patches_repo_path, from_manifest)
+        manifest_ns, manifest_channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, from_manifest
+        )
     except NoSuchManifestError:
         perror(f"manifest '{from_manifest}' does not exist")
         sys.exit(errno.ENOENT)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"Failed to load manifest '{from_manifest}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    if (manifest_ns, manifest_channel) != (ns, channel):
+        perror(
+            f"manifest '{from_manifest}' resolves to "
+            + f"{manifest_ns}/{manifest_channel}, but release "
+            + f"'{release_name}' resolves to {ns}/{channel}"
+        )
+        sys.exit(errno.EINVAL)
 
     if not manifest.is_published:
         perror(f"manifest '{from_manifest}' is not published")
@@ -738,7 +769,7 @@ def cmd_release_finish(
 
     release.is_published = True
     try:
-        store_release(patches_repo_path, release)
+        store_release(patches_repo_path, ns, channel, release)
     except Exception as e:
         perror(f"failed to write release metadata for '{release_name}': {e}")
         progress.stop_error()
@@ -747,7 +778,15 @@ def cmd_release_finish(
     progress.done_task()
     progress.stop()
 
-    psuccess(
-        f"release '{release_name}' successfully published to '{release.release_repo}' "
-        + f"branch '{release.release_branch}'"
-    )
+    summary_table = Table(show_header=False, show_lines=False, box=None)
+    summary_table.add_column(justify="right", style="bold cyan", no_wrap=True)
+    summary_table.add_column(justify="left", style="magenta", no_wrap=False)
+    summary_table.add_row("Release", release_name)
+    summary_table.add_row("Repository", release.release_repo)
+    summary_table.add_row("Branch", release.release_branch)
+    summary_table.add_row("Tag", release.name)
+    if release.store_branch:
+        summary_table.add_row("Store branch", release.store_branch)
+
+    console.print(Padding(summary_table, (1, 0, 1, 0)))
+    psuccess(f"release '{release_name}' published")

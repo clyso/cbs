@@ -22,9 +22,11 @@ import click
 from crt.cmds import Ctx, pass_ctx, perror, psuccess, pwarn, with_patches_repo_path
 from crt.cmds import logger as parent_logger
 from crt.crtlib.apply import ApplyError, patches_apply_to_manifest
+from crt.crtlib.config import load_config
+from crt.crtlib.errors.config import AmbiguousChannelError
 from crt.crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
 from crt.crtlib.git_utils import GitError, git_prepare_remote, git_revparse
-from crt.crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
+from crt.crtlib.manifest import resolve_and_load_manifest, store_manifest
 from crt.crtlib.patch import (
     PatchError,
     patch_add,
@@ -34,10 +36,10 @@ logger = parent_logger.getChild("patches")
 
 
 def _cmd_validate_version_wrapper(
-    allow_ces: bool,
+    allow_channel_prefix: bool,
 ) -> Callable[[click.Context, click.Parameter, str | None], str | None]:
-    with_ces_re = r"^(ces-.*v|v){1}(\d+|\d+\.\d+|\d+\.\d+\.\d+(-.+)*)$"
-    with_ceph_re = r"^v(\d+|\d+\.\d+|\d+\.\d+\.\d+)\+?$"
+    with_prefix_re = r"^([a-zA-Z][\w]*-.*v|v){1}(\d+|\d+\.\d+|\d+\.\d+\.\d+(-.+)*)$"
+    ceph_only_re = r"^v(\d+|\d+\.\d+|\d+\.\d+\.\d+)\+?$"
 
     def _cmd_validate_version(
         ctx: click.Context, param: click.Parameter, value: str | None
@@ -45,7 +47,7 @@ def _cmd_validate_version_wrapper(
         if not value:
             return None
 
-        match_re = with_ces_re if allow_ces else with_ceph_re
+        match_re = with_prefix_re if allow_channel_prefix else ceph_only_re
         if not re.match(match_re, value):
             raise click.BadParameter("malformed version", ctx, param)
         return value
@@ -185,14 +187,23 @@ def cmd_patch_add(
         sys.exit(errno.ENOENT)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}' in db")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
@@ -248,7 +259,7 @@ def cmd_patch_add(
         psuccess(f"patch sha '{sha}' added to manifest '{manifest_name_or_uuid}'")
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to write manifest '{manifest_name_or_uuid}' to db: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

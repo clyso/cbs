@@ -70,6 +70,7 @@ from crt.crtlib.patchset import (
     load_patchset,
     write_patchset,
 )
+from crt.crtlib.paths import patch_meta_dir, patches_dir
 
 logger = parent_logger.getChild("patchset")
 
@@ -424,7 +425,7 @@ def cmd_patchset_create(
 )
 @with_patches_repo_path
 def cmd_patchset_list(patches_repo_path: Path, patchset_types: list[str]) -> None:
-    meta_path = patches_repo_path / "ceph" / "patches" / "meta"
+    meta_path = patch_meta_dir(patches_repo_path)
 
     avail_types = [m.value for m in ManifestPatchSetEntryType]
     if patchset_types and any(t not in avail_types for t in patchset_types):
@@ -924,7 +925,7 @@ def cmd_patchset_migrate_store_format(patches_repo_path: Path) -> None:
         perror("provided path for patches repository is not a git repository")
         sys.exit(errno.EINVAL)
 
-    patches_path = patches_repo_path / "ceph" / "patches"
+    patches_path = patches_dir(patches_repo_path)
     if not patches_path.exists():
         pinfo(f"patches path does not exist at '{patches_path}', nothing to do")
         return
@@ -1031,7 +1032,7 @@ def cmd_patchset_migrate_store_format(patches_repo_path: Path) -> None:
 @cmd_patchset_advanced.command("migrate-single-patches", help="Migrate single patches.")
 @with_patches_repo_path
 def cmd_patchset_migrate_single_patches(patches_repo_path: Path) -> None:
-    meta_path = patches_repo_path / "ceph" / "patches" / "meta"
+    meta_path = patch_meta_dir(patches_repo_path)
 
     n_patchsets = 0
     for patchset_path in meta_path.glob("*.json"):

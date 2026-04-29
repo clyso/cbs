@@ -12,16 +12,20 @@
 # GNU General Public License for more details.
 
 
+import contextlib
 import re
 from datetime import datetime as dt
 from pathlib import Path
 from typing import cast
+
+from cbscore.versions.utils import parse_version
 
 from crt.crtlib.errors import CRTError
 from crt.crtlib.git_utils import SHA, GitError, git_format_patch, git_patch_id
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import AuthorData
 from crt.crtlib.models.patch import PatchInfo, PatchMeta
+from crt.crtlib.paths import patch_file, patch_meta_file
 from crt.crtlib.utils import split_version_into_paths
 
 logger = parent_logger.getChild("patch")
@@ -139,6 +143,7 @@ def patch_import(
     *,
     src_version: str | None = None,
     target_version: str | None = None,
+    channel_prefix: str | None = None,
 ) -> None:
     try:
         patch_id = git_patch_id(repo_path, sha)
@@ -167,26 +172,21 @@ def patch_import(
         info=patch_info,
     )
 
-    patch_path = patches_path.joinpath("patches").joinpath(
-        f"{patch_meta.entry_uuid}.patch"
-    )
-    patch_meta_path = (
-        patches_path.joinpath("patches")
-        .joinpath("meta")
-        .joinpath(f"{patch_meta.entry_uuid}.json")
-    )
+    p_path = patch_file(patches_path, str(patch_meta.entry_uuid))
+    p_meta_path = patch_meta_file(patches_path, str(patch_meta.entry_uuid))
+
     # FIXME: ensure patch sha is not duplicate, maybe with a symlink per sha
-    if patch_meta_path.exists():
+    if p_meta_path.exists():
         msg = f"patch uuid '{patch_meta.entry_uuid}' already imported"
         logger.warning(msg)
         raise PatchExistsError(msg=msg)
 
-    patch_meta_path.parent.mkdir(parents=True, exist_ok=True)
-    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    p_meta_path.parent.mkdir(parents=True, exist_ok=True)
+    p_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        _ = patch_path.write_text(formatted_patch)
-        _ = patch_meta_path.write_text(patch_meta.model_dump_json(indent=2))
+        _ = p_path.write_text(formatted_patch)
+        _ = p_meta_path.write_text(patch_meta.model_dump_json(indent=2))
     except Exception as e:
         msg = f"unable to write imported patch: {e}"
         logger.error(msg)
@@ -199,9 +199,11 @@ def patch_import(
             logger.error(msg)
             raise PatchError(msg=msg)
 
-        target_path = patches_path.joinpath("ces").joinpath(
-            next(reversed(target_paths))
-        )
+        if not channel_prefix and target_version:
+            with contextlib.suppress(ValueError):
+                channel_prefix, _, _, _, _ = parse_version(target_version)
+        prefix = channel_prefix or "vanilla"
+        target_path = patches_path / prefix / next(reversed(target_paths))
         target_path.mkdir(parents=True, exist_ok=True)
 
         existing_patches_it = target_path.glob("*.patch")
@@ -219,7 +221,7 @@ def patch_import(
         relative_to_root_path = patches_path.relative_to(target_path, walk_up=True)
         logger.debug(f"relative_to_root_path: {relative_to_root_path}")
 
-        patch_path_relative_to_root = patch_path.relative_to(patches_path)
+        patch_path_relative_to_root = p_path.relative_to(patches_path)
         logger.debug(f"patch path relative to root: {patch_path_relative_to_root}")
         relative_patch_path = relative_to_root_path.joinpath(
             patch_path_relative_to_root
@@ -264,29 +266,21 @@ def patch_add(
         src_version=src_version,
         info=patch_info,
     )
-    patch_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("patches")
-        .joinpath(f"{patch_meta.entry_uuid}.patch")
-    )
-    patch_meta_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("patches")
-        .joinpath("meta")
-        .joinpath(f"{patch_meta.entry_uuid}.json")
-    )
+    p_path = patch_file(patches_repo_path, str(patch_meta.entry_uuid))
+    p_meta_path = patch_meta_file(patches_repo_path, str(patch_meta.entry_uuid))
+
     # FIXME: ensure patch sha is not duplicate, maybe with a symlink per sha
-    if patch_meta_path.exists():
+    if p_meta_path.exists():
         msg = f"patch uuid '{patch_meta.entry_uuid}' already imported"
         logger.warning(msg)
         raise PatchExistsError(msg=msg)
 
-    patch_meta_path.parent.mkdir(parents=True, exist_ok=True)
-    patch_path.parent.mkdir(parents=True, exist_ok=True)
+    p_meta_path.parent.mkdir(parents=True, exist_ok=True)
+    p_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        _ = patch_path.write_text(formatted_patch)
-        _ = patch_meta_path.write_text(patch_meta.model_dump_json(indent=2))
+        _ = p_path.write_text(formatted_patch)
+        _ = p_meta_path.write_text(patch_meta.model_dump_json(indent=2))
     except Exception as e:
         msg = f"unable to write imported patch: {e}"
         logger.error(msg)

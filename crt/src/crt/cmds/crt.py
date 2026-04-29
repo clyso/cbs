@@ -76,7 +76,7 @@ logger = parent_logger.getChild("crt")
     ),
     envvar="CRT_PATCHES_REPO_PATH",
     required=True,
-    help="Path to CES patches git repository.",
+    help="Path to the CRT store git repository.",
 )
 @click.option(
     "-l",

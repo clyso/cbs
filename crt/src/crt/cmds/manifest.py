@@ -31,7 +31,9 @@ from rich.table import Table
 
 from crt.cmds._common import CRTExitError, CRTProgress, get_stage_rdr
 from crt.crtlib.apply import ApplyConflictError, ApplyError, patches_apply_to_manifest
+from crt.crtlib.config import CrtStoreConfig, get_branding, load_config, resolve_channel
 from crt.crtlib.errors import CRTError
+from crt.crtlib.errors.config import AmbiguousChannelError, ChannelNotFoundError
 from crt.crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
@@ -51,13 +53,13 @@ from crt.crtlib.github import gh_get_pr
 from crt.crtlib.manifest import (
     ManifestExecuteResult,
     list_manifests,
-    load_manifest_by_name_or_uuid,
     manifest_execute,
     manifest_exists,
     manifest_publish_branch,
     manifest_publish_stages,
     manifest_release_notes,
     remove_manifest,
+    resolve_and_load_manifest,
     store_manifest,
 )
 from crt.crtlib.models.common import ManifestPatchEntry
@@ -70,7 +72,8 @@ from crt.crtlib.patchset import (
     patchset_from_gh_needs_update,
     patchset_get_gh,
 )
-from crt.crtlib.release import load_release
+from crt.crtlib.paths import release_notes_dir
+from crt.crtlib.release import resolve_and_load_release
 
 from . import (
     Ctx,
@@ -142,18 +145,26 @@ def cmd_manifest_new(
     name: str,
     release_name: str,
 ) -> None:
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     # strict check on release manifest name:
-    # required prefix - ces or ccs
+    # required channel prefix (resolved from config)
     # required major, minor, patch
     # required suffix - must be a development version
     try:
-        v_prefix, _, v_minor, v_patch, v_suffix = parse_version(name)
+        _v_prefix, _, v_minor, v_patch, v_suffix = parse_version(name)
     except ValueError:
         perror(f"malformed manifest name '{name}'")
         sys.exit(errno.EINVAL)
 
-    if v_prefix not in ("ces", "ccs"):
-        perror(f"manifest name '{name}' must start with 'ces' or 'ccs'")
+    try:
+        ns, channel, _ = resolve_channel(store_config, name)
+    except (ChannelNotFoundError, AmbiguousChannelError) as e:
+        perror(f"invalid manifest name prefix: {e}")
         sys.exit(errno.EINVAL)
 
     if not v_minor or not v_patch or not v_suffix:
@@ -161,10 +172,23 @@ def cmd_manifest_new(
         sys.exit(errno.EINVAL)
 
     try:
-        release = load_release(patches_repo_path, release_name)
+        release_ns, release_channel, release = resolve_and_load_release(
+            patches_repo_path, store_config, release_name
+        )
+    except (ChannelNotFoundError, AmbiguousChannelError) as e:
+        perror(f"invalid release name prefix: {e}")
+        sys.exit(errno.EINVAL)
     except NoSuchReleaseError:
         perror(f"unable to find release '{release_name}'")
         sys.exit(errno.ENOENT)
+
+    if (ns, channel) != (release_ns, release_channel):
+        perror(
+            f"manifest '{name}' resolves to {ns}/{channel}, "
+            + f"but release '{release_name}' resolves to "
+            + f"{release_ns}/{release_channel}"
+        )
+        sys.exit(errno.EINVAL)
 
     repo_re = re.compile(r"([\w\d_.-]+)/([\w\d_.-]+)")
     base_repo_m = re.match(repo_re, release.release_repo)
@@ -185,7 +209,7 @@ def cmd_manifest_new(
     )
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except ManifestError as e:
         perror(f"unable to create manifest: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -207,21 +231,39 @@ def cmd_manifest_new(
 )
 @with_patches_repo_path
 def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> None:
-    if manifest_exists(patches_repo_path, manifest_name=name):
-        perror(f"manifest name '{name}' already exists")
-        sys.exit(errno.EEXIST)
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        new_manifest = load_manifest_by_name_or_uuid(patches_repo_path, name_or_uuid)
+        _, _, new_manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, name_or_uuid
+        )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{name_or_uuid}'")
         sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    # Resolve destination ns/channel from the new name, not the source.
+    try:
+        dst_ns, dst_channel, _ = resolve_channel(store_config, name)
+    except (ChannelNotFoundError, AmbiguousChannelError) as e:
+        perror(f"invalid destination name prefix: {e}")
+        sys.exit(errno.EINVAL)
+
+    if manifest_exists(patches_repo_path, dst_ns, dst_channel, manifest_name=name):
+        perror(f"manifest name '{name}' already exists")
+        sys.exit(errno.EEXIST)
 
     old_uuid = new_manifest.release_uuid
     old_name = new_manifest.name
@@ -237,7 +279,7 @@ def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> 
         stage.is_published = False
 
     try:
-        store_manifest(patches_repo_path, new_manifest)
+        store_manifest(patches_repo_path, dst_ns, dst_channel, new_manifest)
     except ManifestError as e:
         perror(f"unable to create new manifest '{name}' from '{name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -255,6 +297,27 @@ def cmd_manifest_from(patches_repo_path: Path, name_or_uuid: str, name: str) -> 
 @click.confirmation_option(prompt="Really remove manifest?")
 @with_patches_repo_path
 def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    # Resolve ns/channel first so we know where to look
+    try:
+        ns, channel, _ = resolve_and_load_manifest(
+            patches_repo_path, store_config, name_or_uuid
+        )
+    except NoSuchManifestError:
+        perror(f"unable to find manifest '{name_or_uuid}'")
+        sys.exit(errno.ENOENT)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
+    except Exception as e:
+        perror(f"unable to load manifest '{name_or_uuid}': {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     manifest_uuid: uuid.UUID | None = None
     manifest_name: str | None = None
 
@@ -265,7 +328,11 @@ def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
 
     try:
         rm_uuid, rm_name = remove_manifest(
-            patches_repo_path, manifest_uuid=manifest_uuid, manifest_name=manifest_name
+            patches_repo_path,
+            ns,
+            channel,
+            manifest_uuid=manifest_uuid,
+            manifest_name=manifest_name,
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{name_or_uuid}'")
@@ -281,10 +348,19 @@ def cmd_manifest_remove(patches_repo_path: Path, name_or_uuid: str) -> None:
 @with_patches_repo_path
 def cmd_manifest_list(patches_repo_path: Path) -> None:
     try:
-        manifest_lst = list_manifests(patches_repo_path)
-    except ManifestError as e:
-        perror(f"unable to list manifests: {e}")
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
+
+    manifest_lst: list[ReleaseManifest] = []
+    for ns_name, ns_config in store_config.namespaces.items():
+        for ch_name in ns_config.channels:
+            try:
+                manifest_lst.extend(list_manifests(patches_repo_path, ns_name, ch_name))
+            except ManifestError as e:
+                perror(f"unable to list manifests for {ns_name}/{ch_name}: {e}")
+                sys.exit(errno.ENOTRECOVERABLE)
 
     for entry in manifest_lst:
         table = _gen_rich_manifest_table(entry)
@@ -321,23 +397,37 @@ def cmd_manifest_info(
     manifest_name_or_uuid: str | None,
     extended_info: bool,
 ) -> None:
+    try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
     manifest_lst: list[ReleaseManifest] = []
 
     if manifest_name_or_uuid:
         try:
-            manifest_lst.append(
-                load_manifest_by_name_or_uuid(patches_repo_path, manifest_name_or_uuid)
+            _, _, manifest = resolve_and_load_manifest(
+                patches_repo_path, store_config, manifest_name_or_uuid
             )
+            manifest_lst.append(manifest)
+        except AmbiguousChannelError as e:
+            perror(f"ambiguous channel prefix: {e}")
+            sys.exit(errno.EINVAL)
         except Exception as e:
             perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
 
     else:
-        try:
-            manifest_lst = list_manifests(patches_repo_path)
-        except ManifestError as e:
-            perror(f"unable to obtain manifest list: {e}")
-            sys.exit(errno.ENOTRECOVERABLE)
+        for ns_name, ns_config in store_config.namespaces.items():
+            for ch_name in ns_config.channels:
+                try:
+                    manifest_lst.extend(
+                        list_manifests(patches_repo_path, ns_name, ch_name)
+                    )
+                except ManifestError as e:
+                    perror(f"unable to obtain manifest list: {e}")
+                    sys.exit(errno.ENOTRECOVERABLE)
 
     for manifest in manifest_lst:
         table = _gen_rich_manifest_table(manifest)
@@ -574,14 +664,23 @@ def cmd_manifest_add_patchset(
     _check_repo(ceph_repo_path, "ceph")
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}' in db")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
@@ -678,7 +777,7 @@ def cmd_manifest_add_patchset(
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to write manifest '{manifest_name_or_uuid}' to db: {e}")
         progress.stop()
@@ -766,6 +865,8 @@ def _manifest_execute(
 def _manifest_publish(
     ceph_repo_path: Path,
     patches_repo_path: Path,
+    ns: str,
+    channel: str,
     manifest: ReleaseManifest,
     our_branch: str,
     branch_prefix: str,
@@ -775,7 +876,7 @@ def _manifest_publish(
 
     progress.new_task("publishing manifest stages")
     try:
-        n_patches = manifest_publish_stages(patches_repo_path, manifest)
+        n_patches = manifest_publish_stages(patches_repo_path, ns, channel, manifest)
     except ManifestError as e:
         progress.error_task()
         perror(f"unable to publish manifest stages: {e}")
@@ -802,7 +903,7 @@ def _manifest_publish(
     logger.debug(f"set manifest '{manifest.name}' dest branch to '{dst_branch}'")
     manifest.dst_branch = dst_branch
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except ManifestError as e:
         progress.error_task()
         perror(f"unable to store manifest after publishing: {e}")
@@ -868,14 +969,23 @@ def cmd_manifest_validate(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        _, _, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
@@ -955,14 +1065,23 @@ def cmd_manifest_publish(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
@@ -979,6 +1098,9 @@ def cmd_manifest_publish(
         _prepare_release_repo(
             ceph_repo_path,
             patches_repo_path,
+            store_config,
+            ns,
+            channel,
             manifest,
             release_name,
             ctx.github_token,
@@ -1009,6 +1131,8 @@ def cmd_manifest_publish(
         publish_summary = _manifest_publish(
             ceph_repo_path,
             patches_repo_path,
+            ns,
+            channel,
             manifest,
             execute_res.target_branch,
             release_branch_prefix,
@@ -1075,22 +1199,44 @@ def cmd_manifest_release_notes(
     assume_yes: bool,
 ) -> None:
     try:
-        manifest = load_manifest_by_name_or_uuid(patches_repo_path, name_or_uuid)
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, name_or_uuid
+        )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{name_or_uuid}'")
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{name_or_uuid}'")
         sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
-    txt = manifest_release_notes(manifest, image_loc=image_loc, cephadm_loc=cephadm_loc)
+    try:
+        branding = get_branding(store_config, manifest.name)
+    except Exception:
+        branding = None
+
+    txt = manifest_release_notes(
+        manifest,
+        image_loc=image_loc,
+        cephadm_loc=cephadm_loc,
+        branding=branding,
+    )
     if to_stdout:
         print(txt)
 
-    dst_path = patches_repo_path / "release-notes" / f"{manifest.name}.md"
+    notes_dir = release_notes_dir(patches_repo_path, ns, channel)
+    dst_path = notes_dir / f"{manifest.name}.md"
     if (
         dst_path.exists()
         and not assume_yes
@@ -1133,15 +1279,24 @@ def cmd_manifest_update(patches_repo_path: Path, manifest_name_or_uuid: str) -> 
     pwarn(f"updating on-disk representation of manifest '{manifest_name_or_uuid}'")
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to load manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to store manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -1151,12 +1306,27 @@ def cmd_manifest_update(patches_repo_path: Path, manifest_name_or_uuid: str) -> 
 
 def _prepare_release_repo(
     ceph_repo_path: Path,
-    ces_patch_path: Path,
+    patches_repo_path: Path,
+    store_config: CrtStoreConfig,
+    manifest_ns: str,
+    manifest_channel: str,
     manifest: ReleaseManifest,
     release_name: str,
     token: str,
 ) -> None:
     try:
+        release_ns, release_channel, release = resolve_and_load_release(
+            patches_repo_path, store_config, release_name
+        )
+        if (manifest_ns, manifest_channel) != (release_ns, release_channel):
+            msg = (
+                f"manifest '{manifest.name}' resolves to "
+                + f"{manifest_ns}/{manifest_channel}, but release "
+                + f"'{release_name}' resolves to "
+                + f"{release_ns}/{release_channel}"
+            )
+            raise ReleaseError(msg)
+
         release_branch_name = manifest.base_ref
         release_tag_name = release_branch_name.replace("/", "-")
         remote_name = manifest.dst_repo
@@ -1168,7 +1338,6 @@ def _prepare_release_repo(
             pinfo("release repo already prepared")
             return
 
-        release = load_release(ces_patch_path, release_name)
         release_repo_name = release.base_repo
 
         git_prepare_remote(

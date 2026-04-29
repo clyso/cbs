@@ -47,6 +47,7 @@ from crt.crtlib.models.patchset import (
     PatchSetBase,
 )
 from crt.crtlib.patch import PatchError, parse_formatted_patch_info, patch_import
+from crt.crtlib.paths import patch_file, patch_index_pr_dir, patch_meta_file
 
 logger = parent_logger.getChild("patchset")
 
@@ -85,12 +86,7 @@ def load_patchset(
     patches_repo_path: Path, patchset_uuid: uuid.UUID
 ) -> ManifestPatchEntry:
     """Load a patch set from the patches repository by its UUID."""
-    patchset_meta_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("patches")
-        .joinpath("meta")
-        .joinpath(f"{patchset_uuid}.json")
-    )
+    patchset_meta_path = patch_meta_file(patches_repo_path, str(patchset_uuid))
     if not patchset_meta_path.exists():
         msg = f"missing patch set meta for uuid '{patchset_uuid}'"
         logger.error(msg)
@@ -115,7 +111,7 @@ def load_patchset(
 
 
 def get_patchset_meta_path(patches_repo_path: Path, patchset_uuid: uuid.UUID) -> Path:
-    return patches_repo_path / "ceph" / "patches" / "meta" / f"{patchset_uuid}.json"
+    return patch_meta_file(patches_repo_path, str(patchset_uuid))
 
 
 ManifestPatchEntryTypes = GitHubPullRequest | PatchMeta | CustomPatchSet
@@ -165,12 +161,7 @@ def patchset_get_gh(
 ) -> GitHubPullRequest:
     """Obtain a github pull request's latest meta file from the patches repository."""
     patchset_pr_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("patches")
-        .joinpath(repo_owner)
-        .joinpath(repo_name)
-        .joinpath(str(pr_id))
-        .joinpath("latest")
+        patch_index_pr_dir(patches_repo_path, repo_owner, repo_name, pr_id) / "latest"
     )
     if not patchset_pr_path.exists():
         raise NoSuchPatchSetError()
@@ -194,12 +185,7 @@ def patchset_get_gh(
         logger.error(msg)
         raise PatchSetError(msg=msg) from None
 
-    patchset_meta_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("patches")
-        .joinpath("meta")
-        .joinpath(f"{patchset_uuid}.json")
-    )
+    patchset_meta_path = patch_meta_file(patches_repo_path, str(patchset_uuid))
     if not patchset_meta_path.exists():
         msg = f"missing patch set meta for uuid '{patchset_uuid}'"
         logger.error(msg)
@@ -237,19 +223,12 @@ def patchset_fetch_gh_patches(
     repo_path = f"{patchset.org_name}/{patchset.repo_name}"
     pr_id = patchset.pull_request_id
 
-    patchset_pr_dir_path = (
-        patches_repo_path
-        / "ceph"
-        / "patches"
-        / patchset.org_name
-        / patchset.repo_name
-        / str(pr_id)
+    patchset_pr_dir_path = patch_index_pr_dir(
+        patches_repo_path, patchset.org_name, patchset.repo_name, pr_id
     )
     patchset_pr_dir_path.mkdir(exist_ok=True, parents=True)
 
-    patchset_path = (
-        patches_repo_path / "ceph" / "patches" / f"{patchset.entry_uuid}.patch"
-    )
+    patchset_path = patch_file(patches_repo_path, str(patchset.entry_uuid))
     patchset_path.parent.mkdir(exist_ok=True, parents=True)
 
     # check if the pull request's head patch already exists.
@@ -360,9 +339,7 @@ def fetch_custom_patchset_patches(
     if not patchset.patches_meta:
         raise PatchSetError(msg="empty custom patch set")
 
-    patchset_path = (
-        patches_repo_path / "ceph" / "patches" / f"{patchset.entry_uuid}.patch"
-    )
+    patchset_path = patch_file(patches_repo_path, str(patchset.entry_uuid))
     if patchset_path.exists():
         msg = f"custom patch set '{patchset.entry_uuid}' already exists"
         logger.error(msg)

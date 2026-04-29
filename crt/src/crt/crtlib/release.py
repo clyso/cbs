@@ -15,13 +15,22 @@ from pathlib import Path
 
 import pydantic
 
+from crt.crtlib.config import CrtStoreConfig, resolve_channel
 from crt.crtlib.errors.release import NoSuchReleaseError, ReleaseError
+from crt.crtlib.git_utils import (
+    GitCreateHeadExistsError,
+    git_branch_from,
+    git_checkout_ref,
+)
 from crt.crtlib.models.release import Release
+from crt.crtlib.paths import release_branch_name, release_path
 
 
-def load_release(patches_repo_path: Path, release_name: str) -> Release:
+def load_release(
+    patches_repo_path: Path, ns: str, channel: str, release_name: str
+) -> Release:
     """Load a release from disk."""
-    rel_meta_path = patches_repo_path / "ceph" / "releases" / f"{release_name}.json"
+    rel_meta_path = release_path(patches_repo_path, ns, channel, release_name)
     if not rel_meta_path.exists():
         raise NoSuchReleaseError(release_name)
 
@@ -33,9 +42,11 @@ def load_release(patches_repo_path: Path, release_name: str) -> Release:
         raise ReleaseError(f"cannot read release file '{rel_meta_path}': {e}") from e
 
 
-def store_release(patches_repo_path: Path, release: Release) -> None:
+def store_release(
+    patches_repo_path: Path, ns: str, channel: str, release: Release
+) -> None:
     """Store a release to disk."""
-    rel_meta_path = patches_repo_path / "ceph" / "releases" / f"{release.name}.json"
+    rel_meta_path = release_path(patches_repo_path, ns, channel, release.name)
     try:
         rel_meta_path.parent.mkdir(parents=True, exist_ok=True)
         _ = rel_meta_path.write_text(
@@ -45,7 +56,32 @@ def store_release(patches_repo_path: Path, release: Release) -> None:
         raise ReleaseError(f"cannot write release file '{rel_meta_path}': {e}") from e
 
 
-def release_exists(patches_repo_path: Path, release_name: str) -> bool:
+def release_exists(
+    patches_repo_path: Path, ns: str, channel: str, release_name: str
+) -> bool:
     """Check if a release exists on disk."""
-    rel_meta_path = patches_repo_path / "ceph" / "releases" / f"{release_name}.json"
+    rel_meta_path = release_path(patches_repo_path, ns, channel, release_name)
     return rel_meta_path.exists()
+
+
+def resolve_and_load_release(
+    patches_repo_path: Path, config: CrtStoreConfig, release_name: str
+) -> tuple[str, str, Release]:
+    """Load a release, resolving ns/channel from the release name."""
+    ns, channel, _ = resolve_channel(config, release_name)
+    return (ns, channel, load_release(patches_repo_path, ns, channel, release_name))
+
+
+def create_release_branch(
+    store_repo_path: Path, ns: str, release_name: str, src_ref: str = "main"
+) -> str:
+    """Create a release branch in the CRT store repository."""
+    branch = release_branch_name(ns, release_name)
+    try:
+        git_branch_from(store_repo_path, src_ref, branch)
+        git_checkout_ref(store_repo_path, branch)
+    except GitCreateHeadExistsError:
+        git_checkout_ref(store_repo_path, branch)
+    except Exception as e:
+        raise ReleaseError(f"cannot create release branch '{branch}': {e}") from e
+    return branch

@@ -20,13 +20,15 @@ import click
 from rich.padding import Padding
 
 from crt.cmds._common import get_stage_rdr, get_stage_summary_rdr
+from crt.crtlib.config import load_config
+from crt.crtlib.errors.config import AmbiguousChannelError
 from crt.crtlib.errors.manifest import (
     MalformedManifestError,
     NoStageError,
     NoSuchManifestError,
 )
 from crt.crtlib.errors.stages import MalformedStageTagError, StageError
-from crt.crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
+from crt.crtlib.manifest import resolve_and_load_manifest, store_manifest
 from crt.crtlib.models.common import AuthorData
 from crt.crtlib.models.manifest import ManifestStage
 from crt.crtlib.utils import get_tags
@@ -108,14 +110,20 @@ def cmd_manifest_stage_new(
     )
 
     try:
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
         tags = get_tags(stage_tags)
     except MalformedStageTagError as e:
         perror(f"malformed stage tag: {e}")
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(
@@ -125,6 +133,9 @@ def cmd_manifest_stage_new(
         sys.exit(errno.ENOENT)
     except MalformedManifestError:
         perror(f"malformed manifest '{manifest_name_or_uuid}'")
+        sys.exit(errno.EINVAL)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
         sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
@@ -146,7 +157,7 @@ def cmd_manifest_stage_new(
     _show_stage_summary(stage)
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -189,12 +200,21 @@ def cmd_manifest_stage_info(
     extended_info: bool,
 ) -> None:
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        _, _, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -280,12 +300,21 @@ def cmd_manifest_stage_amend(
         sys.exit(errno.EINVAL)
 
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -318,7 +347,7 @@ def cmd_manifest_stage_amend(
         stage.tags = tags
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -351,12 +380,21 @@ def cmd_manifest_stage_remove(
     patches_repo_path: Path, manifest_name_or_uuid: str, stage_uuid: uuid.UUID
 ) -> None:
     try:
-        manifest = load_manifest_by_name_or_uuid(
-            patches_repo_path, manifest_name_or_uuid
+        store_config = load_config(patches_repo_path)
+    except Exception as e:
+        perror(f"unable to load store config: {e}")
+        sys.exit(errno.ENOTRECOVERABLE)
+
+    try:
+        ns, channel, manifest = resolve_and_load_manifest(
+            patches_repo_path, store_config, manifest_name_or_uuid
         )
     except NoSuchManifestError:
         perror(f"unable to find manifest '{manifest_name_or_uuid}'")
         sys.exit(errno.ENOENT)
+    except AmbiguousChannelError as e:
+        perror(f"ambiguous channel prefix: {e}")
+        sys.exit(errno.EINVAL)
     except Exception as e:
         perror(f"unable to obtain manifest '{manifest_name_or_uuid}': {e}")
         sys.exit(errno.ENOTRECOVERABLE)
@@ -368,7 +406,7 @@ def cmd_manifest_stage_remove(
         sys.exit(errno.ENOENT)
 
     try:
-        store_manifest(patches_repo_path, manifest)
+        store_manifest(patches_repo_path, ns, channel, manifest)
     except Exception as e:
         perror(f"unable to write manifest to disk: {e}")
         sys.exit(errno.ENOTRECOVERABLE)

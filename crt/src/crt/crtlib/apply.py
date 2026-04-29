@@ -32,6 +32,7 @@ from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
 from crt.crtlib.patch import PatchExistsError
+from crt.crtlib.paths import patch_file
 
 logger = parent_logger.getChild("apply")
 
@@ -172,11 +173,7 @@ def apply_manifest(
         for entry in patches:
             logger.debug(f"apply patch uuid '{entry.entry_uuid}'")
 
-            patch_path = (
-                patches_repo_path.joinpath("ceph")
-                .joinpath("patches")
-                .joinpath(f"{entry.entry_uuid}.patch")
-            )
+            patch_path = patch_file(patches_repo_path, str(entry.entry_uuid))
             if not patch_path.exists():
                 raise ApplyError(msg=f"missing patch uuid '{entry.entry_uuid}'")
 

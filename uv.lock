@@ -706,23 +706,29 @@ version = "0.1.0"
 source = { editable = "crt" }
 dependencies = [
     { name = "boto3" },
+    { name = "cbscore" },
     { name = "click" },
     { name = "gitpython" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "types-boto3", extra = ["s3"] },
+    { name = "types-pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = "==1.35.81" },
+    { name = "cbscore", editable = "cbscore" },
     { name = "click", specifier = ">=8.1.8" },
     { name = "gitpython", specifier = ">=3.1.44" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "types-boto3", extras = ["s3"], specifier = "==1.35.81" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]
@@ -1789,6 +1795,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5a/ee/f3fe35eb0d12d308d3029baa464f1d9a308250d1ff132231edb9e19c44e9/types_boto3_s3-1.35.93.tar.gz", hash = "sha256:fe2121fb231dac53e9ee65f82c2823bdd4024eadc72196470461a149da13003a", size = 72531, upload-time = "2025-01-06T23:42:41.468Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/e7/dbb7a59f003da301ec070a7b6c1e2d285a4dcda8bebfa720fa1edf4a7505/types_boto3_s3-1.35.93-py3-none-any.whl", hash = "sha256:b6fb9b268aec947771c9f865f205be62371cc9c7662ed04bb58916d5603d6d37", size = 79318, upload-time = "2025-01-06T23:42:38.735Z" },
+]
+
+[[package]]
+name = "types-pyyaml"
+version = "6.0.12.20260408"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/73/b759b1e413c31034cc01ecdfb96b38115d0ab4db55a752a3929f0cd449fd/types_pyyaml-6.0.12.20260408.tar.gz", hash = "sha256:92a73f2b8d7f39ef392a38131f76b970f8c66e4c42b3125ae872b7c93b556307", size = 17735, upload-time = "2026-04-08T04:30:50.974Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/f0/c391068b86abb708882c6d75a08cd7d25b2c7227dab527b3a3685a3c635b/types_pyyaml-6.0.12.20260408-py3-none-any.whl", hash = "sha256:fbc42037d12159d9c801ebfcc79ebd28335a7c13b08a4cfbc6916df78fee9384", size = 20339, upload-time = "2026-04-08T04:30:50.113Z" },
 ]
 
 [[package]]

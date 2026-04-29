@@ -32,6 +32,7 @@ from crt.crtlib.models.discriminator import ManifestPatchEntryWrapper
 from crt.crtlib.models.manifest import ManifestStage
 from crt.crtlib.models.patch import Patch
 from crt.crtlib.models.patchset import CustomPatchSet, GitHubPullRequest
+from crt.crtlib.paths import patch_meta_file
 
 
 def get_stage_summary_rdr(stage: ManifestStage) -> RenderableType:
@@ -95,12 +96,7 @@ def _get_stage_patchset(
     patches_tree_lst: list[RenderableType] = []
     for patch in patches:
         contents = patch.contents
-        patch_meta_path = (
-            patches_repo_path.joinpath("ceph")
-            .joinpath("patches")
-            .joinpath("meta")
-            .joinpath(f"{contents.entry_uuid}.json")
-        )
+        patch_meta_path = patch_meta_file(patches_repo_path, str(contents.entry_uuid))
 
         if not patch_meta_path.exists():
             perror(f"missing patch set uuid '{contents.entry_uuid}")

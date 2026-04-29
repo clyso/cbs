@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import cast
 
 import pydantic
-from cbscore.versions.utils import parse_version
 
 from crt.crtlib.apply import ApplyError, apply_manifest
+from crt.crtlib.config import BrandingConfig, CrtStoreConfig, resolve_channel
 from crt.crtlib.errors import CRTError
+from crt.crtlib.errors.config import ChannelNotFoundError
 from crt.crtlib.errors.manifest import (
     MalformedManifestError,
     ManifestError,
@@ -51,6 +52,12 @@ from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
 from crt.crtlib.models.patch import Patch, PatchMeta
 from crt.crtlib.models.patchset import GitHubPullRequest
+from crt.crtlib.paths import (
+    manifest_by_name_dir,
+    manifest_dir,
+    patch_file,
+    published_dir,
+)
 from crt.crtlib.utils import split_version_into_paths
 
 logger = parent_logger.getChild("manifest")
@@ -105,9 +112,11 @@ def _prepare_repo(
             raise ManifestError(uuid=manifest_uuid, msg=msg) from None
         except GitFetchHeadNotFoundError:
             # does not exist in the provided remote.
-            logger.debug(
-                f"branch '{target_branch}' does not exist in remote '{push_remote_name}'"
+            msg = (
+                f"branch '{target_branch}' does not exist "
+                + f"in remote '{push_remote_name}'"
             )
+            logger.debug(msg)
         except GitFetchError as e:
             msg = f"unable to fetch '{target_branch}' from '{push_remote_name}': {e}"
             logger.error(msg)
@@ -232,6 +241,8 @@ def manifest_execute(
 
 def manifest_publish_stages(
     patches_repo_path: Path,
+    ns: str,
+    channel: str,
     manifest: ReleaseManifest,
 ) -> int:
     """
@@ -247,19 +258,7 @@ def manifest_publish_stages(
         )
     end_path = next(iter(reversed(version_paths)))
 
-    try:
-        version_prefix, _, _, _, _ = parse_version(manifest.name)
-    except ValueError:
-        msg = f"invalid version in manifest name '{manifest.name}'"
-        logger.error(msg)
-        raise ManifestError(
-            uuid=manifest.release_uuid, name=manifest.name, msg=msg
-        ) from None
-
-    if not version_prefix:
-        version_prefix = "vanilla"
-
-    version_path = patches_repo_path / version_prefix / end_path
+    version_path = published_dir(patches_repo_path, ns, channel) / end_path
 
     if version_path.exists():
         if not version_path.is_dir():
@@ -281,11 +280,7 @@ def manifest_publish_stages(
         for p in stage.patches:
             patch = p.contents
 
-            patch_path = (
-                patches_repo_path.joinpath("ceph")
-                .joinpath("patches")
-                .joinpath(f"{patch.entry_uuid}.patch")
-            )
+            patch_path = patch_file(patches_repo_path, str(patch.entry_uuid))
             if not patch_path.exists():
                 msg = f"missing patch for uuid '{patch.entry_uuid}'"
                 logger.error(msg)
@@ -308,7 +303,7 @@ def manifest_publish_stages(
 
         stage.is_published = True
 
-    store_manifest(patches_repo_path, manifest)
+    store_manifest(patches_repo_path, ns, channel, manifest)
 
     return patch_n
 
@@ -369,6 +364,8 @@ def manifest_publish_branch(
 
 def manifest_exists(
     patches_repo_path: Path,
+    ns: str,
+    channel: str,
     *,
     manifest_uuid: uuid.UUID | None = None,
     manifest_name: str | None = None,
@@ -376,15 +373,24 @@ def manifest_exists(
     if not manifest_uuid and not manifest_name:
         raise CRTError("either uuid or name must be provided")
 
-    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
     if manifest_uuid:
-        return base_path.joinpath(f"{manifest_uuid}.json").exists()
+        return (
+            manifest_dir(patches_repo_path, ns, channel)
+            .joinpath(f"{manifest_uuid}.json")
+            .exists()
+        )
     else:
-        return base_path.joinpath(f"{manifest_name}.json").exists()
+        return (
+            manifest_by_name_dir(patches_repo_path, ns, channel)
+            .joinpath(f"{manifest_name}.json")
+            .exists()
+        )
 
 
 def remove_manifest(
     patches_repo_path: Path,
+    ns: str,
+    channel: str,
     *,
     manifest_uuid: uuid.UUID | None = None,
     manifest_name: str | None = None,
@@ -392,23 +398,27 @@ def remove_manifest(
     if not manifest_uuid and not manifest_name:
         raise CRTError("either uuid or name must be provided")
 
-    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+    base_path = manifest_dir(patches_repo_path, ns, channel)
     manifest_uuid_path: Path | None = None
     manifest_name_path: Path | None = None
 
     if manifest_name:
         try:
-            manifest = load_manifest_by_name(patches_repo_path, manifest_name)
+            manifest = load_manifest_by_name(
+                patches_repo_path, ns, channel, manifest_name
+            )
         except Exception as e:
             raise e from None
     else:
         assert manifest_uuid
         try:
-            manifest = load_manifest(patches_repo_path, manifest_uuid)
+            manifest = load_manifest(patches_repo_path, ns, channel, manifest_uuid)
         except Exception as e:
             raise e from None
 
-    manifest_name_path = base_path / "by_name" / f"{manifest.name}.json"
+    manifest_name_path = (
+        manifest_by_name_dir(patches_repo_path, ns, channel) / f"{manifest.name}.json"
+    )
     if manifest_name_path.exists():
         manifest_name_path.unlink()
 
@@ -418,12 +428,12 @@ def remove_manifest(
     return (manifest.release_uuid, manifest.name)
 
 
-def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseManifest:
+def load_manifest(
+    patches_repo_path: Path, ns: str, channel: str, manifest_uuid: uuid.UUID
+) -> ReleaseManifest:
     logger.debug(f"load manifest uuid '{manifest_uuid}'")
     manifest_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("manifests")
-        .joinpath(f"{manifest_uuid}.json")
+        manifest_dir(patches_repo_path, ns, channel) / f"{manifest_uuid}.json"
     )
     if not manifest_path.exists():
         logger.error(f"manifest uuid '{manifest_uuid}' does not exist")
@@ -437,13 +447,12 @@ def load_manifest(patches_repo_path: Path, manifest_uuid: uuid.UUID) -> ReleaseM
         raise MalformedManifestError(uuid=manifest_uuid) from None
 
 
-def load_manifest_by_name(patches_repo_path: Path, name: str) -> ReleaseManifest:
+def load_manifest_by_name(
+    patches_repo_path: Path, ns: str, channel: str, name: str
+) -> ReleaseManifest:
     logger.debug(f"load manifest by name '{name}'")
     manifest_path = (
-        patches_repo_path.joinpath("ceph")
-        .joinpath("manifests")
-        .joinpath("by_name")
-        .joinpath(f"{name}.json")
+        manifest_by_name_dir(patches_repo_path, ns, channel) / f"{name}.json"
     )
     if not manifest_path.exists():
         logger.error(f"manifest name '{name}' does not exist")
@@ -457,7 +466,7 @@ def load_manifest_by_name(patches_repo_path: Path, name: str) -> ReleaseManifest
 
 
 def load_manifest_by_name_or_uuid(
-    patches_repo_path: Path, what: str
+    patches_repo_path: Path, ns: str, channel: str, what: str
 ) -> ReleaseManifest:
     logger.debug(f"load manifest by name or uuid '{what}'")
     manifest_uuid: uuid.UUID | None = None
@@ -470,18 +479,52 @@ def load_manifest_by_name_or_uuid(
         manifest_name = what
 
     if manifest_uuid:
-        return load_manifest(patches_repo_path, manifest_uuid)
+        return load_manifest(patches_repo_path, ns, channel, manifest_uuid)
     elif manifest_name:
-        return load_manifest_by_name(patches_repo_path, manifest_name)
+        return load_manifest_by_name(patches_repo_path, ns, channel, manifest_name)
     else:
         raise CRTError("either uuid or name must be provided")
 
 
-def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
+def resolve_and_load_manifest(
+    patches_repo_path: Path, config: CrtStoreConfig, what: str
+) -> tuple[str, str, ReleaseManifest]:
+    """Load a manifest by name or UUID, resolving ns/channel from config."""
+    try:
+        manifest_uuid = uuid.UUID(what)
+    except ValueError:
+        manifest_uuid = None
+
+    if manifest_uuid is None:
+        # It's a name — resolve ns/channel from the channel prefix
+        try:
+            ns, channel, _ = resolve_channel(config, what)
+        except ChannelNotFoundError:
+            raise NoSuchManifestError(name=what) from None
+        manifest = load_manifest_by_name(patches_repo_path, ns, channel, what)
+        return (ns, channel, manifest)
+
+    # It's a UUID — scan all ns/channel directories
+    for ns_name, ns_config in config.namespaces.items():
+        for ch_name in ns_config.channels:
+            try:
+                m = load_manifest(patches_repo_path, ns_name, ch_name, manifest_uuid)
+            except NoSuchManifestError:
+                continue
+            else:
+                return (ns_name, ch_name, m)
+    raise NoSuchManifestError(uuid=manifest_uuid)
+
+
+def store_manifest(
+    patches_repo_path: Path, ns: str, channel: str, manifest: ReleaseManifest
+) -> None:
     logger.debug(f"store manifest uuid '{manifest.release_uuid}'")
-    base_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
-    manifest_uuid_path = base_path.joinpath(f"{manifest.release_uuid}.json")
-    manifest_name_path = base_path.joinpath("by_name").joinpath(f"{manifest.name}.json")
+    base_path = manifest_dir(patches_repo_path, ns, channel)
+    manifest_uuid_path = base_path / f"{manifest.release_uuid}.json"
+    manifest_name_path = (
+        manifest_by_name_dir(patches_repo_path, ns, channel) / f"{manifest.name}.json"
+    )
     base_path.mkdir(parents=True, exist_ok=True)
 
     if manifest_name_path.exists():
@@ -525,8 +568,10 @@ def store_manifest(patches_repo_path: Path, manifest: ReleaseManifest) -> None:
             ) from None
 
 
-def list_manifests(patches_repo_path: Path) -> list[ReleaseManifest]:
-    manifests_path = patches_repo_path.joinpath("ceph").joinpath("manifests")
+def list_manifests(
+    patches_repo_path: Path, ns: str, channel: str
+) -> list[ReleaseManifest]:
+    manifests_path = manifest_dir(patches_repo_path, ns, channel)
     if not manifests_path.exists():
         return []
 
@@ -539,7 +584,7 @@ def list_manifests(patches_repo_path: Path) -> list[ReleaseManifest]:
             continue
 
         try:
-            manifests.append(load_manifest(patches_repo_path, entry_uuid))
+            manifests.append(load_manifest(patches_repo_path, ns, channel, entry_uuid))
         except ManifestError as e:
             logger.error(f"error loading manifest uuid '{entry_uuid}', skip")
             logger.error(f"error: {e}")
@@ -553,6 +598,7 @@ def manifest_release_notes(
     *,
     image_loc: str | None = None,
     cephadm_loc: str | None = None,
+    branding: BrandingConfig | None = None,
 ) -> str:
     doc_lines: list[str] = []
     doc_links: list[tuple[str, str]] = []
@@ -611,7 +657,7 @@ def manifest_release_notes(
 
     def _get_human_version(v: str) -> str | None:
         rstr = r"""
-            (?P<channel>ces-)?
+            (?P<channel>[a-zA-Z]+-)?
             v?
             (?P<version>\d+\.\d+\.\d+)
             (?P<suffixes>(?:-(?:[a-zA-Z]+\.\d+))*)
@@ -621,7 +667,13 @@ def manifest_release_notes(
         if not m:
             return None
 
-        prefix = "CES" if cast(str, m.group("channel")) else "Ceph"
+        channel = cast(str, m.group("channel"))
+        if branding:
+            prefix = branding.short_name
+        elif channel:
+            prefix = channel.rstrip("-").upper()
+        else:
+            prefix = "Ceph"
         version = cast(str, m.group("version"))
         suffix_str = ""
 
@@ -639,12 +691,14 @@ def manifest_release_notes(
         return f"{prefix} version {version}{suffix_str}"
 
     version = _get_human_version(manifest.name)
+    product = branding.product_name if branding else "Enterprise Storage"
+    vendor = branding.vendor if branding else "Clyso"
 
     _header("Release Notes", 1)
 
     _paragraph(
-        "At Clyso, we are thrilled to announce the release of a new version of our "
-        + "Enterprise Storage solution, built on the robust and reliable Ceph "
+        f"At {vendor}, we are thrilled to announce the release of a new version "
+        + f"of our {product} solution, built on the robust and reliable Ceph "
         + "platform. This release brings a host of fixes and enhancements over the "
         + "upstream release that we believe will significantly improve your storage "
         + "experience."
@@ -700,10 +754,11 @@ def manifest_release_notes(
     _header("Usage", 2)
     _paragraph(
         "This release brings a container image equivalent to the upstream Ceph's "
-        + "image. At Clyso, we value your right to be free from vendor lock-in, "
-        + "and thus we make sure the our images are compatible with the upstream's "
-        + "Ceph releases. This means you will be able to upgrade to our image from "
-        + "an upstream release, and downgrade it back should you want to."
+        + f"image. At {vendor}, we value your right to be free from vendor "
+        + "lock-in, and thus we make sure the our images are compatible with the "
+        + "upstream's Ceph releases. This means you will be able to upgrade to "
+        + "our image from an upstream release, and downgrade it back should you "
+        + "want to."
     )
 
     cephadm_loc = cephadm_loc or "UPDATE_CEPHADM_LINK_HERE"
@@ -727,16 +782,16 @@ def manifest_release_notes(
         + f"our container registry at `{image_loc}`"
     )
 
+    docs_url = (
+        branding.docs_url if branding and branding.docs_url else "UPDATE_DOCS_LINK_HERE"
+    )
     _header("Installing or Upgrading", 3)
     _paragraph(
         "To install or upgrade to this release, please follow the instructions found "
         + "in [our documentation][_docs_loc]. If you find any issues, please reach out "
         + "to our support team."
     )
-    _add_link(
-        "_docs_loc",
-        "https://docs.clyso.com/docs/products/clyso-enterprise-storage/install/",
-    )
+    _add_link("_docs_loc", docs_url)
 
     _render_links()
     return "\n".join(doc_lines)

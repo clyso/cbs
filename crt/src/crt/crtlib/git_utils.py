@@ -819,7 +819,10 @@ def git_tag_exists_in_remote(repo_path: Path, remote_name: str, tag_name: str) -
         )
         return bool(raw_tag.strip())
     except git.CommandError as e:
-        msg = f"unable to execute git ls-remote --tags {remote_name} refs/tags/{tag_name}: {e}"
+        msg = (
+            "unable to execute git ls-remote --tags "
+            + f"{remote_name} refs/tags/{tag_name}: {e}"
+        )
         logger.error(msg)
         raise GitError(msg) from None
 

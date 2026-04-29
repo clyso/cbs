@@ -34,3 +34,4 @@ class Release(pydantic.BaseModel):
     release_base_branch: str
     release_base_tag: str
     release_branch: str
+    store_branch: str | None = None

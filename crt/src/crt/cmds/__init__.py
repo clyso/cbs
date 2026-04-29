@@ -18,7 +18,7 @@ import sys
 from collections.abc import Callable
 from functools import update_wrapper
 from pathlib import Path
-from typing import Concatenate, ParamSpec, TypeVar
+from typing import Concatenate
 
 import click
 from rich.console import Console
@@ -44,32 +44,31 @@ class Ctx:
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)
 
 
-_R = TypeVar("_R")
-_T = TypeVar("_T")
-_P = ParamSpec("_P")
+def with_patches_repo_path[**P, R](
+    f: Callable[Concatenate[Path, P], R],
+) -> Callable[P, R]:
+    """Pass the CRT store repo path from the context to the function."""
 
-
-def with_patches_repo_path(f: Callable[Concatenate[Path, _P], _R]) -> Callable[_P, _R]:
-    """Pass the CES patches repo path from the context to the function."""
-
-    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def inner(*args: P.args, **kwargs: P.kwargs) -> R:
         curr_ctx = click.get_current_context()
         ctx = curr_ctx.find_object(Ctx)
         if not ctx:
             perror(f"missing context for '{f.__name__}'")
             sys.exit(errno.ENOTRECOVERABLE)
         if not ctx.patches_repo_path:
-            perror("CES patches repo path not provided")
+            perror("CRT store repo path not provided")
             sys.exit(errno.EINVAL)
         return f(ctx.patches_repo_path, *args, **kwargs)
 
     return update_wrapper(inner, f)
 
 
-def with_gh_token(f: Callable[Concatenate[str, _P], _R]) -> Callable[_P, _R]:
+def with_gh_token[**P, R](
+    f: Callable[Concatenate[str, P], R],
+) -> Callable[P, R]:
     """Pass the GitHub token from the context to the function."""
 
-    def inner(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def inner(*args: P.args, **kwargs: P.kwargs) -> R:
         curr_ctx = click.get_current_context()
         ctx = curr_ctx.find_object(Ctx)
         if not ctx:
