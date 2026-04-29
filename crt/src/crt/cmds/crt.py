@@ -19,7 +19,7 @@ from rich.logging import RichHandler
 from rich.padding import Padding
 from rich.table import Table
 
-from crt.cmds import patch, release, stages
+from crt.cmds import patch, release, search, stages
 from crt.crtlib.logger import logger_set_handler
 
 from . import (
@@ -132,5 +132,6 @@ cmd_crt.add_command(manifest.cmd_manifest_release_notes)
 cmd_crt.add_command(manifest.cmd_manifest)
 cmd_crt.add_command(patchset.cmd_patchset)
 cmd_crt.add_command(patch.cmd_patch)
+cmd_crt.add_command(search.cmd_patch_search)
 cmd_crt.add_command(stages.cmd_manifest_stage)
 cmd_crt.add_command(release.cmd_release)
