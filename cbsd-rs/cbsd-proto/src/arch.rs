@@ -11,13 +11,14 @@
 // GNU Affero General Public License for more details.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Build architecture.
 ///
 /// Canonical values are `x86_64` and `aarch64`. The alias `arm64` is accepted
 /// on deserialization for compatibility with the existing Python `cbsdcore`
 /// `BuildArch` enum which uses `arm64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub enum Arch {
     #[serde(rename = "x86_64")]
     X86_64,
