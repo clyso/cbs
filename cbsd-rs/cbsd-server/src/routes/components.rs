@@ -12,18 +12,19 @@
 
 //! Route handlers for `/api/components/*`: component discovery.
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail};
 use crate::components::ComponentInfo;
 
 /// Build the components sub-router: `/api/components/*`.
-pub fn router() -> Router<AppState> {
-    Router::new().route("/", get(list_components))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list_components))
 }
 
 // ---------------------------------------------------------------------------
@@ -32,6 +33,16 @@ pub fn router() -> Router<AppState> {
 
 /// List all known components. Requires authentication but no specific
 /// capability.
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "components",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, body = Vec<ComponentInfo>),
+        (status = StatusCode::UNAUTHORIZED, body = ErrorDetail),
+    ),
+)]
 async fn list_components(
     State(state): State<AppState>,
     _user: AuthUser,

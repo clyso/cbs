@@ -12,11 +12,13 @@
 
 //! Route handlers for `/api/permissions/*`: roles and user-role management.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
@@ -49,20 +51,17 @@ const KNOWN_CAPS: &[&str] = &[
 const SCOPE_DEPENDENT_CAPS: &[&str] = &["builds:create"];
 
 /// Build the permissions sub-router: `/api/permissions/*`.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/roles", get(list_roles))
-        .route("/roles", post(create_role))
-        .route("/roles/{name}", get(get_role))
-        .route("/roles/{name}", put(update_role))
-        .route("/roles/{name}", delete(delete_role))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(list_roles, create_role))
+        .routes(routes!(get_role, update_role, delete_role))
 }
 
 // ---------------------------------------------------------------------------
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateRoleBody {
     name: String,
     description: Option<String>,
@@ -71,7 +70,7 @@ struct CreateRoleBody {
     scopes: Vec<ScopeBody>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RoleResponse {
     name: String,
     description: String,
@@ -81,7 +80,7 @@ struct RoleResponse {
     created_at: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RoleListItem {
     name: String,
     description: String,
@@ -89,7 +88,7 @@ struct RoleListItem {
     created_at: i64,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, ToSchema)]
 pub(crate) struct ScopeBody {
     #[serde(rename = "type")]
     scope_type: String,
@@ -205,6 +204,16 @@ fn require_cap(user: &AuthUser, cap: &str) -> Result<(), (StatusCode, Json<Error
 // GET /api/permissions/roles
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/roles",
+    tag = "permissions",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, body = Vec<RoleListItem>),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+    ),
+)]
 async fn list_roles(
     State(state): State<AppState>,
     user: AuthUser,
@@ -233,6 +242,19 @@ async fn list_roles(
 // POST /api/permissions/roles
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/roles",
+    tag = "permissions",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = CreateRoleBody,
+    responses(
+        (status = StatusCode::CREATED, body = RoleResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::CONFLICT, body = ErrorDetail),
+    ),
+)]
 async fn create_role(
     State(state): State<AppState>,
     user: AuthUser,
@@ -308,6 +330,18 @@ async fn create_role(
 // GET /api/permissions/roles/{name}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/roles/{name}",
+    tag = "permissions",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("name" = String, Path, description = "Role name")),
+    responses(
+        (status = StatusCode::OK, body = RoleResponse),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn get_role(
     State(state): State<AppState>,
     user: AuthUser,
@@ -357,6 +391,21 @@ async fn get_role(
 // PUT /api/permissions/roles/{name}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/roles/{name}",
+    tag = "permissions",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("name" = String, Path, description = "Role name")),
+    request_body = CreateRoleBody,
+    responses(
+        (status = StatusCode::OK, body = RoleResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+        (status = StatusCode::CONFLICT, body = ErrorDetail),
+    ),
+)]
 async fn update_role(
     State(state): State<AppState>,
     user: AuthUser,
@@ -456,6 +505,19 @@ async fn update_role(
 // DELETE /api/permissions/roles/{name}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/roles/{name}",
+    tag = "permissions",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("name" = String, Path, description = "Role name")),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+        (status = StatusCode::CONFLICT, body = ErrorDetail),
+    ),
+)]
 async fn delete_role(
     State(state): State<AppState>,
     user: AuthUser,

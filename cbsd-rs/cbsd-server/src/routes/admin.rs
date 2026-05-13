@@ -12,13 +12,15 @@
 
 //! Route handlers for `/api/admin/*`: entity management, worker registration.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
 use base64::Engine;
 use serde::Deserialize;
 use serde::Serialize;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error, first_robot_forbidden_cap};
@@ -28,27 +30,26 @@ use crate::routes::permissions::ScopeBody;
 use crate::routes::robots;
 
 /// Build the admin sub-router: `/api/admin/*`.
-pub fn router() -> Router<AppState> {
-    let entity_router = Router::new()
-        .route("/{email}/deactivate", put(deactivate_entity))
-        .route("/{email}/activate", put(activate_entity))
-        .route("/{email}/default-channel", put(set_entity_default_channel))
-        .route("/{email}/roles", get(get_entity_roles))
-        .route("/{email}/roles", put(replace_entity_roles))
-        .route("/{email}/roles", post(add_entity_role))
-        .route("/{email}/roles/{role}", delete(remove_entity_role));
+pub fn router() -> OpenApiRouter<AppState> {
+    let entity_router = OpenApiRouter::new()
+        .routes(routes!(deactivate_entity))
+        .routes(routes!(activate_entity))
+        .routes(routes!(set_entity_default_channel))
+        .routes(routes!(
+            get_entity_roles,
+            replace_entity_roles,
+            add_entity_role
+        ))
+        .routes(routes!(remove_entity_role));
 
-    Router::new()
-        .route("/entities", get(list_entities))
+    OpenApiRouter::new()
+        .routes(routes!(list_entities))
         .nest("/entity", entity_router)
         .nest("/robots", robots::router())
-        .route("/queue", get(queue_status))
-        .route("/workers", post(register_worker))
-        .route("/workers/{id}", delete(deregister_worker))
-        .route(
-            "/workers/{id}/regenerate-token",
-            post(regenerate_worker_token),
-        )
+        .routes(routes!(queue_status))
+        .routes(routes!(register_worker))
+        .routes(routes!(deregister_worker))
+        .routes(routes!(regenerate_worker_token))
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,19 @@ pub fn router() -> Router<AppState> {
 
 /// Deactivate an entity: set active=0, bulk-revoke tokens + API keys, purge LRU
 /// cache. Transactional with last-admin guard. Idempotent.
+#[utoipa::path(
+    put,
+    path = "/{email}/deactivate",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    responses(
+        (status = StatusCode::OK, description = "Entity deactivated"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn deactivate_entity(
     State(state): State<AppState>,
     user: AuthUser,
@@ -171,6 +185,18 @@ async fn deactivate_entity(
 // ---------------------------------------------------------------------------
 
 /// Reactivate an entity. Idempotent.
+#[utoipa::path(
+    put,
+    path = "/{email}/activate",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    responses(
+        (status = StatusCode::OK, description = "Entity activated"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn activate_entity(
     State(state): State<AppState>,
     user: AuthUser,
@@ -246,6 +272,16 @@ async fn activate_entity(
 // ---------------------------------------------------------------------------
 
 /// Return the number of pending builds per priority lane.
+#[utoipa::path(
+    get,
+    path = "/queue",
+    tag = "admin",
+    responses(
+        (status = StatusCode::OK, description = "Queue status"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn queue_status(
     State(state): State<AppState>,
     user: AuthUser,
@@ -286,13 +322,13 @@ fn is_valid_worker_name(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct RegisterWorkerBody {
     name: String,
     arch: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RegisterWorkerResponse {
     worker_id: String,
     name: String,
@@ -320,6 +356,20 @@ fn build_worker_token(worker_id: &str, name: &str, api_key: &str, arch: &str) ->
 ///
 /// SECURITY: The response body contains the plaintext API key (inside the
 /// worker token). Ensure no response-body logging middleware captures it.
+#[utoipa::path(
+    post,
+    path = "/workers",
+    tag = "admin",
+    request_body = RegisterWorkerBody,
+    responses(
+        (status = StatusCode::CREATED, description = "Worker registered", body = RegisterWorkerResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, description = "Internal server error"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn register_worker(
     State(state): State<AppState>,
     user: AuthUser,
@@ -430,6 +480,18 @@ async fn register_worker(
 /// Deregister a worker: revoke its API key, purge cache, delete DB row,
 /// and force-disconnect the live WebSocket connection (re-queuing any
 /// in-flight build via the dead-worker resolution mechanism).
+#[utoipa::path(
+    delete,
+    path = "/workers/{id}",
+    tag = "admin",
+    params(("id" = String, Path, description = "Worker ID")),
+    responses(
+        (status = StatusCode::OK, description = "Worker deregistered"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Worker not found"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn deregister_worker(
     State(state): State<AppState>,
     user: AuthUser,
@@ -519,6 +581,18 @@ async fn deregister_worker(
 /// Rotate a worker's API key: revoke old key, create new one, return new
 /// worker token. Crash-safe: insert new → update FK → revoke old → commit.
 /// Force-disconnects the worker so it must reconnect with the new key.
+#[utoipa::path(
+    post,
+    path = "/workers/{id}/regenerate-token",
+    tag = "admin",
+    params(("id" = String, Path, description = "Worker ID")),
+    responses(
+        (status = StatusCode::OK, description = "Token regenerated", body = RegisterWorkerResponse),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Worker not found"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn regenerate_worker_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -668,13 +742,26 @@ async fn force_disconnect_worker(state: &AppState, registered_worker_id: &str) {
 // PUT /api/admin/entity/{email}/default-channel
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetDefaultChannelBody {
     #[serde(default)]
     channel_id: Option<i64>,
 }
 
 /// Set an entity's default channel for build submission.
+#[utoipa::path(
+    put,
+    path = "/{email}/default-channel",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    request_body = SetDefaultChannelBody,
+    responses(
+        (status = StatusCode::OK, description = "Default channel set"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn set_entity_default_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -789,13 +876,13 @@ async fn last_admin_guard(pool: &sqlx::SqlitePool) -> Result<(), (StatusCode, Js
 // Entity role management types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct EntityRoleItem {
     role: String,
     scopes: Vec<ScopeBody>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct EntityWithRolesItem {
     email: String,
     name: String,
@@ -804,12 +891,12 @@ struct EntityWithRolesItem {
     roles: Vec<EntityRoleItem>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct ReplaceEntityRolesBody {
     roles: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AddEntityRoleBody {
     role: String,
 }
@@ -818,12 +905,23 @@ struct AddEntityRoleBody {
 // GET /api/admin/entities
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct ListEntitiesQuery {
     #[serde(rename = "type")]
     entity_type: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/entities",
+    tag = "admin",
+    responses(
+        (status = StatusCode::OK, description = "List of entities", body = Vec<EntityWithRolesItem>),
+        (status = StatusCode::BAD_REQUEST, description = "Bad request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn list_entities(
     State(state): State<AppState>,
     user: AuthUser,
@@ -888,6 +986,18 @@ async fn list_entities(
 // GET /api/admin/entity/{email}/roles
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{email}/roles",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    responses(
+        (status = StatusCode::OK, description = "Entity roles", body = Vec<EntityRoleItem>),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn get_entity_roles(
     State(state): State<AppState>,
     user: AuthUser,
@@ -917,6 +1027,20 @@ async fn get_entity_roles(
 // PUT /api/admin/entity/{email}/roles
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{email}/roles",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    request_body = ReplaceEntityRolesBody,
+    responses(
+        (status = StatusCode::OK, description = "Roles replaced", body = Vec<EntityRoleItem>),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn replace_entity_roles(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1008,6 +1132,21 @@ async fn replace_entity_roles(
 // POST /api/admin/entity/{email}/roles
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/{email}/roles",
+    tag = "admin",
+    params(("email" = String, Path, description = "Entity email")),
+    request_body = AddEntityRoleBody,
+    responses(
+        (status = StatusCode::CREATED, description = "Role added", body = EntityRoleItem),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Entity not found"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn add_entity_role(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1097,6 +1236,22 @@ async fn add_entity_role(
 // DELETE /api/admin/entity/{email}/roles/{role}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/{email}/roles/{role}",
+    tag = "admin",
+    params(
+        ("email" = String, Path, description = "Entity email"),
+        ("role" = String, Path, description = "Role name"),
+    ),
+    responses(
+        (status = StatusCode::OK, description = "Role removed"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "Role assignment not found"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn remove_entity_role(
     State(state): State<AppState>,
     user: AuthUser,

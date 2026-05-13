@@ -23,6 +23,9 @@ pub use build::{
 /// Worker token payload — the base64url-encoded JSON blob returned by the
 /// server at worker registration. Contains everything the worker needs to
 /// connect. Serialized by the server, deserialized by the worker.
+///
+/// Not annotated with `ToSchema` — this is an internal registration payload,
+/// not part of the documented REST API surface.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WorkerToken {
     pub worker_id: String,

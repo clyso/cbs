@@ -40,4 +40,7 @@ tower-sessions-sqlx-store = { version = "0.15", features = ["sqlite"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
+utoipa = { version = "5", features = ["chrono"] }
+utoipa-axum = "0.2"
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 uuid = { version = "1", features = ["v4"] }

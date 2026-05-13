@@ -11,11 +11,12 @@
 // GNU Affero General Public License for more details.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::arch::Arch;
 
 /// Opaque build identifier. Maps to SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 pub struct BuildId(pub i64);
 
 impl std::fmt::Display for BuildId {
@@ -25,7 +26,7 @@ impl std::fmt::Display for BuildId {
 }
 
 /// Build priority. Strict precedence: high before normal before low.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum Priority {
@@ -36,7 +37,7 @@ pub enum Priority {
 }
 
 /// Build lifecycle state. Lowercase in DB and API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BuildState {
     Queued,
@@ -63,7 +64,7 @@ impl std::fmt::Display for BuildState {
 }
 
 /// Version type. Matches Python `cbscore.versions.utils.VersionType`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VersionType {
     Release,
@@ -73,14 +74,14 @@ pub enum VersionType {
 }
 
 /// Signed-off-by field. Server overwrites this from the `users` table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BuildSignedOffBy {
     pub user: String,
     pub email: String,
 }
 
 /// Destination container image name and tag.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BuildDestImage {
     pub name: String,
     pub tag: String,
@@ -88,7 +89,7 @@ pub struct BuildDestImage {
 
 /// A component to be built. The `repo` field is an optional override URL;
 /// if absent, the component's default repo from `cbs.component.yaml` is used.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BuildComponent {
     pub name: String,
     #[serde(rename = "ref")]
@@ -98,7 +99,7 @@ pub struct BuildComponent {
 }
 
 /// Build target environment. Nested inside `BuildDescriptor.build`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BuildTarget {
     pub distro: String,
     pub os_version: String,
@@ -118,7 +119,7 @@ fn default_arch() -> Arch {
 
 /// Describes a build to the build service. Preserves the Python
 /// `cbsdcore.versions.BuildDescriptor` nesting for JSON compatibility.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct BuildDescriptor {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

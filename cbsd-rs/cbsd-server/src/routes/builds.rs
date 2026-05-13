@@ -12,15 +12,17 @@
 
 //! Route handlers for `/api/builds/*`: build submission, listing, revocation.
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{delete, get, post};
-use axum::{Json, Router};
 use cbsd_proto::{BuildDescriptor, BuildId, Priority};
 use serde::{Deserialize, Serialize};
 use tokio_util::io::ReaderStream;
+use utoipa::{IntoParams, ToSchema};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
@@ -30,29 +32,27 @@ use crate::queue::QueuedBuild;
 use crate::ws;
 
 /// Build the builds sub-router: `/api/builds/*`.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", post(submit_build))
-        .route("/", get(list_builds))
-        .route("/{id}", get(get_build))
-        .route("/{id}", delete(revoke_build))
-        .route("/{id}/logs/tail", get(logs_tail))
-        .route("/{id}/logs/follow", get(logs_follow))
-        .route("/{id}/logs", get(logs_full))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(submit_build, list_builds))
+        .routes(routes!(get_build, revoke_build))
+        .routes(routes!(logs_tail))
+        .routes(routes!(logs_follow))
+        .routes(routes!(logs_full))
 }
 
 // ---------------------------------------------------------------------------
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SubmitBuildBody {
     descriptor: BuildDescriptor,
     #[serde(default)]
     priority: Priority,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct SubmitBuildResponse {
     id: i64,
     state: String,
@@ -63,7 +63,7 @@ struct SubmitBuildResponse {
     warning: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 struct ListBuildsQuery {
     user: Option<String>,
     state: Option<String>,
@@ -73,6 +73,18 @@ struct ListBuildsQuery {
 // POST /api/builds/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = SubmitBuildBody,
+    responses(
+        (status = StatusCode::ACCEPTED, body = SubmitBuildResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+    ),
+)]
 async fn submit_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -255,6 +267,17 @@ pub async fn insert_build_internal(
 // GET /api/builds/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(ListBuildsQuery),
+    responses(
+        (status = StatusCode::OK, body = Vec<crate::db::builds::BuildListRecord>),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+    ),
+)]
 async fn list_builds(
     State(state): State<AppState>,
     user: AuthUser,
@@ -293,6 +316,18 @@ async fn list_builds(
 // GET /api/builds/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{id}",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = StatusCode::OK, body = crate::db::builds::BuildRecord),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn get_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -328,6 +363,18 @@ async fn get_build(
 // DELETE /api/builds/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/{id}",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = StatusCode::OK, description = "Build revoked"),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn revoke_build(
     State(state): State<AppState>,
     user: AuthUser,
@@ -423,9 +470,10 @@ async fn revoke_build(
 // GET /api/builds/{id}/logs/tail?n=30
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct LogsTailQuery {
     #[serde(default = "default_tail_n")]
+    #[schema(default = 30, maximum = 10_000)]
     n: u32,
 }
 
@@ -436,6 +484,18 @@ fn default_tail_n() -> u32 {
 /// Maximum number of lines the tail endpoint will return.
 const MAX_TAIL_LINES: u32 = 10_000;
 
+#[utoipa::path(
+    get,
+    path = "/{id}/logs/tail",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = StatusCode::OK, description = "Last N log lines"),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn logs_tail(
     State(state): State<AppState>,
     user: AuthUser,
@@ -508,6 +568,18 @@ async fn logs_tail(
 // GET /api/builds/{id}/logs/follow
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{id}/logs/follow",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = StatusCode::OK, description = "SSE log stream", content_type = "text/event-stream"),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn logs_follow(
     State(state): State<AppState>,
     user: AuthUser,
@@ -547,6 +619,18 @@ async fn logs_follow(
 // GET /api/builds/{id}/logs
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{id}/logs",
+    tag = "builds",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = i64, Path, description = "Build ID")),
+    responses(
+        (status = StatusCode::OK, description = "Full log file", content_type = "application/octet-stream"),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 async fn logs_full(
     State(state): State<AppState>,
     user: AuthUser,

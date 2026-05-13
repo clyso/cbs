@@ -18,6 +18,7 @@ pub mod tarball;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Minimal subset of `cbs.component.yaml` needed for component discovery.
 #[derive(Deserialize)]
@@ -26,7 +27,7 @@ struct ComponentYaml {
 }
 
 /// Information about a discovered component.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ComponentInfo {
     pub name: String,
     pub versions: Vec<String>,

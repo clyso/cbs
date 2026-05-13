@@ -14,11 +14,13 @@
 
 use std::collections::HashMap;
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
 use serde::Serialize;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use cbsd_proto::Arch;
 
@@ -28,12 +30,12 @@ use crate::db;
 use crate::ws::liveness::WorkerState;
 
 /// Build the workers sub-router: `/api/workers`.
-pub fn router() -> Router<AppState> {
-    Router::new().route("/", get(list_workers))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().routes(routes!(list_workers))
 }
 
 /// Response item for the merged worker listing.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct WorkerInfoResponse {
     worker_id: String,
     name: String,
@@ -46,11 +48,22 @@ struct WorkerInfoResponse {
     current_build_id: Option<i64>,
 }
 
-/// `GET /api/workers` — list all registered workers with live status.
+/// List all registered workers with live status.
 ///
 /// Merges the `workers` DB table (all registered) with the in-memory
 /// `BuildQueue.workers` map to produce a unified view including offline
 /// workers.
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "workers",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, body = Vec<WorkerInfoResponse>),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, body = ErrorDetail),
+    ),
+)]
 async fn list_workers(
     State(state): State<AppState>,
     user: AuthUser,

@@ -17,6 +17,7 @@ mod components;
 mod config;
 mod db;
 mod logs;
+mod openapi;
 mod queue;
 mod routes;
 mod scheduler;

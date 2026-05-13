@@ -15,6 +15,7 @@
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
+use utoipa::ToSchema;
 
 /// A build record as stored in the database.
 ///
@@ -22,9 +23,11 @@ use sqlx::{Row, SqlitePool};
 /// by cbscore after a successful build. It is stored as TEXT in SQLite but
 /// deserialized to `serde_json::Value` so the API returns a nested JSON object.
 /// The list endpoint excludes this field for performance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BuildRecord {
     pub id: i64,
+    /// Serialized BuildDescriptor; see BuildDescriptor schema.
+    #[schema(value_type = Object)]
     pub descriptor: String,
     pub descriptor_version: i64,
     pub user_email: String,
@@ -41,7 +44,9 @@ pub struct BuildRecord {
     pub queued_at: i64,
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
+    /// Structured artifact report produced by cbscore after a successful build.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>, nullable = true)]
     pub build_report: Option<Value>,
     pub channel_id: Option<i64>,
     pub channel_type_id: Option<i64>,
@@ -53,9 +58,11 @@ pub struct BuildRecord {
 
 /// A build record for list responses. Identical to `BuildRecord` but
 /// without the potentially large `build_report` field.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BuildListRecord {
     pub id: i64,
+    /// Serialized BuildDescriptor; see BuildDescriptor schema.
+    #[schema(value_type = Object)]
     pub descriptor: String,
     pub descriptor_version: i64,
     pub user_email: String,

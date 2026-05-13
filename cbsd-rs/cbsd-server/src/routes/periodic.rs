@@ -14,11 +14,13 @@
 
 use std::str::FromStr;
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, ScopeType, auth_error};
@@ -30,11 +32,12 @@ use crate::scheduler::tag_format;
 // Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct PeriodicTaskResponse {
     id: String,
     cron_expr: String,
     tag_format: String,
+    #[schema(value_type = Object)]
     descriptor: serde_json::Value,
     priority: String,
     summary: Option<String>,
@@ -94,10 +97,11 @@ fn task_to_response(row: PeriodicTaskRow) -> PeriodicTaskResponse {
 // Request types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateTaskBody {
     cron_expr: String,
     tag_format: String,
+    #[schema(value_type = Object)]
     descriptor: serde_json::Value,
     #[serde(default = "default_priority")]
     priority: String,
@@ -108,10 +112,11 @@ fn default_priority() -> String {
     "normal".to_string()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateTaskBody {
     cron_expr: Option<String>,
     tag_format: Option<String>,
+    #[schema(value_type = Option<Object>)]
     descriptor: Option<serde_json::Value>,
     priority: Option<String>,
     summary: Option<String>,
@@ -122,21 +127,30 @@ struct UpdateTaskBody {
 // ---------------------------------------------------------------------------
 
 /// Build the periodic tasks sub-router: `/api/periodic/*`.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", post(create_task))
-        .route("/", get(list_tasks))
-        .route("/{id}", get(get_task))
-        .route("/{id}", put(update_task))
-        .route("/{id}", delete(delete_task))
-        .route("/{id}/enable", put(enable_task))
-        .route("/{id}/disable", put(disable_task))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(create_task, list_tasks))
+        .routes(routes!(get_task, update_task, delete_task))
+        .routes(routes!(enable_task))
+        .routes(routes!(disable_task))
 }
 
 // ---------------------------------------------------------------------------
 // POST /api/periodic/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = CreateTaskBody,
+    responses(
+        (status = StatusCode::CREATED, body = PeriodicTaskResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+    ),
+)]
 /// Create a new periodic build task.
 async fn create_task(
     State(state): State<AppState>,
@@ -242,6 +256,17 @@ async fn create_task(
 // GET /api/periodic/
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, body = Vec<PeriodicTaskResponse>),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, body = ErrorDetail),
+    ),
+)]
 /// List all periodic build tasks.
 async fn list_tasks(
     State(state): State<AppState>,
@@ -269,6 +294,18 @@ async fn list_tasks(
 // GET /api/periodic/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{id}",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    responses(
+        (status = StatusCode::OK, body = PeriodicTaskResponse),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 /// Get a single periodic build task by ID.
 async fn get_task(
     State(state): State<AppState>,
@@ -297,6 +334,20 @@ async fn get_task(
 // PUT /api/periodic/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    request_body = UpdateTaskBody,
+    responses(
+        (status = StatusCode::OK, body = PeriodicTaskResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 /// Update a periodic build task. At least one field must be provided.
 async fn update_task(
     State(state): State<AppState>,
@@ -446,6 +497,18 @@ async fn update_task(
 // DELETE /api/periodic/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/{id}",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 /// Delete a periodic build task.
 async fn delete_task(
     State(state): State<AppState>,
@@ -488,6 +551,18 @@ async fn delete_task(
 // PUT /api/periodic/{id}/enable
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}/enable",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 /// Enable a periodic build task. Resets retry state.
 async fn enable_task(
     State(state): State<AppState>,
@@ -530,6 +605,18 @@ async fn enable_task(
 // PUT /api/periodic/{id}/disable
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}/disable",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
 /// Disable a periodic build task. Clears retry_at.
 async fn disable_task(
     State(state): State<AppState>,

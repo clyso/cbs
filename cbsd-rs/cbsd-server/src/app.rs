@@ -28,6 +28,7 @@ use tower_sessions::SessionManagerLayer;
 use tower_sessions::service::SignedCookie;
 use tower_sessions_sqlx_store::SqliteStore;
 use tracing::Span;
+use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth::oauth::OAuthState;
 use crate::auth::token_cache::TokenCache;
@@ -80,8 +81,7 @@ pub fn build_router(
     state: AppState,
     session_layer: SessionManagerLayer<SqliteStore, SignedCookie>,
 ) -> Router {
-    let api = Router::new()
-        .route("/health", get(health))
+    let api = OpenApiRouter::new()
         .nest("/auth", routes::auth::router())
         .nest("/permissions", routes::permissions::router())
         .nest("/admin", routes::admin::router())
@@ -90,6 +90,12 @@ pub fn build_router(
         .nest("/workers", routes::workers::router())
         .nest("/periodic", routes::periodic::router())
         .nest("/channels", routes::channels::router());
+
+    // Split into plain Router + OpenApi spec; health and WS stay on Router.
+    let (api, openapi_spec) = api.split_for_parts();
+    let api = api
+        .route("/health", get(health))
+        .merge(crate::openapi::doc_routes(openapi_spec));
 
     // Request/response tracing: logs method, URI, status, and latency
     // for every HTTP request. The request ID is generated per-request

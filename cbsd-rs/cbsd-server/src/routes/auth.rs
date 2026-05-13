@@ -12,17 +12,19 @@
 
 //! Auth route handlers: OAuth login/callback, token management, API keys.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{delete, get, post};
-use axum::{Json, Router};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tower_governor::GovernorLayer;
 use tower_governor::errors::GovernorError;
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_sessions::Session;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
@@ -36,7 +38,7 @@ use crate::db;
 ///
 /// Rate limiting: `/login` and `/callback` are limited to 10 req/min per IP
 /// via `tower-governor`. Authenticated endpoints are not rate-limited here.
-pub fn router() -> Router<AppState> {
+pub fn router() -> OpenApiRouter<AppState> {
     // Rate limit: 10 requests per 60 seconds per IP
     let governor_conf = GovernorConfigBuilder::default()
         .per_second(60)
@@ -65,23 +67,24 @@ pub fn router() -> Router<AppState> {
             .unwrap()
     });
 
-    // Rate-limited session lifecycle routes
-    let oauth_routes = Router::new()
-        .route("/login", get(login))
-        .route("/callback", get(callback))
-        .route("/logout", post(logout))
+    // Rate-limited session lifecycle routes — kept on plain Router
+    // because GovernorLayer is not compatible with OpenApiRouter.
+    let oauth_routes = axum::Router::new()
+        .route("/login", axum::routing::get(login))
+        .route("/callback", axum::routing::get(callback))
+        .route("/logout", axum::routing::post(logout))
         .layer(governor_layer);
 
     // Non-rate-limited authenticated routes
-    let auth_routes = Router::new()
-        .route("/whoami", get(whoami))
-        .route("/token/revoke", post(revoke_token))
-        .route("/tokens/revoke-all", post(revoke_all_tokens))
-        .route("/api-keys", post(create_api_key_handler))
-        .route("/api-keys", get(list_api_keys_handler))
-        .route("/api-keys/{prefix}", delete(revoke_api_key_handler));
+    let auth_routes = OpenApiRouter::new()
+        .routes(routes!(whoami))
+        .routes(routes!(revoke_token))
+        .routes(routes!(revoke_all_tokens))
+        .routes(routes!(create_api_key_handler, list_api_keys_handler))
+        .routes(routes!(revoke_api_key_handler));
 
-    oauth_routes.merge(auth_routes)
+    // Merge plain Router into OpenApiRouter
+    auth_routes.merge(oauth_routes.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +109,7 @@ pub struct CallbackQuery {
     dev_email: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct WhoamiResponse {
     email: String,
     name: String,
@@ -115,24 +118,24 @@ struct WhoamiResponse {
     effective_caps: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct RevokeAllBody {
     user_email: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateApiKeyBody {
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct CreateApiKeyResponse {
     key: String,
     prefix: String,
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct ApiKeyItem {
     prefix: String,
     name: String,
@@ -347,6 +350,16 @@ async fn callback(
 // GET /api/auth/whoami
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/whoami",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, description = "Current user info", body = WhoamiResponse),
+        (status = StatusCode::UNAUTHORIZED, description = "Unauthorized"),
+    ),
+)]
 async fn whoami(
     State(state): State<AppState>,
     user: AuthUser,
@@ -378,6 +391,17 @@ async fn whoami(
 
 /// Self-revoke: revokes the bearer token used in the current request.
 /// Cookie-authenticated users should use POST /api/auth/logout instead.
+#[utoipa::path(
+    post,
+    path = "/token/revoke",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, description = "Token revoked"),
+        (status = StatusCode::BAD_REQUEST, description = "Bad request"),
+        (status = StatusCode::UNAUTHORIZED, description = "Unauthorized"),
+    ),
+)]
 async fn revoke_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -429,6 +453,19 @@ async fn revoke_token(
 // ---------------------------------------------------------------------------
 
 /// Revoke all tokens for a user. Requires the target user to exist.
+#[utoipa::path(
+    post,
+    path = "/tokens/revoke-all",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = RevokeAllBody,
+    responses(
+        (status = StatusCode::OK, description = "All tokens revoked for user"),
+        (status = StatusCode::BAD_REQUEST, description = "Bad request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "User not found"),
+    ),
+)]
 async fn revoke_all_tokens(
     State(state): State<AppState>,
     user: AuthUser,
@@ -511,6 +548,18 @@ async fn logout(
 // POST /api/auth/api-keys
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/api-keys",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = CreateApiKeyBody,
+    responses(
+        (status = StatusCode::CREATED, description = "API key created", body = CreateApiKeyResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Bad request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+    ),
+)]
 async fn create_api_key_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -569,6 +618,16 @@ async fn create_api_key_handler(
 // GET /api/auth/api-keys
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/api-keys",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, description = "List of API keys", body = Vec<ApiKeyItem>),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+    ),
+)]
 async fn list_api_keys_handler(
     State(state): State<AppState>,
     user: AuthUser,
@@ -604,6 +663,20 @@ async fn list_api_keys_handler(
 // DELETE /api/auth/api-keys/:prefix
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/api-keys/{prefix}",
+    tag = "auth",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("prefix" = String, Path, description = "API key prefix"),
+    ),
+    responses(
+        (status = StatusCode::OK, description = "API key revoked"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::NOT_FOUND, description = "API key not found"),
+    ),
+)]
 async fn revoke_api_key_handler(
     State(state): State<AppState>,
     user: AuthUser,

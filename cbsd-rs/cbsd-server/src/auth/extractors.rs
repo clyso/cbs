@@ -22,6 +22,8 @@ use axum_extra::headers::authorization::Bearer;
 use sqlx::SqlitePool;
 use tower_sessions::Session;
 
+use utoipa::ToSchema;
+
 use crate::app::AppState;
 use crate::auth::paseto;
 use crate::auth::token_cache;
@@ -152,7 +154,7 @@ impl AuthUser {
 }
 
 /// Error response body matching FastAPI's `{"detail": "..."}` shape.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, ToSchema)]
 pub struct ErrorDetail {
     pub detail: String,
 }

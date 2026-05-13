@@ -12,11 +12,13 @@
 
 //! Route handlers for `/api/admin/robots/*`: robot account lifecycle.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{
@@ -25,22 +27,19 @@ use crate::auth::extractors::{
 use crate::auth::token_cache;
 use crate::db;
 
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", post(create_or_revive_robot))
-        .route("/", get(list_robots))
-        .route("/{name}", get(get_robot))
-        .route("/{name}", delete(tombstone_robot))
-        .route("/{name}/token", post(create_or_rotate_token))
-        .route("/{name}/token", delete(revoke_robot_token))
-        .route("/{name}/description", put(set_robot_description))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(create_or_revive_robot, list_robots))
+        .routes(routes!(get_robot, tombstone_robot))
+        .routes(routes!(create_or_rotate_token, revoke_robot_token))
+        .routes(routes!(set_robot_description))
 }
 
 // ---------------------------------------------------------------------------
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateRobotBody {
     name: String,
     #[serde(default)]
@@ -49,12 +48,13 @@ struct CreateRobotBody {
     /// token valid through the end of that day) or `null` (no expiry).
     /// The field must be present; an omitted `expires` returns 400 so the
     /// "never-expiring token" path stays an explicit caller opt-in.
+    #[schema(value_type = Object, nullable = true)]
     expires: serde_json::Value,
     #[serde(default)]
     roles: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct CreateRobotResponse {
     name: String,
     display_name: String,
@@ -69,23 +69,24 @@ struct CreateRobotResponse {
     revived: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct RotateTokenBody {
     /// Required per design v4. `"YYYY-MM-DD"` or `null`; absent → 400.
+    #[schema(value_type = Object, nullable = true)]
     expires: serde_json::Value,
     /// Must be true to replace an existing non-revoked token.
     #[serde(default)]
     renew: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RotateTokenResponse {
     token: String,
     token_prefix: String,
     expires_at: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetDescriptionBody {
     #[serde(default)]
     description: Option<String>,
@@ -93,7 +94,7 @@ struct SetDescriptionBody {
 
 /// List item for `GET /api/admin/robots` — design v4 § REST API "List
 /// Robots" shape.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RobotListItem {
     name: String,
     display_name: String,
@@ -111,7 +112,7 @@ struct RobotListItem {
 
 /// Detail view for `GET /api/admin/robots/{name}` — design v4 § REST API
 /// "Get Robot" shape.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct RobotDetail {
     name: String,
     display_name: String,
@@ -124,7 +125,7 @@ struct RobotDetail {
     effective_caps: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct TokenStatusBody {
     state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,6 +189,20 @@ fn parse_iso_date_to_next_day_epoch(s: &str) -> Result<i64, String> {
 /// If a robot with the given name already exists and is active, returns 409.
 /// If it exists but is tombstoned (active=0), revives it: re-activates,
 /// replaces roles, revokes old tokens, issues a new token.
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "robots",
+    request_body = CreateRobotBody,
+    responses(
+        (status = StatusCode::CREATED, body = CreateRobotResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::CONFLICT, body = ErrorDetail),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn create_or_revive_robot(
     State(state): State<AppState>,
     user: AuthUser,
@@ -347,6 +362,16 @@ async fn create_or_revive_robot(
 // GET /api/admin/robots
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "robots",
+    responses(
+        (status = StatusCode::OK, body = Vec<RobotListItem>),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn list_robots(
     State(state): State<AppState>,
     user: AuthUser,
@@ -390,6 +415,20 @@ async fn list_robots(
 // GET /api/admin/robots/{name}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{name}",
+    tag = "robots",
+    params(
+        ("name" = String, Path, description = "Robot name"),
+    ),
+    responses(
+        (status = StatusCode::OK, body = RobotDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn get_robot(
     State(state): State<AppState>,
     user: AuthUser,
@@ -460,6 +499,20 @@ async fn get_robot(
 ///   idempotently (active → 0, any non-revoked token → revoked). The
 ///   revive-racer observes its work undone; the final state is
 ///   self-consistent and matches the caller's intent.
+#[utoipa::path(
+    delete,
+    path = "/{name}",
+    tag = "robots",
+    params(
+        ("name" = String, Path, description = "Robot name"),
+    ),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn tombstone_robot(
     State(state): State<AppState>,
     user: AuthUser,
@@ -522,6 +575,23 @@ async fn tombstone_robot(
 /// `BEGIN IMMEDIATE` so two concurrent rotations serialise cleanly and
 /// neither sees a raw `SQLITE_CONSTRAINT_UNIQUE` from the partial unique
 /// index.
+#[utoipa::path(
+    post,
+    path = "/{name}/token",
+    tag = "robots",
+    params(
+        ("name" = String, Path, description = "Robot name"),
+    ),
+    request_body = RotateTokenBody,
+    responses(
+        (status = StatusCode::CREATED, body = RotateTokenResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+        (status = StatusCode::CONFLICT, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn create_or_rotate_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -617,6 +687,20 @@ async fn create_or_rotate_token(
 
 /// Revoke all non-revoked tokens for a robot without tombstoning it.
 /// Idempotent — revoking when no active token exists returns 200.
+#[utoipa::path(
+    delete,
+    path = "/{name}/token",
+    tag = "robots",
+    params(
+        ("name" = String, Path, description = "Robot name"),
+    ),
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn revoke_robot_token(
     State(state): State<AppState>,
     user: AuthUser,
@@ -668,6 +752,21 @@ async fn revoke_robot_token(
 // PUT /api/admin/robots/{name}/description
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{name}/description",
+    tag = "robots",
+    params(
+        ("name" = String, Path, description = "Robot name"),
+    ),
+    request_body = SetDescriptionBody,
+    responses(
+        (status = StatusCode::OK),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
 async fn set_robot_description(
     State(state): State<AppState>,
     user: AuthUser,

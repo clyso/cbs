@@ -12,11 +12,13 @@
 
 //! Route handlers for `/api/channels/*`: channel and type CRUD.
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error};
@@ -24,31 +26,27 @@ use crate::db;
 use crate::scopes;
 
 /// Build the channels sub-router: `/api/channels/*`.
-pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/", post(create_channel))
-        .route("/", get(list_channels))
-        .route("/{id}", get(get_channel))
-        .route("/{id}", put(update_channel))
-        .route("/{id}", delete(delete_channel))
-        .route("/{id}/types", post(add_type))
-        .route("/{id}/types/{tid}", put(update_type))
-        .route("/{id}/types/{tid}", delete(delete_type))
-        .route("/{id}/default-type", put(set_default_type))
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(create_channel, list_channels))
+        .routes(routes!(get_channel, update_channel, delete_channel))
+        .routes(routes!(add_type))
+        .routes(routes!(update_type, delete_type))
+        .routes(routes!(set_default_type))
 }
 
 // ---------------------------------------------------------------------------
 // Request / response types
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateChannelBody {
     name: String,
     #[serde(default)]
     description: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateChannelBody {
     #[serde(default)]
     name: Option<String>,
@@ -56,7 +54,7 @@ struct UpdateChannelBody {
     description: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AddTypeBody {
     type_name: String,
     project: String,
@@ -64,7 +62,7 @@ struct AddTypeBody {
     prefix_template: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateTypeBody {
     #[serde(default)]
     project: Option<String>,
@@ -72,12 +70,12 @@ struct UpdateTypeBody {
     prefix_template: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetDefaultTypeBody {
     type_id: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct ChannelResponse {
     id: i64,
     name: String,
@@ -88,7 +86,7 @@ struct ChannelResponse {
     updated_at: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct TypeResponse {
     id: i64,
     type_name: String,
@@ -190,6 +188,19 @@ async fn user_can_view_channel(
 // POST /api/channels
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    request_body = CreateChannelBody,
+    responses(
+        (status = StatusCode::CREATED, description = "Channel created", body = ChannelResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid input", body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::CONFLICT, description = "Conflict", body = ErrorDetail),
+    ),
+)]
 async fn create_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -249,6 +260,16 @@ async fn create_channel(
 // GET /api/channels
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    responses(
+        (status = StatusCode::OK, description = "List of channels", body = Vec<ChannelResponse>),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+    ),
+)]
 async fn list_channels(
     State(state): State<AppState>,
     user: AuthUser,
@@ -276,6 +297,20 @@ async fn list_channels(
 // GET /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/{id}",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+    ),
+    responses(
+        (status = StatusCode::OK, description = "Channel details", body = ChannelResponse),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn get_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -301,6 +336,21 @@ async fn get_channel(
 // PUT /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+    ),
+    request_body = UpdateChannelBody,
+    responses(
+        (status = StatusCode::OK, description = "Channel updated", body = ChannelResponse),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn update_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -362,6 +412,20 @@ async fn update_channel(
 // DELETE /api/channels/{id}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/{id}",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+    ),
+    responses(
+        (status = StatusCode::OK, description = "Channel deleted"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn delete_channel(
     State(state): State<AppState>,
     user: AuthUser,
@@ -394,6 +458,23 @@ async fn delete_channel(
 // POST /api/channels/{id}/types
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    post,
+    path = "/{id}/types",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+    ),
+    request_body = AddTypeBody,
+    responses(
+        (status = StatusCode::CREATED, description = "Type added", body = TypeResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid input", body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+        (status = StatusCode::CONFLICT, description = "Conflict", body = ErrorDetail),
+    ),
+)]
 async fn add_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -479,6 +560,22 @@ async fn add_type(
 // PUT /api/channels/{id}/types/{tid}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}/types/{tid}",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+        ("tid" = i64, Path, description = "Type ID"),
+    ),
+    request_body = UpdateTypeBody,
+    responses(
+        (status = StatusCode::OK, description = "Type updated", body = TypeResponse),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn update_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -539,6 +636,21 @@ async fn update_type(
 // DELETE /api/channels/{id}/types/{tid}
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    delete,
+    path = "/{id}/types/{tid}",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+        ("tid" = i64, Path, description = "Type ID"),
+    ),
+    responses(
+        (status = StatusCode::OK, description = "Type deleted"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn delete_type(
     State(state): State<AppState>,
     user: AuthUser,
@@ -593,6 +705,22 @@ async fn delete_type(
 // PUT /api/channels/{id}/default-type
 // ---------------------------------------------------------------------------
 
+#[utoipa::path(
+    put,
+    path = "/{id}/default-type",
+    tag = "channels",
+    security(("bearer" = []), ("cookie" = [])),
+    params(
+        ("id" = i64, Path, description = "Channel ID"),
+    ),
+    request_body = SetDefaultTypeBody,
+    responses(
+        (status = StatusCode::OK, description = "Default type set"),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid input", body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden", body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, description = "Not found", body = ErrorDetail),
+    ),
+)]
 async fn set_default_type(
     State(state): State<AppState>,
     user: AuthUser,
