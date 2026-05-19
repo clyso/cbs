@@ -452,6 +452,48 @@ rule).
 
 ### Phase 2 — Audit-remediation cross-cutting
 
+#### Phase 1 carry-over — `try_dispatch` send-failure end-to-end test
+
+**Origin:** Phase 1 review v4
+(`cbsd-rs/docs/cbsd-rs/reviews/019-20260519T0857-impl-security-audit-remediation-phase-1-v4.md`),
+finding NB1. Marked non-blocking (Nit, 0 points deducted) by the v4 reviewer and
+explicitly deferred to Phase 2 by user decision after a scope-budget check.
+
+**Gap.** `cbsd-server/src/ws/dispatch.rs::send_and_recover` (extracted in Phase
+1 commit 1) has unit-level regression coverage for the rollback-on-send-failure
+invariant: its tests assert that a closed receiver and a missing sender both
+trigger the full rollback. No test drives `try_dispatch` itself end-to-end with
+an injected broken sender, so a maintainer reverting the single
+`send_and_recover(...).await?` call site at `try_dispatch` step 11–12 to inline
+send + buggy rollback would not fail any test.
+
+**Why not landed in Phase 1.** Closing NB1 requires introducing `AppState` test
+scaffolding, which Phase 1 explicitly avoided per the lightweight-extraction
+policy. The reviewer marked NB1 with zero deduction; the user opted to defer
+rather than reverse the policy mid-phase.
+
+**Recommendation.** Land as the first commit of Phase 2, or fold into commit 7
+if the test-scaffolding work naturally co-locates with that commit's
+`cbsd-common` introduction. Sketch:
+
+1. Add a `#[cfg(test)] fn test_app_state(...)` factory that builds a minimal
+   `AppState` using `OAuthState::dummy()`, `TokenCache::new(64)`,
+   `TimeoutsConfig::default()`, and default sub- configs for
+   `LogRetentionConfig`, `SeedConfig`, `DevConfig`, `LoggingConfig`. The
+   `secrets` and `oauth` sub-configs are constructed inline. ~30 LOC.
+2. Add a `temp_component_dir()` helper that writes a minimal
+   `cbs.component.yaml` so the tarball-pack step succeeds. ~10 LOC.
+3. Add a test `try_dispatch_send_failure_rolls_back_db_end_to_end` that: builds
+   the test `AppState` pointing at the temp component dir; inserts a queued
+   build + a `Connected` worker with matching arch; registers a `worker_sender`
+   whose receiver was dropped; calls `try_dispatch(&state)`; asserts
+   `Err(DispatchError::Send(_))`, DB state `queued`, all six WCP D4 provenance
+   columns NULL, and the build re-enqueued at the front of its priority lane.
+
+**Estimated cost:** ~80 LOC of test code (no production change).
+
+---
+
 #### Commit 7 — `cbsd-rs: enforce strict CBSD_DEV parsing and loopback dev-mode`
 
 **Closes** audit-rem D1, audit F1.
