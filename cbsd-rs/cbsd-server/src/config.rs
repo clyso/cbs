@@ -282,9 +282,7 @@ impl ServerConfig {
         }
 
         // Logging validation: production mode requires a log file.
-        let is_dev = std::env::var("CBSD_DEV")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+        let is_dev = cbsd_common::env::is_truthy_env("CBSD_DEV");
         if !is_dev && self.logging.log_file.is_none() {
             panic!(
                 "config error: logging.log-file is required when CBSD_DEV is not set — \

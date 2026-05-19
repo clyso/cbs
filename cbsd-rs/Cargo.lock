@@ -338,6 +338,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbsd-common"
+version = "0.1.0"
+
+[[package]]
 name = "cbsd-proto"
 version = "0.1.0"
 dependencies = [
@@ -356,6 +360,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64",
+ "cbsd-common",
  "cbsd-proto",
  "chrono",
  "clap",
@@ -396,6 +401,7 @@ name = "cbsd-worker"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "cbsd-common",
  "cbsd-proto",
  "clap",
  "flate2",
@@ -416,6 +422,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

@@ -54,16 +54,15 @@ struct Cli {
 
 /// Set up tracing with optional file and console layers.
 ///
-/// Console output is enabled when `CBSD_DEV` is set. File output is
-/// enabled when `log_file` is configured. The returned guard must be
-/// held for the process lifetime to flush the non-blocking file writer.
+/// Console output is enabled when `CBSD_DEV` is set to a truthy value
+/// (per `cbsd_common::env::is_truthy_env`). File output is enabled when
+/// `log_file` is configured. The returned guard must be held for the
+/// process lifetime to flush the non-blocking file writer.
 fn setup_tracing(
     level: &str,
     log_file: Option<&std::path::Path>,
 ) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    let is_dev = std::env::var("CBSD_DEV")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
+    let is_dev = cbsd_common::env::is_truthy_env("CBSD_DEV");
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 

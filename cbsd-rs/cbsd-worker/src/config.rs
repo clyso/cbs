@@ -150,9 +150,7 @@ impl WorkerConfig {
         }
 
         // Logging validation: production mode requires a log file.
-        let is_dev = std::env::var("CBSD_DEV")
-            .map(|v| !v.is_empty())
-            .unwrap_or(false);
+        let is_dev = cbsd_common::env::is_truthy_env("CBSD_DEV");
         if !is_dev && self.logging.log_file.is_none() {
             return Err(ConfigError::Validation(
                 "logging.log-file is required when CBSD_DEV is not set — \
@@ -160,6 +158,21 @@ impl WorkerConfig {
                  file path must be configured"
                     .to_string(),
             ));
+        }
+
+        // Per audit-rem D1 (Phase 2): dev mode disables TLS certificate
+        // verification (`NoVerifier`), so refuse to start when dev mode
+        // is paired with a non-loopback server_url. Loopback is the only
+        // safe destination for the `NoVerifier` bypass.
+        if is_dev && !is_loopback_url(&self.server_url) {
+            return Err(ConfigError::Validation(format!(
+                "cbsd-worker refuses to start: dev mode (CBSD_DEV) is \
+                 active but server_url '{}' is not a loopback address. \
+                 Dev mode disables TLS certificate verification; only \
+                 loopback URLs (localhost, 127.0.0.1, [::1]) are \
+                 accepted in this mode.",
+                self.server_url
+            )));
         }
         if let Some(ref path) = self.logging.log_file {
             if !path.is_absolute() {
@@ -304,5 +317,159 @@ impl std::error::Error for ConfigError {
             Self::Parse(_, err) => Some(err),
             Self::Validation(_) => None,
         }
+    }
+}
+
+/// Returns `true` if `url_str` is a loopback URL: the parsed host is
+/// `localhost` (ASCII-case-insensitive), an IPv4 loopback address, or
+/// an IPv6 loopback address. Per WCP-style three-way match, this MUST
+/// operate on the parsed `url::Host` — a `starts_with("wss://localhost")`
+/// check would admit authority-confusion URLs like
+/// `wss://localhost@evil.com/`.
+fn is_loopback_url(url_str: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url_str) else {
+        return false;
+    };
+    let Some(host) = parsed.host() else {
+        return false;
+    };
+    match host {
+        url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(addr) => addr.is_loopback(),
+        url::Host::Ipv6(addr) => addr.is_loopback(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Mutex, PoisonError};
+
+    use super::*;
+
+    /// Serializes tests that mutate the process-global `CBSD_DEV` env
+    /// var. `cargo test` runs tests in this binary in parallel by
+    /// default; without this lock, two tests could observe each other's
+    /// env writes.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn minimal_config(server_url: &str) -> WorkerConfig {
+        WorkerConfig {
+            server_url: server_url.to_string(),
+            worker_token: None,
+            api_key: Some("legacy-api-key".to_string()),
+            arch: Some("x86_64".to_string()),
+            tls_ca_bundle_path: None,
+            cbscore_wrapper_path: None,
+            cbscore_config_path: None,
+            build_timeout_secs: None,
+            component_temp_dir: None,
+            sigkill_escalation_timeout_secs: None,
+            reconnect_backoff_ceiling_secs: None,
+            logging: LoggingConfig::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_with_dev_false_does_not_set_dev_mode() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // Safety: env mutation is process-global. ENV_LOCK serializes
+        // access; no other tests in this binary mutate CBSD_DEV.
+        unsafe { std::env::set_var("CBSD_DEV", "false") };
+
+        let mut cfg = minimal_config("wss://localhost:8443");
+        // Production-style: when CBSD_DEV is not truthy, a log_file
+        // path is required by resolve(). `/tmp` exists on every
+        // supported test platform.
+        cfg.logging.log_file = Some(PathBuf::from("/tmp/cbsd-worker-test-f1.log"));
+
+        let resolved = cfg
+            .resolve()
+            .expect("resolve should succeed with CBSD_DEV=\"false\" and log_file set");
+        assert!(
+            !resolved.dev_mode,
+            "dev_mode must be false when CBSD_DEV=\"false\""
+        );
+
+        unsafe { std::env::remove_var("CBSD_DEV") };
+    }
+
+    #[test]
+    fn resolve_refuses_dev_mode_with_non_loopback_url() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // Safety: see ENV_LOCK above.
+        unsafe { std::env::set_var("CBSD_DEV", "1") };
+
+        let cfg = minimal_config("wss://example.com:8443");
+        let result = cfg.resolve();
+        assert!(
+            matches!(result, Err(ConfigError::Validation(_))),
+            "expected ConfigError::Validation for dev mode with non-loopback URL"
+        );
+
+        unsafe { std::env::remove_var("CBSD_DEV") };
+    }
+
+    #[test]
+    fn accepts_localhost_domain() {
+        assert!(is_loopback_url("wss://localhost"));
+        assert!(is_loopback_url("wss://localhost:8443/ws"));
+        assert!(is_loopback_url("http://localhost/"));
+    }
+
+    #[test]
+    fn accepts_localhost_case_insensitive() {
+        assert!(is_loopback_url("wss://LOCALHOST"));
+        assert!(is_loopback_url("wss://Localhost:8080/ws"));
+    }
+
+    #[test]
+    fn accepts_ipv4_loopback() {
+        assert!(is_loopback_url("wss://127.0.0.1:8443"));
+        // Full `127.0.0.0/8` is loopback, not just `127.0.0.1`.
+        assert!(is_loopback_url("wss://127.0.0.2"));
+        assert!(is_loopback_url("wss://127.42.99.7/"));
+        assert!(is_loopback_url("http://127.0.0.1"));
+    }
+
+    #[test]
+    fn accepts_ipv6_loopback() {
+        assert!(is_loopback_url("wss://[::1]:8443"));
+        assert!(is_loopback_url("wss://[::1]/ws"));
+        // IPv6 loopback with port AND path component.
+        assert!(is_loopback_url("wss://[::1]:8443/x"));
+    }
+
+    #[test]
+    fn rejects_non_loopback_domain() {
+        assert!(!is_loopback_url("wss://example.com"));
+        assert!(!is_loopback_url("wss://localhost.example.com"));
+        // DNS name crafted to look like a dotted-quad: this must parse
+        // as a domain, not an IPv4 literal.
+        assert!(!is_loopback_url("wss://127.0.0.1.evil.com"));
+    }
+
+    #[test]
+    fn rejects_authority_confusion() {
+        // Per the audit-rem D1 pitfall: a naive `starts_with("wss://localhost")`
+        // would accept these. The url-crate parse correctly identifies the
+        // real host as `evil.com`.
+        assert!(!is_loopback_url("wss://localhost@evil.com/"));
+        assert!(!is_loopback_url("wss://localhost.evil.com/"));
+        assert!(!is_loopback_url("wss://user:pass@evil.com/localhost"));
+    }
+
+    #[test]
+    fn rejects_public_ipv4() {
+        assert!(!is_loopback_url("wss://8.8.8.8"));
+        assert!(!is_loopback_url("wss://192.168.1.1"));
+    }
+
+    #[test]
+    fn rejects_invalid_url() {
+        assert!(!is_loopback_url(""));
+        assert!(!is_loopback_url("not-a-url"));
+        assert!(!is_loopback_url("ws://"));
     }
 }

@@ -7,6 +7,7 @@ repository.workspace = true
 description = "CBS build service daemon — worker binary"
 
 [dependencies]
+cbsd-common = { path = "../cbsd-common" }
 cbsd-proto = { path = "../cbsd-proto" }
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
@@ -27,6 +28,7 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2"
 
 [dev-dependencies]
 tempfile = "3"
