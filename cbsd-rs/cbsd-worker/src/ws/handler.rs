@@ -435,8 +435,12 @@ where
         return Ok(());
     }
 
-    let component_dir = match component::validate_and_unpack(&tarball, component_sha256, &temp_dir)
-    {
+    let component_dir = match component::validate_and_unpack(
+        &tarball,
+        component_sha256,
+        &temp_dir,
+        config.max_uncompressed_component_bytes(),
+    ) {
         Ok(dir) => dir,
         Err(err) => {
             tracing::error!(%build_id, %err, "component validation failed");

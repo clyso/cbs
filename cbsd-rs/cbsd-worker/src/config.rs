@@ -92,6 +92,12 @@ pub struct WorkerConfig {
     #[serde(default)]
     pub reconnect_backoff_ceiling_secs: Option<u64>,
 
+    /// Maximum uncompressed bytes accepted from a component tarball
+    /// (default: 256 MiB). Defends against gzip-bomb attacks per
+    /// audit-rem D5.
+    #[serde(default)]
+    pub max_uncompressed_component_bytes: Option<u64>,
+
     /// Logging configuration.
     #[serde(default)]
     pub logging: LoggingConfig,
@@ -119,12 +125,22 @@ pub struct ResolvedWorkerConfig {
     pub component_temp_dir: Option<PathBuf>,
     pub sigkill_escalation_timeout_secs: Option<u64>,
     pub reconnect_backoff_ceiling_secs: Option<u64>,
+    /// Cap on uncompressed bytes from a component tarball (audit-rem
+    /// D5). `None` → use [`crate::build::component::DEFAULT_MAX_UNCOMPRESSED_BYTES`].
+    pub max_uncompressed_component_bytes: Option<u64>,
 }
 
 impl ResolvedWorkerConfig {
     /// Backoff ceiling in seconds, defaulting to 30.
     pub fn backoff_ceiling_secs(&self) -> u64 {
         self.reconnect_backoff_ceiling_secs.unwrap_or(30)
+    }
+
+    /// Resolved decompression cap for component tarballs (audit-rem D5),
+    /// defaulting to [`crate::build::component::DEFAULT_MAX_UNCOMPRESSED_BYTES`].
+    pub fn max_uncompressed_component_bytes(&self) -> u64 {
+        self.max_uncompressed_component_bytes
+            .unwrap_or(crate::build::component::DEFAULT_MAX_UNCOMPRESSED_BYTES)
     }
 }
 
@@ -234,6 +250,7 @@ impl WorkerConfig {
                 component_temp_dir: self.component_temp_dir,
                 sigkill_escalation_timeout_secs: self.sigkill_escalation_timeout_secs,
                 reconnect_backoff_ceiling_secs: self.reconnect_backoff_ceiling_secs,
+                max_uncompressed_component_bytes: self.max_uncompressed_component_bytes,
             });
         }
 
@@ -270,6 +287,7 @@ impl WorkerConfig {
             component_temp_dir: self.component_temp_dir,
             sigkill_escalation_timeout_secs: self.sigkill_escalation_timeout_secs,
             reconnect_backoff_ceiling_secs: self.reconnect_backoff_ceiling_secs,
+            max_uncompressed_component_bytes: self.max_uncompressed_component_bytes,
         })
     }
 }
@@ -365,6 +383,7 @@ mod tests {
             component_temp_dir: None,
             sigkill_escalation_timeout_secs: None,
             reconnect_backoff_ceiling_secs: None,
+            max_uncompressed_component_bytes: None,
             logging: LoggingConfig::default(),
         }
     }
