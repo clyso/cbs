@@ -230,20 +230,20 @@ pub async fn run_scheduler(state: AppState, notify: Arc<tokio::sync::Notify>) {
                     );
                 }
             }
-            // Step 10: User deactivated — disable the task.
-            Err(TriggerError::UserDeactivated) => {
+            // Step 10: Owner missing, deactivated, or lost required caps —
+            // disable the task with the canonical `owner_account_missing`
+            // marker (audit-rem D3).
+            Err(TriggerError::OwnerAccountMissing) => {
                 tracing::warn!(
                     task_id = %task.id,
                     created_by = %task.created_by,
-                    "scheduler: task owner deactivated — disabling task"
+                    "scheduler: task owner missing, deactivated, or lost \
+                     required capabilities — disabling task"
                 );
 
-                if let Err(e) = db::periodic::disable_with_error(
-                    &state.pool,
-                    &task.id,
-                    "task owner deactivated or not found",
-                )
-                .await
+                if let Err(e) =
+                    db::periodic::disable_with_error(&state.pool, &task.id, "owner_account_missing")
+                        .await
                 {
                     tracing::error!(
                         task_id = %task.id,

@@ -26,18 +26,41 @@ use cbsd_proto::{BuildDescriptor, Priority};
 
 /// Errors that can occur when triggering a periodic build.
 pub enum TriggerError {
-    /// The task owner is deactivated or not found.
-    UserDeactivated,
+    /// The task owner is deactivated, missing, or has lost a required
+    /// capability since task creation. Audit-rem D3 — disables the task
+    /// with `last_error = "owner_account_missing"`.
+    OwnerAccountMissing,
     /// A transient error (e.g. database) that may succeed on retry.
     Transient(String),
     /// A permanent error (e.g. invalid descriptor) — task should be disabled.
     Fatal(String),
 }
 
+/// Capabilities the task owner MUST still hold at trigger time for the
+/// task to fire. Mirrors the cap set required to create the periodic
+/// task and submit a build through the REST handler.
+pub(crate) const TRIGGER_REQUIRED_CAPS: &[&str] = &["periodic:create", "builds:create"];
+
+/// Returns true if `caps` contains every cap in [`TRIGGER_REQUIRED_CAPS`]
+/// (with `*` wildcard semantics matching `AuthUser::has_cap`).
+pub(crate) fn caps_satisfy_trigger_requirements(caps: &[String]) -> bool {
+    if caps.iter().any(|c| c == "*") {
+        return true;
+    }
+    TRIGGER_REQUIRED_CAPS
+        .iter()
+        .all(|req| caps.iter().any(|c| c == req))
+}
+
 impl std::fmt::Display for TriggerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UserDeactivated => write!(f, "task owner is deactivated or not found"),
+            Self::OwnerAccountMissing => write!(
+                f,
+                "owner_account_missing: task owner is deactivated, removed, \
+                 or no longer holds the capabilities required to fire \
+                 this task"
+            ),
             Self::Transient(msg) => write!(f, "transient error: {msg}"),
             Self::Fatal(msg) => write!(f, "fatal error: {msg}"),
         }
@@ -63,14 +86,29 @@ pub async fn trigger_periodic_build(
         .map_err(|e| TriggerError::Transient(format!("failed to check user active: {e}")))?;
 
     if !active {
-        return Err(TriggerError::UserDeactivated);
+        return Err(TriggerError::OwnerAccountMissing);
     }
 
     // 2. Look up user record (needed for channel resolution and signed_off_by).
     let user = db::users::get_user(&state.pool, &task.created_by)
         .await
         .map_err(|e| TriggerError::Transient(format!("failed to get user: {e}")))?
-        .ok_or(TriggerError::UserDeactivated)?;
+        .ok_or(TriggerError::OwnerAccountMissing)?;
+
+    // 2b. Per audit-rem D3: re-validate the owner's current effective
+    // capabilities. If the owner has lost `periodic:create` or
+    // `builds:create` since task creation, the task disables with the
+    // canonical `owner_account_missing` marker. Robots have their
+    // forbidden caps stripped to mirror `load_authed_user`'s behaviour.
+    let mut caps = db::roles::get_effective_caps(&state.pool, &user.email)
+        .await
+        .map_err(|e| TriggerError::Transient(format!("failed to load caps: {e}")))?;
+    if user.is_robot {
+        caps.retain(|c| !crate::auth::extractors::ROBOT_FORBIDDEN_CAPS.contains(&c.as_str()));
+    }
+    if !caps_satisfy_trigger_requirements(&caps) {
+        return Err(TriggerError::OwnerAccountMissing);
+    }
 
     // 3. Parse descriptor JSON.
     let mut descriptor: BuildDescriptor = serde_json::from_str(&task.descriptor)
@@ -151,5 +189,55 @@ fn classify_resolution_error(msg: String) -> TriggerError {
         TriggerError::Fatal(msg)
     } else {
         TriggerError::Transient(msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caps_satisfy_when_all_required_present() {
+        let caps = vec![
+            "periodic:create".to_string(),
+            "builds:create".to_string(),
+            "builds:list:any".to_string(),
+        ];
+        assert!(caps_satisfy_trigger_requirements(&caps));
+    }
+
+    #[test]
+    fn caps_satisfy_when_user_has_wildcard() {
+        let caps = vec!["*".to_string()];
+        assert!(caps_satisfy_trigger_requirements(&caps));
+    }
+
+    #[test]
+    fn caps_unsatisfied_when_periodic_create_missing() {
+        // Owner held both at task creation, but `periodic:create` was
+        // revoked. The trigger must refuse to fire.
+        let caps = vec!["builds:create".to_string()];
+        assert!(!caps_satisfy_trigger_requirements(&caps));
+    }
+
+    #[test]
+    fn caps_unsatisfied_when_builds_create_missing() {
+        let caps = vec!["periodic:create".to_string()];
+        assert!(!caps_satisfy_trigger_requirements(&caps));
+    }
+
+    #[test]
+    fn caps_unsatisfied_when_empty() {
+        let caps: Vec<String> = Vec::new();
+        assert!(!caps_satisfy_trigger_requirements(&caps));
+    }
+
+    /// Pin the required cap set so a future change to either constant
+    /// is loud — both halves of audit-rem D3 / F4 (write-time + trigger-
+    /// time re-validation) depend on this list staying in sync.
+    #[test]
+    fn required_caps_list_matches_design() {
+        let expected: Vec<&str> = vec!["periodic:create", "builds:create"];
+        assert_eq!(TRIGGER_REQUIRED_CAPS, expected.as_slice());
     }
 }
