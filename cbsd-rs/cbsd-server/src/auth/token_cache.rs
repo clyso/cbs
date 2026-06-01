@@ -207,13 +207,28 @@ impl From<sqlx::Error> for TokenError {
 /// shared verify path doesn't care which table produced it. Both
 /// `db::api_keys::ApiKeyRow` and `db::robots::TokenCandidate` map into
 /// this shape via `From` impls.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct CandidateRow {
     id: i64,
     hash: String,
     prefix: String,
     owner_email: String,
     expires_at: Option<i64>,
+}
+
+// Manual `Debug` so the stored Argon2 credential hash is never formatted into
+// a log line (audit-rem D10: Argon2 hashes are secret material). `prefix` is a
+// non-secret lookup index and is shown.
+impl std::fmt::Debug for CandidateRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CandidateRow")
+            .field("id", &self.id)
+            .field("hash", &"<redacted>")
+            .field("prefix", &self.prefix)
+            .field("owner_email", &self.owner_email)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl From<db::api_keys::ApiKeyRow> for CandidateRow {
@@ -464,9 +479,24 @@ fn hex_encode(bytes: &[u8]) -> String {
     })
 }
 
+/// Stable, per-process, non-reversible diagnostic identifier for a raw token.
+/// Lets auth log lines correlate to a token without writing any token bytes
+/// (audit-rem D10 / SI-10). The process-lifetime random salt means a candidate
+/// token cannot be matched against logged ids, and ids do not correlate across
+/// process restarts or deployments.
+pub(crate) fn token_diag_id(token: &str) -> String {
+    static SALT: LazyLock<[u8; 16]> = LazyLock::new(|| rand::thread_rng().r#gen());
+    let mut hasher = Sha256::new();
+    hasher.update(SALT.as_slice());
+    hasher.update(token.as_bytes());
+    let digest = hasher.finalize();
+    hex_encode(&digest)[..16].to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_test::traced_test;
 
     #[test]
     fn dummy_argon2_hash_initialises_and_rejects_non_sentinel_inputs() {
@@ -480,6 +510,26 @@ mod tests {
             "sentinel must reject any non-sentinel plaintext so the \
              dummy verify on the no-candidate timing-parity path is \
              indistinguishable from a failed real verify"
+        );
+    }
+
+    #[test]
+    fn token_diag_id_is_stable_and_distinct() {
+        let a = "cbsk_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd";
+        let b = "cbsk_ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        assert_eq!(token_diag_id(a).len(), 16, "diag id is a 16-hex prefix");
+        assert_eq!(token_diag_id(a), token_diag_id(a), "stable within a run");
+        assert_ne!(token_diag_id(a), token_diag_id(b), "distinct tokens differ");
+    }
+
+    #[traced_test]
+    #[test]
+    fn token_diag_id_does_not_leak_token_in_tracing() {
+        let raw = "cbsk_secretsecretsecretsecretsecretsecretsecretsecretsecretsecret01";
+        tracing::warn!(token_id = %token_diag_id(raw), "auth reject");
+        assert!(
+            !logs_contain("secretsecret"),
+            "raw token must not appear in tracing output"
         );
     }
 }

@@ -215,7 +215,7 @@ async fn validate_paseto(token_str: &str, state: &AppState) -> Result<AuthUser, 
         paseto::token_decode(token_str, &state.config.secrets.token_secret_key).map_err(|e| {
             tracing::warn!(
                 error = %e,
-                token_prefix = &token_str[..token_str.len().min(20)],
+                token_id = %token_cache::token_diag_id(token_str),
                 "auth reject: PASETO decode failed"
             );
             auth_error(StatusCode::UNAUTHORIZED, &format!("invalid token: {e}"))
@@ -225,7 +225,7 @@ async fn validate_paseto(token_str: &str, state: &AppState) -> Result<AuthUser, 
     tracing::debug!(
         user = %payload.user,
         expires = ?payload.expires,
-        hash_prefix = &hash[..16],
+        token_id = %token_cache::token_diag_id(token_str),
         "auth: PASETO decoded successfully"
     );
 
@@ -242,7 +242,7 @@ async fn validate_paseto(token_str: &str, state: &AppState) -> Result<AuthUser, 
     if revoked {
         tracing::warn!(
             user = %payload.user,
-            hash_prefix = &hash[..16],
+            token_id = %token_cache::token_diag_id(token_str),
             "auth reject: token revoked or unknown"
         );
         return Err(auth_error(StatusCode::UNAUTHORIZED, "token revoked"));
@@ -273,7 +273,7 @@ impl FromRequestParts<AppState> for AuthUser {
         if let Ok(TypedHeader(Authorization(bearer))) = bearer_result {
             let token_str = bearer.token();
             tracing::debug!(
-                token_prefix = &token_str[..token_str.len().min(20)],
+                token_id = %token_cache::token_diag_id(token_str),
                 token_len = token_str.len(),
                 "auth: processing bearer token"
             );
@@ -354,6 +354,8 @@ impl FromRequestParts<AppState> for AuthUser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::test_support::{test_app_state, test_pool};
+    use tracing_test::traced_test;
 
     #[test]
     fn first_robot_forbidden_cap_rejects_each_forbidden_cap() {
@@ -391,5 +393,39 @@ mod tests {
             is_robot: false,
         };
         assert_eq!(human.display_identity(), "alice@example.com");
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn bearer_auth_does_not_log_raw_token() {
+        let state = test_app_state(test_pool().await);
+        // A correctly-shaped (69-char) but unregistered API key: auth fails,
+        // but the bearer-processing debug log fires first.
+        let raw = format!("cbsk_{}", "deadbeef".repeat(8));
+        let mut parts = axum::http::Request::builder()
+            .uri("/")
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {raw}"))
+            .body(axum::body::Body::empty())
+            .unwrap()
+            .into_parts()
+            .0;
+        let _ = AuthUser::from_request_parts(&mut parts, &state).await;
+        assert!(
+            !logs_contain("deadbeef"),
+            "raw bearer token must not appear in auth logs"
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn paseto_decode_failure_does_not_log_raw_token() {
+        let state = test_app_state(test_pool().await);
+        let raw = "v4.local.cafebabecafebabecafebabecafebabecafebabecafebabe";
+        let result = validate_paseto(raw, &state).await;
+        assert!(result.is_err(), "a bogus token must fail to decode");
+        assert!(
+            !logs_contain("cafebabe"),
+            "raw token must not appear in the decode-failure log"
+        );
     }
 }
