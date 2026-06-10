@@ -216,6 +216,7 @@ pub async fn get_key_prefix_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::Row;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -313,5 +314,48 @@ mod tests {
         .unwrap();
         assert!(row.first_used_at.is_none());
         assert!(row.last_used_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn key_prefix_index_exists_and_is_used() {
+        let pool = test_pool().await;
+
+        // Migration 009 created the standalone index.
+        let idx = sqlx::query(
+            "SELECT name FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_api_keys_key_prefix'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(
+            idx.is_some(),
+            "idx_api_keys_key_prefix must exist after migrations"
+        );
+
+        // The prefix-only verification lookup must SEARCH via the index, not
+        // full-SCAN the table — closes the O(n) timing side channel (D7 / F10).
+        let plan = sqlx::query(
+            "EXPLAIN QUERY PLAN \
+             SELECT id FROM api_keys WHERE key_prefix = 'pfx000000aaa' AND revoked = 0",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let uses_index = plan.iter().any(|r| {
+            r.try_get::<String, _>("detail")
+                .map(|d| d.contains("idx_api_keys_key_prefix"))
+                .unwrap_or(false)
+        });
+        assert!(
+            uses_index,
+            "prefix lookup must SEARCH via idx_api_keys_key_prefix, not SCAN"
+        );
+
+        // Migrations are idempotent: re-running is a no-op, not an error.
+        sqlx::migrate!("../migrations")
+            .run(&pool)
+            .await
+            .expect("re-running migrations must be idempotent");
     }
 }

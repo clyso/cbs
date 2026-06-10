@@ -1,0 +1,21 @@
+-- Copyright (C) 2026  Clyso
+--
+-- Audit-rem D7 / audit F10: add a standalone, non-unique B-tree index on
+-- `api_keys(key_prefix)`. The API-key verification path fetches candidate
+-- rows with `WHERE key_prefix = ?` across all owners. The only existing
+-- index covering key_prefix is the composite `UNIQUE (owner_email,
+-- key_prefix)`, whose leading column is `owner_email`, so SQLite cannot use
+-- it for a prefix-only lookup and falls back to a full table SCAN. That is
+-- O(n) and a measurable timing side channel that partially defeats the
+-- timing-parity sentinel in the verify path.
+--
+-- Non-unique: two different full keys may share a 12-hex prefix; the prefix
+-- is a lookup/UX helper, not a unique identifier.
+--
+-- Query-plan check (sqlite):
+--   EXPLAIN QUERY PLAN
+--     SELECT id FROM api_keys WHERE key_prefix = ? AND revoked = 0;
+--   before: SCAN api_keys
+--   after:  SEARCH api_keys USING INDEX idx_api_keys_key_prefix (key_prefix=?)
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON api_keys(key_prefix);
