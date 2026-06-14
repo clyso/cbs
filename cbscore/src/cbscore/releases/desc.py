@@ -24,6 +24,9 @@ from cbscore.releases import logger as parent_logger
 logger = parent_logger.getChild("desc")
 
 
+S3_BASE_URL = "https://ces-packages.s3.clyso.com"
+
+
 class ArchType(enum.StrEnum):
     x86_64 = "x86_64"
 
@@ -55,10 +58,14 @@ class ReleaseRPMArtifacts(pydantic.BaseModel):
     release_rpm_loc: str
 
 
+class LocalReleaseRPMArtifacts(pydantic.BaseModel):
+    loc: Path
+
+
 # allow extending this type, possibly including discriminators,
 # should we want to add other build types in the future.
 #
-ReleaseArtifacts = ReleaseRPMArtifacts
+ReleaseArtifacts = ReleaseRPMArtifacts | LocalReleaseRPMArtifacts
 
 
 class ReleaseComponentVersion(ReleaseComponentHeader, BuildInfo):
@@ -126,6 +133,7 @@ class ReleaseDesc(pydantic.BaseModel):
 
     version: str
     builds: dict[ArchType, ReleaseBuildEntry]
+    base_url: str | None = S3_BASE_URL
 
     @classmethod
     def load(cls, path: Path) -> ReleaseDesc:

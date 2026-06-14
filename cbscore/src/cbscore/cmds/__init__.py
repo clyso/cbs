@@ -28,6 +28,8 @@ logger = root_logger.getChild("cbsbuild")
 
 class Ctx:
     config_path: Path | None = None
+    local: bool = False
+    dev: bool = False
 
 
 pass_ctx = click.make_pass_decorator(Ctx, ensure=True)

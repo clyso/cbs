@@ -115,7 +115,7 @@ async def prepare_builder() -> None:
         )
         logger.debug(stdout)
         if rc == 2 and re.match(".*already installed.*", stderr):
-            msg = f'skip install cosign. allready installed'
+            msg = "skip install cosign. already installed"
             logger.debug(msg)
         elif rc != 0:
             msg = f"error installing cosign package: {stderr}"
@@ -182,6 +182,8 @@ async def prepare_components(
     components_loc: dict[str, CoreComponentLoc],
     components: list[VersionComponent],
     version: str,
+    *,
+    dev: bool,
 ) -> AsyncGenerator[dict[str, BuildComponentInfo]]:
     """
     Prepare all components by cloning them and applying required patches.
@@ -217,7 +219,7 @@ async def prepare_components(
         )
         start = dt.now(tz=datetime.UTC)
         try:
-            with secrets.git_url_for(comp.repo) as comp_url:
+            with secrets.git_url_for(comp.repo, dev=dev) as comp_url:
                 cloned_path = await git.git_clone(
                     comp_url,
                     git_repos_path,
