@@ -751,6 +751,51 @@ fn idle_reconcile_decision(
     }
 }
 
+/// Outcome of the audit-rem D12 dead-worker resolution table. Pure so each
+/// row is unit-testable; [`resolve_dead_build`] maps it onto the existing
+/// rollback / terminal-cleanup helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeadWorkerAction {
+    /// `dispatched + AwaitingReceipt`: no owned message ever proved the worker
+    /// held the assignment, so roll back to `queued` for redispatch.
+    RollbackToQueued,
+    /// Mark the build terminal `failure` with the given reason. Used for
+    /// `dispatched + ReceivedByWorker` (the worker may have produced upstream
+    /// side effects before dying, so failing avoids a duplicate-execution
+    /// requeue) and for `started`.
+    Fail(&'static str),
+    /// `revoking`: the worker died mid-revoke; treat the revoke as complete.
+    MarkRevoked(&'static str),
+    /// Already terminal or an unexpected state — drop the stale active entry
+    /// without a DB transition.
+    RemoveOnly,
+}
+
+/// Pure-function resolution table for a worker declared dead (audit-rem D12),
+/// over (`builds.state` × [`ActiveAssignmentReceipt`]):
+/// - `dispatched + AwaitingReceipt` → RollbackToQueued
+/// - `dispatched + ReceivedByWorker` → Fail (no requeue — possible side effects)
+/// - `started` → Fail
+/// - `revoking` → MarkRevoked
+/// - other → RemoveOnly
+///
+/// Distinct from [`idle_reconcile_decision`]: there the worker is back and
+/// reporting idle (so even `ReceivedByWorker` rolls back); here the worker is
+/// gone, so `ReceivedByWorker` work-in-flight is failed rather than requeued.
+fn dead_worker_resolution(db_state: &str, receipt: ActiveAssignmentReceipt) -> DeadWorkerAction {
+    match db_state {
+        "dispatched" => match receipt {
+            ActiveAssignmentReceipt::AwaitingReceipt => DeadWorkerAction::RollbackToQueued,
+            ActiveAssignmentReceipt::ReceivedByWorker => {
+                DeadWorkerAction::Fail("worker died after accepting assignment")
+            }
+        },
+        "started" => DeadWorkerAction::Fail("worker died during execution"),
+        "revoking" => DeadWorkerAction::MarkRevoked("revoke completed by worker death"),
+        _ => DeadWorkerAction::RemoveOnly,
+    }
+}
+
 /// Terminal status accepted by [`cleanup_terminal_state`]. Closed set,
 /// kept narrow so the helper cannot be invoked with a non-terminal
 /// state string like `"queued"` or `"dispatched"`.
@@ -773,8 +818,8 @@ impl TerminalStatus {
 }
 
 /// Shared terminal-state cleanup used by every path that finalises an
-/// active build (idle reconciler's FailBuild and MarkRevoked branches,
-/// `fail_build`, `handle_worker_dead`'s "revoking" arm, and the dispatch
+/// active build (idle reconciler's FailBuild and MarkRevoked branches, the
+/// dead-worker resolver's Fail and MarkRevoked actions, and the dispatch
 /// module's integrity-reject and revoke-timeout paths). Marks the build
 /// finished with the supplied [`TerminalStatus`], finalises the build
 /// log row, and removes the active entry and log watcher. Takes the
@@ -1093,74 +1138,32 @@ async fn handle_worker_status(
 }
 
 /// Handle a worker transitioning to Dead (grace period expired). Resolves
-/// all active builds assigned to that connection.
+/// every active build owned by that connection via the audit-rem D12
+/// resolution table ([`dead_worker_resolution`]), then attempts a redispatch
+/// for anything rolled back to `queued`.
 pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
-    let active_build_ids = {
+    // Snapshot (build_id, receipt) under the queue lock. The worker is gone,
+    // so the receipt cannot change between this snapshot and resolution.
+    let owned = {
         let queue = state.queue.lock().await;
-        queue.active_builds_for_connection(connection_id)
+        queue.active_builds_with_receipt_for_connection(connection_id)
     };
 
-    for build_id in active_build_ids {
-        let db_state = match crate::db::builds::get_build(&state.pool, build_id).await {
-            Ok(Some(b)) => b.state,
-            Ok(None) => continue,
-            Err(e) => {
-                tracing::error!(build_id = build_id, "dead worker DB lookup failed: {e}");
-                continue;
-            }
-        };
-
-        match db_state.as_str() {
-            "dispatched" => {
-                // Re-queue with original priority (not hardcoded Normal).
-                tracing::warn!(
-                    build_id = build_id,
-                    connection_id = %connection_id,
-                    "worker dead — re-queuing dispatched build"
-                );
-                dispatch::rollback_active_to_queued(
-                    &state.pool,
-                    &state.queue,
-                    &state.log_watchers,
-                    build_id,
-                )
-                .await;
-            }
-            "started" => {
-                tracing::error!(
-                    build_id = build_id,
-                    connection_id = %connection_id,
-                    "worker dead — marking FAILURE(worker lost)"
-                );
-                fail_build(state, build_id, "worker lost").await;
-            }
-            "revoking" => {
-                tracing::warn!(
-                    build_id = build_id,
-                    connection_id = %connection_id,
-                    "worker dead while revoking — marking REVOKED"
-                );
-                cleanup_terminal_state(
-                    &state.pool,
-                    &state.queue,
-                    &state.log_watchers,
-                    build_id,
-                    TerminalStatus::Revoked,
-                    "worker dead during revoke",
-                )
-                .await;
-            }
-            _ => {
-                let mut queue = state.queue.lock().await;
-                queue.active.remove(&build_id);
-            }
-        }
+    for (build_id, receipt) in owned {
+        resolve_dead_build(
+            &state.pool,
+            &state.queue,
+            &state.log_watchers,
+            connection_id,
+            build_id,
+            receipt,
+        )
+        .await;
     }
 
-    // Any builds re-queued above need another idle worker. The previous
-    // implementation called `try_dispatch` per-build inside the now-deleted
-    // `requeue_active_build` helper; a single post-loop call is functionally
-    // equivalent.
+    // Anything rolled back to `queued` above needs another idle worker. A
+    // single post-loop call is functionally equivalent to the previous
+    // per-build dispatch.
     if let Err(dispatch::DispatchError::NothingToDispatch) = dispatch::try_dispatch(state).await {
         tracing::debug!(
             connection_id = %connection_id,
@@ -1169,19 +1172,75 @@ pub async fn handle_worker_dead(state: &AppState, connection_id: &str) {
     }
 }
 
-/// Mark a build as FAILURE, clean up active map and log watchers.
-/// Thin `AppState`-aware wrapper around [`cleanup_terminal_state`] for
-/// callers that already have a `&AppState` in scope.
-async fn fail_build(state: &AppState, build_id: i64, reason: &str) {
-    cleanup_terminal_state(
-        &state.pool,
-        &state.queue,
-        &state.log_watchers,
-        build_id,
-        TerminalStatus::Failure,
-        reason,
-    )
-    .await;
+/// Resolve a single dead-worker-owned build per the audit-rem D12 table.
+/// Reads the current DB state, applies [`dead_worker_resolution`] against the
+/// in-memory receipt, and executes the resulting action via the existing
+/// rollback / terminal-cleanup helpers. Takes explicit state pieces (not
+/// `&AppState`) so integration tests can drive each row directly.
+async fn resolve_dead_build(
+    pool: &SqlitePool,
+    queue: &SharedBuildQueue,
+    log_watchers: &LogWatchers,
+    connection_id: &str,
+    build_id: i64,
+    receipt: ActiveAssignmentReceipt,
+) {
+    let db_state = match crate::db::builds::get_build(pool, build_id).await {
+        Ok(Some(b)) => b.state,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(build_id, "dead worker DB lookup failed: {e}");
+            return;
+        }
+    };
+
+    match dead_worker_resolution(&db_state, receipt) {
+        DeadWorkerAction::RollbackToQueued => {
+            tracing::warn!(
+                build_id,
+                connection_id = %connection_id,
+                "worker dead — rolling unacknowledged dispatch back to queued"
+            );
+            dispatch::rollback_active_to_queued(pool, queue, log_watchers, build_id).await;
+        }
+        DeadWorkerAction::Fail(reason) => {
+            tracing::error!(
+                build_id,
+                connection_id = %connection_id,
+                reason,
+                "worker dead — marking build failure"
+            );
+            cleanup_terminal_state(
+                pool,
+                queue,
+                log_watchers,
+                build_id,
+                TerminalStatus::Failure,
+                reason,
+            )
+            .await;
+        }
+        DeadWorkerAction::MarkRevoked(reason) => {
+            tracing::warn!(
+                build_id,
+                connection_id = %connection_id,
+                "worker dead while revoking — marking revoked"
+            );
+            cleanup_terminal_state(
+                pool,
+                queue,
+                log_watchers,
+                build_id,
+                TerminalStatus::Revoked,
+                reason,
+            )
+            .await;
+        }
+        DeadWorkerAction::RemoveOnly => {
+            let mut q = queue.lock().await;
+            q.active.remove(&build_id);
+        }
+    }
 }
 
 /// Clean up worker state on connection close.
@@ -1686,6 +1745,156 @@ mod tests {
         assert!(
             !watchers.lock().await.contains_key(&build_id),
             "log watcher must be removed"
+        );
+    }
+
+    // -- audit-rem D12: dead-worker resolution table --
+
+    #[test]
+    fn dead_worker_dispatched_awaiting_rolls_back() {
+        assert_eq!(
+            dead_worker_resolution("dispatched", ActiveAssignmentReceipt::AwaitingReceipt),
+            DeadWorkerAction::RollbackToQueued
+        );
+    }
+
+    #[test]
+    fn dead_worker_dispatched_received_fails() {
+        assert_eq!(
+            dead_worker_resolution("dispatched", ActiveAssignmentReceipt::ReceivedByWorker),
+            DeadWorkerAction::Fail("worker died after accepting assignment")
+        );
+    }
+
+    #[test]
+    fn dead_worker_started_fails_regardless_of_receipt() {
+        for receipt in [
+            ActiveAssignmentReceipt::AwaitingReceipt,
+            ActiveAssignmentReceipt::ReceivedByWorker,
+        ] {
+            assert_eq!(
+                dead_worker_resolution("started", receipt),
+                DeadWorkerAction::Fail("worker died during execution")
+            );
+        }
+    }
+
+    #[test]
+    fn dead_worker_revoking_marks_revoked_regardless_of_receipt() {
+        for receipt in [
+            ActiveAssignmentReceipt::AwaitingReceipt,
+            ActiveAssignmentReceipt::ReceivedByWorker,
+        ] {
+            assert_eq!(
+                dead_worker_resolution("revoking", receipt),
+                DeadWorkerAction::MarkRevoked("revoke completed by worker death")
+            );
+        }
+    }
+
+    #[test]
+    fn dead_worker_terminal_or_queued_removes_only() {
+        for state in ["success", "failure", "revoked", "queued"] {
+            assert_eq!(
+                dead_worker_resolution(state, ActiveAssignmentReceipt::ReceivedByWorker),
+                DeadWorkerAction::RemoveOnly
+            );
+        }
+    }
+
+    /// Insert a build in `state` with an active entry carrying `receipt`, then
+    /// run the dead-worker resolver against it. Returns (pool, queue, id).
+    async fn run_resolve_dead(
+        state: &str,
+        receipt: ActiveAssignmentReceipt,
+    ) -> (SqlitePool, SharedBuildQueue, i64) {
+        let pool = test_pool().await;
+        let queue = empty_queue();
+        let watchers = empty_watchers();
+        let build_id = insert_in_state(&pool, state, "worker-1").await;
+        {
+            let mut q = queue.lock().await;
+            q.active.insert(
+                build_id,
+                ActiveBuild {
+                    receipt,
+                    ..make_active(build_id, "old-conn")
+                },
+            );
+        }
+        resolve_dead_build(&pool, &queue, &watchers, "old-conn", build_id, receipt).await;
+        (pool, queue, build_id)
+    }
+
+    #[tokio::test]
+    async fn resolve_dead_dispatched_awaiting_rolls_back_to_queued() {
+        let (pool, queue, build_id) =
+            run_resolve_dead("dispatched", ActiveAssignmentReceipt::AwaitingReceipt).await;
+
+        let build = crate::db::builds::get_build(&pool, build_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(
+            build.state, "queued",
+            "AwaitingReceipt → rollback to queued"
+        );
+        let q = queue.lock().await;
+        assert!(!q.active.contains_key(&build_id), "active entry removed");
+        assert!(
+            q.contains(BuildId(build_id)),
+            "rolled-back build must be re-enqueued"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_dead_dispatched_received_fails_and_does_not_requeue() {
+        let (pool, queue, build_id) =
+            run_resolve_dead("dispatched", ActiveAssignmentReceipt::ReceivedByWorker).await;
+
+        let build = crate::db::builds::get_build(&pool, build_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(build.state, "failure", "ReceivedByWorker → failure");
+        assert_eq!(
+            build.error.as_deref(),
+            Some("worker died after accepting assignment")
+        );
+        let q = queue.lock().await;
+        assert!(!q.active.contains_key(&build_id), "active entry removed");
+        assert!(
+            !q.contains(BuildId(build_id)),
+            "must NOT requeue — work may have side-effected (double-exec guard)"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_dead_started_marks_failure() {
+        let (pool, _queue, build_id) =
+            run_resolve_dead("started", ActiveAssignmentReceipt::ReceivedByWorker).await;
+
+        let build = crate::db::builds::get_build(&pool, build_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(build.state, "failure");
+        assert_eq!(build.error.as_deref(), Some("worker died during execution"));
+    }
+
+    #[tokio::test]
+    async fn resolve_dead_revoking_marks_revoked() {
+        let (pool, _queue, build_id) =
+            run_resolve_dead("revoking", ActiveAssignmentReceipt::AwaitingReceipt).await;
+
+        let build = crate::db::builds::get_build(&pool, build_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(build.state, "revoked");
+        assert_eq!(
+            build.error.as_deref(),
+            Some("revoke completed by worker death")
         );
     }
 }

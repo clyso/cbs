@@ -213,12 +213,18 @@ impl BuildQueue {
         })
     }
 
-    /// Return all active builds assigned to a given connection.
-    pub fn active_builds_for_connection(&self, connection_id: &str) -> Vec<i64> {
+    /// Return all active builds assigned to a given connection, paired with
+    /// their in-memory receipt state. The audit-rem D12 dead-worker resolver
+    /// needs the receipt to distinguish `AwaitingReceipt` (roll back to queued)
+    /// from `ReceivedByWorker` (fail without requeue).
+    pub fn active_builds_with_receipt_for_connection(
+        &self,
+        connection_id: &str,
+    ) -> Vec<(i64, ActiveAssignmentReceipt)> {
         self.active
             .values()
             .filter(|ab| ab.connection_id == connection_id)
-            .map(|ab| ab.build_id)
+            .map(|ab| (ab.build_id, ab.receipt))
             .collect()
     }
 
