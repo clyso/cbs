@@ -1,0 +1,19 @@
+[package]
+name = "crt-store"
+version = "0.1.0"
+edition.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+description = "CRT store: content-addressed blob/meta over object_store"
+
+[dependencies]
+crt-core = { path = "../crt-core" }
+serde_json = { workspace = true }
+async-trait = "0.1"
+bytes = "1"
+thiserror = "2"
+object_store = "0.13.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+tempfile = "3"

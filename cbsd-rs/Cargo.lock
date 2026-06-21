@@ -656,6 +656,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "crt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crt-core",
+ "crt-store",
+ "serde",
+ "serde_yml",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "crt-core"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "crt-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "crt-core",
+ "object_store",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1389,6 +1428,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "humantime"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
 name = "hyper"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1654,6 +1699,15 @@ name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
+
+[[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
 
 [[package]]
 name = "itoa"
@@ -1936,6 +1990,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 
 [[package]]
+name = "noyalib"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e493c05128df7a83b9676b709d590e0ebc285c7ed3152bc679668e8c1e506af5"
+dependencies = [
+ "indexmap",
+ "memchr",
+ "rustc-hash",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2003,6 +2070,32 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "object_store"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "622acbc9100d3c10e2ee15804b0caa40e55c933d5aa53814cd520805b7958a49"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures-channel",
+ "futures-core",
+ "futures-util",
+ "http",
+ "humantime",
+ "itertools",
+ "parking_lot",
+ "percent-encoding",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "walkdir",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]
@@ -2711,6 +2804,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "same-file"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
+dependencies = [
+ "winapi-util",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2851,6 +2953,16 @@ dependencies = [
  "form_urlencoded",
  "itoa",
  "ryu",
+ "serde",
+]
+
+[[package]]
+name = "serde_yml"
+version = "0.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "909764a65f86829ccdb5eea9ab355843aa02c019a7bfd47465092953565caa05"
+dependencies = [
+ "noyalib",
  "serde",
 ]
 
@@ -3974,6 +4086,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "walkdir"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
+dependencies = [
+ "same-file",
+ "winapi-util",
+]
+
+[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4172,6 +4294,15 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-util"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+dependencies = [
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"

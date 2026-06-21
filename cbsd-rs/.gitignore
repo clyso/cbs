@@ -2,3 +2,6 @@
 .git-version
 # Local sqlx dev databases (used to regenerate the .sqlx offline cache).
 *.db
+# crt runtime config + secrets — never commit; only *.example is tracked.
+crt.config.yaml
+crt.secrets.yaml

@@ -1,5 +1,5 @@
 [workspace]
-members = ["cbsd-common", "cbsd-proto", "cbsd-server", "cbsd-worker", "cbc"]
+members = ["cbsd-common", "cbsd-proto", "cbsd-server", "cbsd-worker", "cbc", "crt-core", "crt-store", "crt"]
 resolver = "2"
 
 [workspace.package]
