@@ -13,7 +13,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use crt_core::{PatchMeta, Sha256};
+use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as StorePath;
+use object_store::prefix::PrefixStore;
 use object_store::{
     ObjectStore, ObjectStoreExt, PutPayload, local::LocalFileSystem, memory::InMemory,
 };
@@ -85,6 +87,38 @@ impl ObjectBackedStore {
             inner: Arc::new(InMemory::new()),
         }
     }
+
+    /// Back the store with S3 (or an S3-compatible endpoint). Credentials come
+    /// from the secrets file (design §9); the optional `prefix` is applied to
+    /// every key. No live connection is made here.
+    pub fn s3(s: &S3Settings) -> Result<Self> {
+        let s3 = AmazonS3Builder::new()
+            .with_endpoint(&s.endpoint)
+            .with_region(&s.region)
+            .with_bucket_name(&s.bucket)
+            .with_access_key_id(&s.access_key_id)
+            .with_secret_access_key(&s.secret_access_key)
+            .with_allow_http(s.endpoint.starts_with("http://"))
+            .build()?;
+        let inner: Arc<dyn ObjectStore> = if s.prefix.is_empty() {
+            Arc::new(s3)
+        } else {
+            Arc::new(PrefixStore::new(s3, StorePath::from(s.prefix.as_str())))
+        };
+        Ok(Self { inner })
+    }
+}
+
+/// Connection settings for an S3 (or S3-compatible) backend. Endpoint/bucket
+/// come from `crt.config.yaml`; credentials from `crt.secrets.yaml` (design §9).
+pub struct S3Settings {
+    pub endpoint: String,
+    pub region: String,
+    pub bucket: String,
+    /// Key prefix applied to every object (e.g. `crt/`); empty for none.
+    pub prefix: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
 }
 
 #[async_trait]
@@ -173,6 +207,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ObjectBackedStore::local(dir.path()).unwrap();
         let raw = b"local patch";
+        let h = blob_hash(raw);
+        store.put_blob(&h, raw).await.unwrap();
+        assert_eq!(&store.get_blob(&h).await.unwrap()[..], raw);
+    }
+
+    #[test]
+    fn s3_settings_build_a_store() {
+        // Constructs the client (no network); validates the builder wiring.
+        let settings = S3Settings {
+            endpoint: "http://localhost:9000".to_owned(),
+            region: "us-east-1".to_owned(),
+            bucket: "bucket".to_owned(),
+            prefix: "crt/".to_owned(),
+            access_key_id: "id".to_owned(),
+            secret_access_key: "key".to_owned(),
+        };
+        assert!(ObjectBackedStore::s3(&settings).is_ok());
+    }
+
+    /// Real S3 round-trip. Opt-in: set `CRT_TEST_S3_*` and run with
+    /// `cargo test -p crt-store -- --ignored`. Never runs in plain `cargo test`
+    /// — there is no minio dependency (design §5).
+    #[tokio::test]
+    #[ignore = "requires a real S3 endpoint; set CRT_TEST_S3_* and run --ignored"]
+    async fn s3_blob_round_trip_real() {
+        let settings = S3Settings {
+            endpoint: std::env::var("CRT_TEST_S3_ENDPOINT").expect("CRT_TEST_S3_ENDPOINT"),
+            region: std::env::var("CRT_TEST_S3_REGION").unwrap_or_else(|_| "us-east-1".to_owned()),
+            bucket: std::env::var("CRT_TEST_S3_BUCKET").expect("CRT_TEST_S3_BUCKET"),
+            prefix: "crt-test/".to_owned(),
+            access_key_id: std::env::var("CRT_TEST_S3_ACCESS_KEY").expect("CRT_TEST_S3_ACCESS_KEY"),
+            secret_access_key: std::env::var("CRT_TEST_S3_SECRET_KEY")
+                .expect("CRT_TEST_S3_SECRET_KEY"),
+        };
+        let store = ObjectBackedStore::s3(&settings).unwrap();
+        let raw = b"real s3 patch";
         let h = blob_hash(raw);
         store.put_blob(&h, raw).await.unwrap();
         assert_eq!(&store.get_blob(&h).await.unwrap()[..], raw);

@@ -1,9 +1,16 @@
 # crt.config.yaml — copy to `crt.config.yaml` (git-ignored) and edit.
-# Non-secret configuration (design §9). Credentials live in crt.secrets.yaml
-# (added in commit 1.2).
+# Non-secret configuration (design §9). Credentials live in crt.secrets.yaml.
 
 component: ceph
 
+# Store backend — exactly one of `local` or `s3`.
 store:
-  # Local-filesystem store root (commit 1.1). The S3 backend is added in 1.2.
   local: /var/lib/crt/store
+  # s3:
+  #   endpoint: https://s3.example.com
+  #   region: us-east-1
+  #   bucket: my-crt-bucket
+  #   prefix: crt/
+
+# Config and secrets paths default to ./crt.config.yaml and ./crt.secrets.yaml;
+# override with --config / --secrets or $CRT_CONFIG / $CRT_SECRETS.

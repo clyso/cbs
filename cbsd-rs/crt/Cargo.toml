@@ -9,7 +9,7 @@ description = "Ceph Release Tool v2 (CLI)"
 [dependencies]
 crt-core = { path = "../crt-core" }
 crt-store = { path = "../crt-store" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true }
