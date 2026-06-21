@@ -24,6 +24,9 @@ pub enum UpstreamPrState {
     MergedMain,
     ApprovedOpen,
     OpenInReview,
+    /// Closed upstream without being merged. The change is still importable
+    /// downstream (a patch upstream declined is a valid downstream patch).
+    Declined,
 }
 
 /// Where a patch came from. `Other` is the downstream-only case.
@@ -86,6 +89,16 @@ mod tests {
                     (cherry picked from commit cafef00d )\n";
         assert_eq!(cherry_picked_from(body), vec!["deadbeef", "cafef00d"]);
         assert!(cherry_picked_from("no picks here").is_empty());
+    }
+
+    #[test]
+    fn upstream_pr_state_declined_round_trips() {
+        // The Declined variant (closed-but-unmerged PRs) must serialize
+        // kebab-cased and round-trip — guards against a serde rename drift.
+        let json = serde_json::to_string(&UpstreamPrState::Declined).expect("serializes");
+        assert_eq!(json, "\"declined\"");
+        let back: UpstreamPrState = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(back, UpstreamPrState::Declined);
     }
 
     #[test]

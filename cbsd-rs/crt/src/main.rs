@@ -51,14 +51,23 @@ enum Command {
 
 #[derive(Subcommand)]
 enum PatchCmd {
-    /// Import patches from a local git range into the content-addressed store.
+    /// Import patches into the content-addressed store, from a local git range
+    /// (`--range`) or a GitHub PR (`--pr`).
     Import {
-        /// Path to the source git repository.
+        /// Path to the local git repository (the PR's head/base are fetched
+        /// into it; patch bytes always come from a local `git format-patch`).
         #[arg(long)]
         repo: PathBuf,
         /// Commit range, e.g. `A..B`.
+        #[arg(long, conflicts_with = "pr", required_unless_present = "pr")]
+        range: Option<String>,
+        /// GitHub PR URL, e.g. `https://github.com/ceph/ceph/pull/12345`.
         #[arg(long)]
-        range: String,
+        pr: Option<String>,
+        /// GitHub token for the API (raises rate limits). The git fetch is
+        /// anonymous, so private-repo PRs are unsupported.
+        #[arg(long, env = "GITHUB_TOKEN")]
+        github_token: Option<String>,
     },
 }
 
@@ -93,10 +102,21 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Patch { cmd } => match cmd {
-            PatchCmd::Import { repo, range } => {
+            PatchCmd::Import {
+                repo,
+                range,
+                pr,
+                github_token,
+            } => {
                 let store = open_store(&cfg.store, &cli.secrets)?;
-                let source = repo.display().to_string();
-                let imported = import::import_range(&store, &repo, &range, &source).await?;
+                let imported = if let Some(pr) = pr {
+                    import::import_pr(&store, &repo, &pr, github_token.as_deref()).await?
+                } else {
+                    // clap guarantees exactly one of `--range` / `--pr`.
+                    let range = range.expect("clap requires --range when --pr is absent");
+                    let source = repo.display().to_string();
+                    import::import_range(&store, &repo, &range, &source).await?
+                };
                 for p in &imported {
                     let tag = if p.already_present {
                         "present "
@@ -104,6 +124,12 @@ async fn main() -> Result<()> {
                         "imported"
                     };
                     println!("{tag} {} {}", p.blob_hash, p.subject);
+                    if let Some(eq) = &p.equivalent_to {
+                        eprintln!(
+                            "  warning: equivalent to existing patch {eq} \
+                             (same patch_id, different bytes) — consider reusing it"
+                        );
+                    }
                 }
                 eprintln!(
                     "{} patch(es) processed for {}",

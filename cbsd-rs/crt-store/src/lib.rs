@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use crt_core::{PatchMeta, Sha256};
+use crt_core::{CrtCoreError, PatchMeta, Sha256};
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as StorePath;
 use object_store::prefix::PrefixStore;
@@ -30,6 +30,10 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("filesystem: {0}")]
     Io(#[from] std::io::Error),
+    #[error("invalid stored hash: {0}")]
+    Hash(#[from] CrtCoreError),
+    #[error("corrupt index: {0}")]
+    Corrupt(String),
 }
 
 type Result<T> = std::result::Result<T, StoreError>;
@@ -47,6 +51,10 @@ pub trait Store: Send + Sync {
     async fn put_meta(&self, hash: &Sha256, meta: &PatchMeta) -> Result<()>;
     /// Read patch metadata.
     async fn get_meta(&self, hash: &Sha256) -> Result<PatchMeta>;
+    /// Look up the blob hash recorded for a `patch_id`, if any (design §4).
+    async fn get_patch_id(&self, patch_id: &str) -> Result<Option<Sha256>>;
+    /// Record that `patch_id` maps to `hash` (the equivalence index).
+    async fn put_patch_id(&self, patch_id: &str, hash: &Sha256) -> Result<()>;
 }
 
 fn blob_path(hash: &Sha256) -> StorePath {
@@ -55,6 +63,10 @@ fn blob_path(hash: &Sha256) -> StorePath {
 
 fn meta_path(hash: &Sha256) -> StorePath {
     StorePath::from(format!("patches/meta/sha256/{}.json", hash.to_hex()))
+}
+
+fn patch_id_path(patch_id: &str) -> StorePath {
+    StorePath::from(format!("patches/by-patch-id/{patch_id}"))
 }
 
 /// A `Store` backed by any `object_store::ObjectStore`.
@@ -156,6 +168,29 @@ impl Store for ObjectBackedStore {
         let bytes = res.bytes().await?;
         Ok(serde_json::from_slice(&bytes)?)
     }
+
+    async fn get_patch_id(&self, patch_id: &str) -> Result<Option<Sha256>> {
+        match self.inner.get(&patch_id_path(patch_id)).await {
+            Ok(res) => {
+                let bytes = res.bytes().await?;
+                let hex = String::from_utf8(bytes.to_vec())
+                    .map_err(|_| StoreError::Corrupt("patch-id index not UTF-8".to_owned()))?;
+                Ok(Some(Sha256::try_from(hex.trim().to_owned())?))
+            }
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    async fn put_patch_id(&self, patch_id: &str, hash: &Sha256) -> Result<()> {
+        self.inner
+            .put(
+                &patch_id_path(patch_id),
+                PutPayload::from(hash.to_hex().into_bytes()),
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +235,15 @@ mod tests {
         let meta = sample_meta(h);
         store.put_meta(&h, &meta).await.unwrap();
         assert_eq!(store.get_meta(&h).await.unwrap(), meta);
+    }
+
+    #[tokio::test]
+    async fn patch_id_index_round_trip() {
+        let store = ObjectBackedStore::in_memory();
+        let h = blob_hash(b"p");
+        assert!(store.get_patch_id("pid-123").await.unwrap().is_none());
+        store.put_patch_id("pid-123", &h).await.unwrap();
+        assert_eq!(store.get_patch_id("pid-123").await.unwrap(), Some(h));
     }
 
     #[tokio::test]
