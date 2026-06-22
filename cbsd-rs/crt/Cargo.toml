@@ -11,11 +11,10 @@ crt-core = { path = "../crt-core" }
 crt-store = { path = "../crt-store" }
 clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
+chrono = { workspace = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true }
 serde_yml = "0.0.13"
+tempfile = "3"
 # Default features use the rustls stack (matches object_store), not openssl.
 octocrab = "0.53"
-
-[dev-dependencies]
-tempfile = "3"

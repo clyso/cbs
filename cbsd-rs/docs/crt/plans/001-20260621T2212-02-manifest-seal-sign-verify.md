@@ -132,6 +132,32 @@ operator with store access can pick it up.
 - **Smell test:** author + observe a shared draft; the first real consumer of
   the 2.1 types. **~600 LOC.**
 
+**Deviations from §10, recorded as landed:**
+
+- **Clobber-guard on `new`.** `release new` refuses if a draft **or** sealed
+  release already exists for the resolved key, rather than blindly
+  `put_draft`-ing. A blind overwrite would silently wipe a colleague's
+  in-progress draft — unacceptable in the store-backed, collaborative model that
+  motivated putting drafts in the shared store. A `--force` reset is deferred.
+- **`release new --base-ref <ref>` is required.** `ReleaseHeader.base_ref`
+  cannot be reliably derived from the name (`ces-v18.2.0-clyso1` ≠ base
+  `v18.2.0`), so it is an explicit flag. The author defaults to
+  `git config user.{name,email}`, overridable via `--author-name`/
+  `--author-email`.
+- **`release add` takes narrative flags.** `--public-summary` /
+  `--behavior-change` / `--upgrade-notes` are a scriptable, testable superset of
+  the design's "`$EDITOR` for …"; `$EDITOR` opens (composing all three in one
+  buffer) only when `--public-summary` is omitted. Risk axes are flags
+  (`--component` validated against `risk_components`, `--blast`/`--conflict`/
+  `--coverage`); duplicate blobs are skipped (idempotent re-runs); a blob with
+  no stored metadata is an error.
+- **`info` is observable for drafts and sealed releases.** It reads the draft,
+  falling back to the sealed release (via `StoreError::is_not_found`), so the
+  capability is not write-only.
+- Design §10 still literally reads "Draft releases live locally until seal";
+  that is **superseded** by this plan's store-backed-drafts decision (above) —
+  the authoritative design doc has not yet been amended.
+
 ### 2.5 — `crt: seal a draft into a signed release (release seal/list)`
 
 **After this:** `crt release seal <name>` turns a draft into a signed, persisted
@@ -178,7 +204,7 @@ clearly that legs 3–4 are not yet applicable.
 | 2.1 manifest model + canonical digest    | ✅ done | pure crt-core; byte-level golden test               |
 | 2.2 detached OpenPGP sign/verify         | ✅ done | rPGP 0.19, no-default-features (no C dep)           |
 | 2.3 store: drafts + releases + templates | ✅ done | mutable drafts; write-once releases; list-by-prefix |
-| 2.4 draft authoring (new/add/info)       | ☐ todo  | channel config; store-backed drafts                 |
+| 2.4 draft authoring (new/add/info)       | ✅ done | channel config; clobber-guarded store-backed drafts |
 | 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable              |
 | 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                           |
 

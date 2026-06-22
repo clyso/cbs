@@ -42,6 +42,20 @@ pub enum StoreError {
     InvalidKey(String),
 }
 
+impl StoreError {
+    /// Whether this is a missing-object error from the backend. Callers that
+    /// treat absence as a normal outcome — e.g. `release info`'s draft-then-
+    /// sealed-release fallback — branch on this rather than matching the
+    /// backend error directly (which would pull `object_store` into the CLI).
+    #[must_use]
+    pub fn is_not_found(&self) -> bool {
+        matches!(
+            self,
+            StoreError::ObjectStore(object_store::Error::NotFound { .. })
+        )
+    }
+}
+
 type Result<T> = std::result::Result<T, StoreError>;
 
 /// A content-addressed store for patch blobs and their metadata (design §5).

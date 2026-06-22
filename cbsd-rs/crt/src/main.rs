@@ -9,12 +9,18 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use chrono::{SecondsFormat, Utc};
 use clap::{Parser, Subcommand};
 use crt_store::{ObjectBackedStore, S3Settings};
+
+use crate::release::{
+    BlastArg, ConflictArg, CoverageArg, EntryFields, JustificationArg, VisibilityArg,
+};
 
 mod config;
 mod git;
 mod import;
+mod release;
 mod secrets;
 
 #[derive(Parser)]
@@ -46,6 +52,78 @@ enum Command {
     Patch {
         #[command(subcommand)]
         cmd: PatchCmd,
+    },
+    /// Release authoring.
+    Release {
+        #[command(subcommand)]
+        cmd: ReleaseCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ReleaseCmd {
+    /// Create a new, empty draft release. The name resolves to a channel by
+    /// prefix (e.g. `ces-v18.2.0` → channel `ces`).
+    New {
+        /// Release name (resolves to a configured channel).
+        name: String,
+        /// Upstream base ref the patches apply on top of (e.g. `v18.2.0`).
+        #[arg(long)]
+        base_ref: String,
+        /// Release author name (defaults to `git config user.name`).
+        #[arg(long)]
+        author_name: Option<String>,
+        /// Release author email (defaults to `git config user.email`).
+        #[arg(long)]
+        author_email: Option<String>,
+    },
+    /// Add one or more imported patch blobs to a draft as entries. The metadata
+    /// flags apply to every blob listed.
+    Add {
+        /// Release name.
+        name: String,
+        /// Blob hashes (full 64-char hex) of already-imported patches.
+        #[arg(required = true)]
+        blob_hash: Vec<String>,
+        /// Risk subsystem label (validated against `risk_components`).
+        #[arg(long)]
+        component: String,
+        #[arg(long, value_enum)]
+        blast: BlastArg,
+        #[arg(long, value_enum)]
+        conflict: ConflictArg,
+        #[arg(long, value_enum)]
+        coverage: CoverageArg,
+        /// Notes grouping (e.g. `security`/`feature`/`fix`/`integration`).
+        #[arg(long)]
+        category: String,
+        /// Per-patch visibility (recorded but inert in the MVP).
+        #[arg(long, value_enum, default_value = "public")]
+        visibility: VisibilityArg,
+        /// Why the patch is carried.
+        #[arg(long, value_enum)]
+        justification: JustificationArg,
+        /// Tracker/PR/CVE reference (repeatable).
+        #[arg(long = "ref")]
+        refs: Vec<String>,
+        /// Internal-only note (stored, never rendered or materialized).
+        #[arg(long)]
+        internal: Option<String>,
+        /// Public summary rendered into the notes. If omitted, `$EDITOR` opens
+        /// to compose the public summary / behavior change / upgrade notes.
+        #[arg(long)]
+        public_summary: Option<String>,
+        /// Per-entry behavior-change note.
+        #[arg(long)]
+        behavior_change: Option<String>,
+        /// Per-entry upgrade note.
+        #[arg(long)]
+        upgrade_notes: Option<String>,
+    },
+    /// Show a draft (or, if none, the sealed release) for a name.
+    Info {
+        /// Release name.
+        name: String,
     },
 }
 
@@ -138,6 +216,90 @@ async fn main() -> Result<()> {
                 );
             }
         },
+        Command::Release { cmd } => {
+            let store = open_store(&cfg.store, &cli.secrets)?;
+            match cmd {
+                ReleaseCmd::New {
+                    name,
+                    base_ref,
+                    author_name,
+                    author_email,
+                } => {
+                    let author = release::resolve_author(author_name, author_email)?;
+                    let created = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, false);
+                    let key = release::new_release(&store, &cfg, &name, &base_ref, author, created)
+                        .await?;
+                    println!(
+                        "created draft {} ({}/{}) base {base_ref}",
+                        key.name, key.namespace, key.channel
+                    );
+                }
+                ReleaseCmd::Add {
+                    name,
+                    blob_hash,
+                    component,
+                    blast,
+                    conflict,
+                    coverage,
+                    category,
+                    visibility,
+                    justification,
+                    refs,
+                    internal,
+                    public_summary,
+                    behavior_change,
+                    upgrade_notes,
+                } => {
+                    // Narrative fields come from flags, or — when
+                    // `--public-summary` is omitted — a single `$EDITOR` session.
+                    // On the editor path, explicit `--behavior-change` /
+                    // `--upgrade-notes` flags still win over the editor's
+                    // sections rather than being silently discarded.
+                    let (public_summary, behavior_change, upgrade_notes) = if let Some(summary) =
+                        public_summary
+                    {
+                        (summary, behavior_change, upgrade_notes)
+                    } else {
+                        let (ed_summary, ed_behavior, ed_upgrade) = release::compose_via_editor()?;
+                        (
+                            ed_summary,
+                            behavior_change.or(ed_behavior),
+                            upgrade_notes.or(ed_upgrade),
+                        )
+                    };
+                    let fields = EntryFields {
+                        visibility: visibility.into(),
+                        category,
+                        component,
+                        blast: blast.into(),
+                        conflict: conflict.into(),
+                        coverage: coverage.into(),
+                        kind: justification.into(),
+                        refs,
+                        public_summary,
+                        internal,
+                        behavior_change,
+                        upgrade_notes,
+                    };
+                    let result =
+                        release::add_entries(&store, &cfg, &name, &blob_hash, &fields).await?;
+                    for h in &result.added {
+                        println!("added {h}");
+                    }
+                    for h in &result.skipped {
+                        eprintln!("skipped {h} (already in the draft)");
+                    }
+                    eprintln!(
+                        "{} entr(ies) added, {} skipped",
+                        result.added.len(),
+                        result.skipped.len()
+                    );
+                }
+                ReleaseCmd::Info { name } => {
+                    print!("{}", release::show_info(&store, &cfg, &name).await?);
+                }
+            }
+        }
     }
     Ok(())
 }

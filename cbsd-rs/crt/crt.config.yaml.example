@@ -12,5 +12,22 @@ store:
   #   bucket: my-crt-bucket
   #   prefix: crt/
 
+# Allowed risk-component labels for `release add --component` (design §9).
+# An empty list (or omitting this key) accepts any component.
+risk_components: [rgw, rgw-multisite, dashboard, build, docs, other]
+
+# Namespaces → channels. A release name resolves to a channel by prefix
+# (e.g. `ces-v18.2.0` → channel `ces`); the most specific channel wins.
+# `branding` is snapshotted into the manifest at seal time and shown by
+# `release info`.
+namespaces:
+  clyso-enterprise:
+    channels:
+      ces:
+        branding:
+          display_name: Clyso Enterprise Storage
+          blurb: Long-term-supported, hardened Ceph for enterprises.
+          footer: © Clyso — https://clyso.com
+
 # Config and secrets paths default to ./crt.config.yaml and ./crt.secrets.yaml;
 # override with --config / --secrets or $CRT_CONFIG / $CRT_SECRETS.
