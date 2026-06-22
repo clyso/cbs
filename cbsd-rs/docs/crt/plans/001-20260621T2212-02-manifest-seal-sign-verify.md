@@ -1,6 +1,7 @@
 # CRT v2 — Plan M2: sealed, signed release manifests + verify
 
-> **Status:** Plan (approved; M2 in progress). Implements **M2** of the design
+> **Status:** Plan (approved; **M2 complete** — all six commits landed).
+> Implements **M2** of the design
 > [`../design/001-20260620T1318-v2-mvp.md`](../design/001-20260620T1318-v2-mvp.md)
 > (concept [`../000-concept.md`](../000-concept.md)). Part 02 of the multi-part
 > plan sharing seq `001` (M1 is part 01). Commit boundaries follow the
@@ -229,6 +230,36 @@ clearly that legs 3–4 are not yet applicable.
   is emitted.
 - **Smell test:** the verify capability over a sealed release. **~450 LOC.**
 
+**Decisions, recorded as landed:**
+
+- **Distinct exit codes** (design §11): signature failure ⇒ **2**, verify
+  failure (schema/cross-reference) ⇒ **3**, operational error ⇒ **1** (anyhow),
+  success ⇒ **0**. The core `verify_release` returns a `VerifyVerdict`
+  (Pass/SignatureFailed/VerifyFailed) so the legs are values, not errors; `main`
+  maps them to exit codes via `std::process::exit`.
+- **Leg split:** leg 0 (signature) fails fast; leg 1 checks `schema_version`
+  against `crt-core::SCHEMA_VERSION`; leg 2 checks recomputed digest == stored,
+  every referenced blob exists, and each referenced `PatchMeta`'s `patch_id`
+  matches the entry's denormalized value. Legs 3–4 are **reported skipped** ("no
+  materialized ref — M3/M4"), never silently passed.
+- **Spec deviation (narrow):** a stored object that is **present but
+  unreadable** (a corrupt `ReleaseRecord`/`Manifest` from `get_release`, or a
+  corrupt referenced `PatchMeta`) surfaces as an operational error (exit 1),
+  whereas design §11 leg 1 frames a deserialize/validate failure as a verify
+  failure (exit 3). A _missing_ release or referenced meta is correctly handled
+  (no-such-release ⇒ operational; missing meta ⇒ verify failure). Acceptable for
+  the MVP; revisit if corrupt-object detection should be exit 3.
+- **Public-key fetch** (`load_public_key`, edge shim): an `https://` URL via
+  `reqwest` 0.12 (`rustls-tls`, reusing octocrab's instance — **no openssl**),
+  or a local file path. Plaintext `http://` is **refused** — the public key is
+  the root of trust and fingerprint pinning is design-deferred, so the transport
+  is the only protection. The file branch and the `http://` rejection are
+  unit-tested; the `https://` branch was **smoke-verified** against a live
+  `.asc` URL (confirming the rustls provider works at runtime, with both `ring`
+  and `aws-lc-rs` in the tree) and also has an `#[ignore]`d env-gated test. The
+  seal→verify chain _through the CLI_ still needs a live Vault for `seal`, so
+  that wiring is exercised only by the in-process tests.
+
 ## Progress
 
 | Commit                                   | Status  | Notes                                               |
@@ -238,7 +269,7 @@ clearly that legs 3–4 are not yet applicable.
 | 2.3 store: drafts + releases + templates | ✅ done | mutable drafts; write-once releases; list-by-prefix |
 | 2.4 draft authoring (new/add/info)       | ✅ done | channel config; clobber-guarded store-backed drafts |
 | 2.5 seal (Vault + sign) + list           | ✅ done | delete_draft LAST; key bytes injected; rustls Vault |
-| 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                           |
+| 2.6 verify (legs 0–2)                    | ✅ done | legs 3–4 reported skipped; distinct exit codes      |
 
 (Update after each commit lands.)
 

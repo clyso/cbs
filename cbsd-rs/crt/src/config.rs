@@ -27,6 +27,11 @@ pub struct Config {
     /// deterministic.
     #[serde(default)]
     pub namespaces: BTreeMap<String, Namespace>,
+    /// Published location of Clyso's OpenPGP public key, used by
+    /// `release verify` (design §6.1/§9). A `file:`-less path or an `http(s)`
+    /// URL; the `--public-key` flag overrides it.
+    #[serde(default)]
+    pub public_key_url: Option<String>,
 }
 
 /// A configured namespace: a set of named channels (design §9).
@@ -188,6 +193,7 @@ store:
             store: StoreConfig::Local(PathBuf::from("/tmp/store")),
             risk_components: vec![],
             namespaces: ns_map,
+            public_key_url: None,
         }
     }
 

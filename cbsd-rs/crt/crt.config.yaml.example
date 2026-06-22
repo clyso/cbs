@@ -16,6 +16,11 @@ store:
 # An empty list (or omitting this key) accepts any component.
 risk_components: [rgw, rgw-multisite, dashboard, build, docs, other]
 
+# Published location of Clyso's OpenPGP public key, used by `release verify`
+# (design §6.1). An http(s) URL or a local path; the `--public-key` flag
+# overrides it.
+public_key_url: https://download.clyso.com/crt/crt-pubkey.asc
+
 # Namespaces → channels. A release name resolves to a channel by prefix
 # (e.g. `ces-v18.2.0` → channel `ces`); the most specific channel wins.
 # `branding` is snapshotted into the manifest at seal time and shown by

@@ -23,6 +23,12 @@ mod import;
 mod release;
 mod secrets;
 mod vault;
+mod verify;
+
+/// Exit code for a signature-verification failure (design §11 leg 0).
+const EXIT_SIGNATURE: i32 = 2;
+/// Exit code for a schema/cross-reference verification failure (legs 1–2).
+const EXIT_VERIFY: i32 = 3;
 
 #[derive(Parser)]
 #[command(name = "crt", version, about = "Ceph Release Tool")]
@@ -134,6 +140,17 @@ enum ReleaseCmd {
     Info {
         /// Release name.
         name: String,
+    },
+    /// Verify a sealed release: signature, schema, and cross-reference (design
+    /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
+    /// reported as skipped until materialization lands.
+    Verify {
+        /// Release name.
+        name: String,
+        /// Public key source (local path or http(s) URL). Overrides the
+        /// `public_key_url` from config.
+        #[arg(long)]
+        public_key: Option<String>,
     },
 }
 
@@ -360,6 +377,25 @@ async fn main() -> Result<()> {
                 }
                 ReleaseCmd::Info { name } => {
                     print!("{}", release::show_info(&store, &cfg, &name).await?);
+                }
+                ReleaseCmd::Verify { name, public_key } => {
+                    let source = public_key.or_else(|| cfg.public_key_url.clone()).context(
+                        "no public key: pass --public-key or set public_key_url in the config",
+                    )?;
+                    let pubkey = verify::load_public_key(&source).await?;
+                    match verify::verify_release(&store, &cfg, &name, &pubkey).await? {
+                        verify::VerifyVerdict::Pass(report) => {
+                            print!("{}", verify::render_report(&report));
+                        }
+                        verify::VerifyVerdict::SignatureFailed(msg) => {
+                            eprintln!("verify {name}: signature FAILED — {msg}");
+                            std::process::exit(EXIT_SIGNATURE);
+                        }
+                        verify::VerifyVerdict::VerifyFailed(msg) => {
+                            eprintln!("verify {name}: FAILED — {msg}");
+                            std::process::exit(EXIT_VERIFY);
+                        }
+                    }
                 }
             }
         }

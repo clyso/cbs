@@ -604,6 +604,7 @@ mod tests {
             store: StoreConfig::Local(PathBuf::from("/tmp/store")),
             risk_components: vec!["rgw".to_owned()],
             namespaces,
+            public_key_url: None,
         }
     }
 
