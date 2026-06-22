@@ -99,9 +99,13 @@ silently overwritten.
   `put_template`/`get_template`; `ReleaseKey`; key layout
   (`drafts/<ns>/<channel>/<name>.json` — **mutable, overwritable**;
   `releases/<ns>/<channel>/<name>.json` — **write-once**;
-  `templates/sha256/<digest>`); `index/releases.json` maintenance; **write-once
-  guard** — `put_release` of an existing key is refused (design §5); `put_draft`
-  is freely overwritable (serial handoff).
+  `templates/sha256/<digest>`); **write-once guard** via `object_store`
+  `PutMode::Create` (atomic — no TOCTOU gap), so `put_release` of an existing
+  key is refused (design §5); `put_draft` is freely overwritable (serial
+  handoff). **`list` enumerates the prefix** (the source of truth); design §5's
+  `index/releases.json` is a re-derivable cache, deferred to the service era
+  (avoids write-amplification and the read-modify-write race a maintained index
+  would add).
 - **Tests:** round-trip draft + release + template via `InMemory` and
   `LocalFileSystem`; draft overwrite succeeds; release write-once guard rejects
   an overwrite; `list_drafts`/`list_releases` reflect their keys. No minio
@@ -169,14 +173,14 @@ clearly that legs 3–4 are not yet applicable.
 
 ## Progress
 
-| Commit                                   | Status  | Notes                                     |
-| ---------------------------------------- | ------- | ----------------------------------------- |
-| 2.1 manifest model + canonical digest    | ✅ done | pure crt-core; byte-level golden test     |
-| 2.2 detached OpenPGP sign/verify         | ✅ done | rPGP 0.19, no-default-features (no C dep) |
-| 2.3 store: drafts + releases + templates | ☐ todo  | mutable drafts; write-once releases       |
-| 2.4 draft authoring (new/add/info)       | ☐ todo  | channel config; store-backed drafts       |
-| 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable    |
-| 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                 |
+| Commit                                   | Status  | Notes                                               |
+| ---------------------------------------- | ------- | --------------------------------------------------- |
+| 2.1 manifest model + canonical digest    | ✅ done | pure crt-core; byte-level golden test               |
+| 2.2 detached OpenPGP sign/verify         | ✅ done | rPGP 0.19, no-default-features (no C dep)           |
+| 2.3 store: drafts + releases + templates | ✅ done | mutable drafts; write-once releases; list-by-prefix |
+| 2.4 draft authoring (new/add/info)       | ☐ todo  | channel config; store-backed drafts                 |
+| 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable              |
+| 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                           |
 
 (Update after each commit lands.)
 

@@ -930,6 +930,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "crt-core",
+ "futures",
  "object_store",
  "serde_json",
  "tempfile",
