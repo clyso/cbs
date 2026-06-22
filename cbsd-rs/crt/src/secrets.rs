@@ -2,10 +2,11 @@
 // Copyright (C) 2026 Clyso
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The git-ignored `crt.secrets.yaml` (design §9): S3 credentials (and, from
-//! M2, the Vault address/token + GPG signing-key path). Kept separate from the
+//! The git-ignored `crt.secrets.yaml` (design §9): S3 credentials and the Vault
+//! address/token + the vault path(s) of the signing key. Kept separate from the
 //! non-secret `crt.config.yaml`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -15,13 +16,27 @@ use serde::Deserialize;
 pub struct Secrets {
     #[serde(default)]
     pub s3: Option<S3Secrets>,
-    // `vault` is added in M2 (release signing key).
+    #[serde(default)]
+    pub vault: Option<VaultSecrets>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct S3Secrets {
     pub access_key_id: String,
     pub secret_access_key: String,
+}
+
+/// Vault connection + the named vault paths of the signing key(s) (design §9).
+/// The key fetch itself is a thin edge shim in `crate::vault`; `crt-core` only
+/// ever sees the resulting armored key bytes.
+#[derive(Debug, Deserialize)]
+pub struct VaultSecrets {
+    pub addr: String,
+    pub token: String,
+    /// Logical key name → vault path, e.g.
+    /// `gpg_signing_private: secret/data/crt/openpgp-signing-key`.
+    #[serde(default)]
+    pub keys: BTreeMap<String, String>,
 }
 
 /// Load and parse the secrets file, warning (Unix) if its permissions are

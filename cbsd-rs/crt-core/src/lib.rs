@@ -16,8 +16,8 @@ pub mod seal;
 pub use manifest::{
     ArmoredSignature, Band, Blast, Branding, Conflict, Coverage, DataStructureChange, Draft,
     Justification, JustificationKind, KnownIssue, Lifecycle, Manifest, ManifestEntry, PatchStatus,
-    ReleaseHeader, ReleaseKey, ReleaseRecord, RenderSpec, Risk, Visibility, canonical_json, digest,
-    upstream_weight,
+    ReleaseHeader, ReleaseKey, ReleaseRecord, RenderSpec, Risk, SCHEMA_VERSION, Visibility,
+    canonical_json, digest, upstream_weight,
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
 pub use seal::{sign_manifest, verify_manifest};

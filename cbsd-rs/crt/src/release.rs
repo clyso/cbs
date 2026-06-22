@@ -17,11 +17,25 @@
 use anyhow::{Context, Result, anyhow, bail};
 use crt_core::{
     Blast, Conflict, Coverage, Draft, Identity, Justification, JustificationKind, KnownIssue,
-    Lifecycle, ManifestEntry, PatchMeta, PatchStatus, ReleaseHeader, Risk, Sha256, Visibility,
+    Lifecycle, Manifest, ManifestEntry, PatchMeta, PatchStatus, ReleaseHeader, RenderSpec, Risk,
+    Sha256, Visibility,
 };
 use crt_store::Store;
 
 use crate::config::Config;
+
+/// The notes template sealed into every release. M2 ships and stores it; M3
+/// renders it (design §7.2). Its bytes are digested into `RenderSpec` and
+/// stored content-addressed under the same digest.
+const DEFAULT_NOTES_TEMPLATE: &str = include_str!("../assets/default-release-notes.md.j2");
+
+/// The minijinja version recorded in `RenderSpec` at seal. **Provisional in
+/// M2:** minijinja is not linked yet (it is an M3 dependency), so this is the
+/// version M3 is expected to pin and validate against. The approval gate
+/// (plan, "RenderSpec sequencing", option a) accepts that this and the template
+/// digest may shift when M3 wires real rendering — safe because no production
+/// release is sealed between M2 and M3.
+const RENDER_MINIJINJA_VERSION: &str = "2.5.0";
 
 /// clap mirror of [`Visibility`] (keeps `clap` out of the pure `crt-core`).
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -315,6 +329,94 @@ pub async fn show_info(store: &dyn Store, cfg: &Config, name: &str) -> Result<St
         },
         Err(e) => Err(e.into()),
     }
+}
+
+/// `crt release seal <name>`: turn a draft into a signed, write-once
+/// `ReleaseRecord` (design §6). The signing key bytes are **injected** (fetched
+/// from Vault by the caller — `crt-core` and this pipeline never touch Vault),
+/// so the whole seal path is unit-testable with a generated key.
+///
+/// The step order is load-bearing: the manifest is canonicalized, digested, and
+/// **signed before** the write-once `put_release`, so a Vault/sign failure never
+/// burns the write-once key with a half-sealed record; and the draft is deleted
+/// **last**, only once the sealed record has landed, so a failed seal leaves the
+/// draft intact for retry or handoff.
+pub async fn seal_release<R: rand::Rng + rand::CryptoRng>(
+    store: &dyn Store,
+    cfg: &Config,
+    name: &str,
+    secret_key_armored: &str,
+    passphrase: Option<&str>,
+    rng: R,
+) -> Result<crt_core::ReleaseKey> {
+    let key = cfg.resolve_release_key(name)?;
+
+    let draft = store
+        .get_draft(&key)
+        .await
+        .with_context(|| format!("no draft named {name:?} to seal; run `crt release new` first"))?;
+    if draft.entries.is_empty() {
+        bail!("draft {name:?} has no entries; add patches before sealing");
+    }
+
+    // Snapshot branding from the draft's *stored* namespace/channel — not a
+    // re-resolution of the name, which could pick a different channel if config
+    // drifted since `new`. Branding must be configured: sealing empty branding
+    // into a signed manifest is permanent, so a missing channel is a hard error.
+    let branding = cfg
+        .namespaces
+        .get(&draft.release.namespace)
+        .and_then(|ns| ns.channels.get(&draft.release.channel))
+        .map(|c| c.branding.clone())
+        .with_context(|| {
+            format!(
+                "no branding configured for {}/{}; cannot seal",
+                draft.release.namespace, draft.release.channel
+            )
+        })?;
+
+    let template_digest = Sha256::of(DEFAULT_NOTES_TEMPLATE.as_bytes());
+    let manifest = Manifest {
+        schema_version: crt_core::SCHEMA_VERSION,
+        release: draft.release.clone(),
+        entries: draft.entries.clone(),
+        known_issues: draft.known_issues.clone(),
+        upgrade_notes: draft.upgrade_notes.clone(),
+        branding,
+        render: RenderSpec {
+            minijinja_version: RENDER_MINIJINJA_VERSION.to_owned(),
+            template_digest,
+        },
+    };
+
+    // Canonicalize once: the digest and the signature cover the exact same bytes.
+    let canonical = crt_core::canonical_json(&manifest)?;
+    let digest = Sha256::of(&canonical);
+    let signature = crt_core::sign_manifest(rng, &canonical, secret_key_armored, passphrase)?;
+    let record = crt_core::ReleaseRecord {
+        manifest,
+        digest,
+        signature,
+    };
+
+    // Store the template (content-addressed, idempotent) just before the
+    // write-once release, so an earlier failure leaves no orphan.
+    store
+        .put_template(&template_digest, DEFAULT_NOTES_TEMPLATE.as_bytes())
+        .await?;
+    store.put_release(&key, &record).await?;
+    store.delete_draft(&key).await?;
+    Ok(key)
+}
+
+/// `crt release list`: the keys of all sealed releases, sorted for stable
+/// output.
+pub async fn list_releases(store: &dyn Store) -> Result<Vec<crt_core::ReleaseKey>> {
+    let mut keys = store.list_releases().await?;
+    keys.sort_by(|a, b| {
+        (&a.namespace, &a.channel, &a.name).cmp(&(&b.namespace, &b.channel, &b.name))
+    });
+    Ok(keys)
 }
 
 /// Render a human-readable summary of a draft or sealed release. Pure: risk
@@ -794,6 +896,175 @@ mod tests {
         let out = show_info(&store, &cfg, "ces-v17.0.0").await.unwrap();
         assert!(out.starts_with("sealed  ces-v17.0.0"));
         assert!(out.contains("Sealed Snapshot Brand"));
+    }
+
+    /// Generate a throwaway Ed25519 signing keypair (armored secret, armored
+    /// public) so the seal tests exercise real signing without Vault.
+    fn test_keypair() -> (String, String) {
+        use pgp::composed::{ArmorOptions, KeyType, SecretKeyParamsBuilder, SignedPublicKey};
+        let mut params = SecretKeyParamsBuilder::default();
+        params
+            .key_type(KeyType::Ed25519Legacy)
+            .can_certify(true)
+            .can_sign(true)
+            .primary_user_id("CRT Seal Test <seal@example.com>".into())
+            .passphrase(None);
+        let secret_key = params
+            .build()
+            .expect("build key params")
+            .generate(rand::thread_rng())
+            .expect("generate key");
+        let public_key = SignedPublicKey::from(secret_key.clone());
+        (
+            secret_key
+                .to_armored_string(ArmorOptions::default())
+                .expect("armor secret"),
+            public_key
+                .to_armored_string(ArmorOptions::default())
+                .expect("armor public"),
+        )
+    }
+
+    /// Seed a draft with one entry, ready to seal.
+    async fn draft_with_one_entry(store: &ObjectBackedStore, cfg: &Config, name: &str) {
+        new_release(
+            store,
+            cfg,
+            name,
+            "v18.2.0",
+            test_author(),
+            "2026-06-22T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h = imported_meta(store, name.as_bytes()).await;
+        add_entries(store, cfg, name, &[h.to_hex()], &fields("Fixes a thing."))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn seal_signs_persists_and_consumes_the_draft() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        draft_with_one_entry(&store, &cfg, "ces-v18.2.0").await;
+
+        let (secret, public) = test_keypair();
+        let key = seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        // The draft is consumed; the sealed record is present.
+        assert!(store.get_draft(&key).await.is_err());
+        let record = store.get_release(&key).await.unwrap();
+
+        // Digest recomputes and the signature verifies over the canonical bytes
+        // (the full 2.1 + 2.2 contract, end to end).
+        let canonical = crt_core::canonical_json(&record.manifest).unwrap();
+        assert_eq!(record.digest, Sha256::of(&canonical));
+        crt_core::verify_manifest(&canonical, &record.signature, &public)
+            .expect("signature verifies against the keypair's public half");
+
+        // Branding is the config snapshot; RenderSpec + schema_version recorded;
+        // the template is stored under its sealed digest.
+        assert_eq!(
+            record.manifest.branding.display_name,
+            "Clyso Enterprise Storage"
+        );
+        assert_eq!(record.manifest.schema_version, crt_core::SCHEMA_VERSION);
+        assert_eq!(
+            record.manifest.render.minijinja_version,
+            RENDER_MINIJINJA_VERSION
+        );
+        assert!(
+            store
+                .get_template(&record.manifest.render.template_digest)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn seal_refuses_an_empty_draft() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "v18.2.0",
+            test_author(),
+            "2026-06-22T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let (secret, _) = test_keypair();
+        // A zero-entry release is almost certainly a forgotten `add`; never sign it.
+        assert!(
+            seal_release(
+                &store,
+                &cfg,
+                "ces-v18.2.0",
+                &secret,
+                None,
+                rand::thread_rng()
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn seal_refuses_when_channel_branding_is_missing() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let key = {
+            draft_with_one_entry(&store, &cfg, "ces-v18.2.0").await;
+            cfg.resolve_release_key("ces-v18.2.0").unwrap()
+        };
+        // Simulate config drift: the draft's stored channel is no longer in the
+        // config, so its branding can't be resolved. Sealing empty branding into
+        // a signed manifest is permanent — this must be a hard error.
+        let mut draft = store.get_draft(&key).await.unwrap();
+        draft.release.channel = "removed-channel".to_owned();
+        store.put_draft(&key, &draft).await.unwrap();
+
+        let (secret, _) = test_keypair();
+        assert!(
+            seal_release(
+                &store,
+                &cfg,
+                "ces-v18.2.0",
+                &secret,
+                None,
+                rand::thread_rng()
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn list_releases_returns_sealed_keys_sorted() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, _) = test_keypair();
+        for name in ["ces-v18.2.1", "ces-v18.2.0"] {
+            draft_with_one_entry(&store, &cfg, name).await;
+            seal_release(&store, &cfg, name, &secret, None, rand::thread_rng())
+                .await
+                .unwrap();
+        }
+        let keys = list_releases(&store).await.unwrap();
+        let names: Vec<_> = keys.iter().map(|k| k.name.as_str()).collect();
+        assert_eq!(names, vec!["ces-v18.2.0", "ces-v18.2.1"]);
     }
 
     #[test]

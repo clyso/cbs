@@ -1,0 +1,37 @@
+{# Default CRT release-notes template (minijinja). Sealed by digest into the
+   manifest's RenderSpec at seal time, but NOT rendered or validated until M3
+   (design §7.2) — its syntax is exercised, and may shift, then. Renders
+   public_summary only, never justification.internal. #}
+# {{ branding.display_name }} — {{ release.name }}
+
+{{ branding.blurb }}
+
+Based on `{{ release.base_ref }}` · released {{ release.created }}
+
+{% for group in entries | groupby("category") %}
+## {{ group.grouper | title }}
+
+{% for entry in group.list %}
+- **{{ entry.justification.public_summary }}** ({{ entry.risk.component }})
+{% if entry.behavior_change %}
+  Behavior change: {{ entry.behavior_change }}
+{% endif %}
+{% if entry.upgrade_notes %}
+  Upgrade note: {{ entry.upgrade_notes }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% if known_issues %}
+## Known issues
+
+{% for issue in known_issues %}
+- {{ issue.summary }}
+{% endfor %}
+{% endif %}
+{% if upgrade_notes %}
+## Upgrade notes
+
+{{ upgrade_notes }}
+{% endif %}
+---
+{{ branding.footer }}

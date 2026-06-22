@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use clap::{Parser, Subcommand};
-use crt_store::{ObjectBackedStore, S3Settings};
+use crt_store::{ObjectBackedStore, S3Settings, Store};
 
 use crate::release::{
     BlastArg, ConflictArg, CoverageArg, EntryFields, JustificationArg, VisibilityArg,
@@ -22,6 +22,7 @@ mod git;
 mod import;
 mod release;
 mod secrets;
+mod vault;
 
 #[derive(Parser)]
 #[command(name = "crt", version, about = "Ceph Release Tool")]
@@ -120,6 +121,15 @@ enum ReleaseCmd {
         #[arg(long)]
         upgrade_notes: Option<String>,
     },
+    /// Seal a draft into a signed, write-once release. Fetches the signing key
+    /// from Vault, signs the canonical manifest, writes the release record, and
+    /// removes the draft.
+    Seal {
+        /// Release name.
+        name: String,
+    },
+    /// List the sealed releases in the store.
+    List,
     /// Show a draft (or, if none, the sealed release) for a name.
     Info {
         /// Release name.
@@ -175,6 +185,16 @@ fn open_store(store: &config::StoreConfig, secrets_path: &Path) -> Result<Object
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Pin `ring` as the process-wide rustls crypto provider before any TLS
+    // client is built (octocrab for `patch import --pr`, reqwest for `release
+    // verify`, object_store for S3). With aws-lc-rs dropped `ring` is the sole
+    // provider, but pinning is explicit and guards against a future dependency
+    // re-introducing a second provider — which makes rustls 0.23 refuse to
+    // auto-select and panic at the first handshake.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("the rustls crypto provider is installed once at startup");
+
     let cli = Cli::parse();
     let cfg = config::load(&cli.config)?;
 
@@ -294,6 +314,49 @@ async fn main() -> Result<()> {
                         result.added.len(),
                         result.skipped.len()
                     );
+                }
+                ReleaseCmd::Seal { name } => {
+                    // Refuse a re-seal *before* fetching the signing key, so an
+                    // already-sealed release never pulls the private key into the
+                    // process. `put_release` (inside `seal_release`) remains the
+                    // authoritative write-once guard against a race.
+                    let key = cfg.resolve_release_key(&name)?;
+                    match store.get_release(&key).await {
+                        Ok(_) => anyhow::bail!(
+                            "a sealed release named {name:?} already exists \
+                             (releases are write-once)"
+                        ),
+                        Err(e) if e.is_not_found() => {}
+                        Err(e) => return Err(e.into()),
+                    }
+                    let secrets = secrets::load(&cli.secrets)?;
+                    let vault = secrets.vault.with_context(|| {
+                        format!(
+                            "sealing needs a `vault` section in {}",
+                            cli.secrets.display()
+                        )
+                    })?;
+                    let signing = vault::fetch_signing_key(&vault).await?;
+                    let sealed = release::seal_release(
+                        &store,
+                        &cfg,
+                        &name,
+                        &signing.armored_private_key,
+                        signing.passphrase.as_deref(),
+                        rand::thread_rng(),
+                    )
+                    .await?;
+                    println!(
+                        "sealed {} ({}/{})",
+                        sealed.name, sealed.namespace, sealed.channel
+                    );
+                }
+                ReleaseCmd::List => {
+                    let keys = release::list_releases(&store).await?;
+                    for k in &keys {
+                        println!("{}/{}/{}", k.namespace, k.channel, k.name);
+                    }
+                    eprintln!("{} sealed release(s)", keys.len());
                 }
                 ReleaseCmd::Info { name } => {
                     print!("{}", release::show_info(&store, &cfg, &name).await?);

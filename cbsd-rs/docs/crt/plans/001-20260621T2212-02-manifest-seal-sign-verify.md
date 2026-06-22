@@ -178,6 +178,38 @@ operator with store access can pick it up.
   separate `#[ignore]`d Vault-fetch test (env-gated, no HTTP-mock dep); `list`.
 - **Smell test:** seal + sign + persist; query. **~600 LOC.**
 
+**Decisions, recorded as landed:**
+
+- **RenderSpec sequencing — honored option (a).** Seal snapshots `branding`,
+  records `RenderSpec`, and `put_template`s the default notes asset. The
+  template (`crt/assets/default-release-notes.md.j2`) is **sealed but not
+  rendered/validated until M3**; `RenderSpec.minijinja_version` is a
+  **provisional constant** (`2.5.0`) because `minijinja` is not yet linked — M3
+  pins the real version, and both it and the template digest may shift then (no
+  production release is sealed in between).
+- **Two write-once seal guards** (beyond the planned ordering): seal **refuses
+  an empty draft** (a zero-entry signed manifest is almost always a forgotten
+  `add`), and **requires branding to resolve** from the draft's _stored_
+  `namespace`/`channel` (not a re-resolution of the name — config may have
+  drifted) — sealing empty branding into a signed manifest is permanent, so a
+  missing channel is a hard error. A cheap `get_release` pre-check refuses
+  before the Vault round-trip; `put_release` remains the authoritative
+  write-once guard.
+- **Vault edge shim** (`crate::vault`): `vaultrs` 0.8 with
+  `default-features = false, features = ["rustls"]` — **verified
+  C-dependency-free** (no `openssl-sys`/`native-tls`), matching the
+  object_store/octocrab rustls stack. The signing secret carries a `private-key`
+  field (+ optional `passphrase`), matching cbscore's
+  `GPGVaultPrivateKeySecret`. The path string is split into mount + KV-v2 path
+  (the `data` infix is dropped — `vaultrs::kv2::read` re-inserts it). The live
+  fetch is an `#[ignore]`d, env-gated test; `split_kv2_path` is unit-tested.
+- **`crt-core::SCHEMA_VERSION`** is now the single source of truth the seal
+  stamps and the 2.1 fixture references, so 2.6's verify cannot drift from it.
+- The planned **"compute risk bands"** step is a **no-op at seal**: bands are
+  computed-not-stored (the 2.1 invariant), so there is nothing to compute into
+  the manifest, and `release info` already surfaces each entry's
+  `risk_total`/`risk_band` for pre-seal inspection.
+
 ### 2.6 — `crt: verify a sealed release (signature, schema, cross-reference)`
 
 **After this:** `crt release verify <name>` runs §11 legs 0–2 and reports
@@ -205,7 +237,7 @@ clearly that legs 3–4 are not yet applicable.
 | 2.2 detached OpenPGP sign/verify         | ✅ done | rPGP 0.19, no-default-features (no C dep)           |
 | 2.3 store: drafts + releases + templates | ✅ done | mutable drafts; write-once releases; list-by-prefix |
 | 2.4 draft authoring (new/add/info)       | ✅ done | channel config; clobber-guarded store-backed drafts |
-| 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable              |
+| 2.5 seal (Vault + sign) + list           | ✅ done | delete_draft LAST; key bytes injected; rustls Vault |
 | 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                           |
 
 (Update after each commit lands.)

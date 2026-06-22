@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CrtCoreError, Identity, Provenance, Sha256, UpstreamPrState};
 
+/// Current manifest schema version — the single source of truth shared by seal
+/// (which stamps it) and verify (which checks it), so the two cannot drift.
+pub const SCHEMA_VERSION: u32 = 1;
+
 /// Per-patch visibility (design §1). Recorded but **inert** in the MVP — it
 /// does not filter SBOM, notes, verify, or materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,7 +364,7 @@ mod tests {
             state: UpstreamPrState::MergedMain,
         };
         Manifest {
-            schema_version: 1,
+            schema_version: SCHEMA_VERSION,
             release: ReleaseHeader {
                 product: "ceph".to_owned(),
                 namespace: "clyso-enterprise".to_owned(),
