@@ -9,6 +9,8 @@ description = "CRT core: content-addressing, manifest, sealing (no IO)"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+# RFC 8785 (JCS) canonical JSON — the signed-manifest byte contract (design §6).
+serde_json_canonicalizer = "0.3"
 sha2 = "0.10"
 hex = "0.4"
 thiserror = "2"

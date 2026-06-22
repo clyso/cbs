@@ -9,8 +9,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256 as Sha256Hasher};
 use thiserror::Error;
 
+pub mod manifest;
 pub mod meta;
 
+pub use manifest::{
+    ArmoredSignature, Band, Blast, Branding, Conflict, Coverage, DataStructureChange, Draft,
+    Justification, JustificationKind, KnownIssue, Lifecycle, Manifest, ManifestEntry, PatchStatus,
+    ReleaseHeader, ReleaseKey, ReleaseRecord, RenderSpec, Risk, Visibility, canonical_json, digest,
+    upstream_weight,
+};
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
 
 /// Errors produced by `crt-core`.
@@ -19,6 +26,9 @@ pub enum CrtCoreError {
     /// A string was not a valid lowercase-hex SHA-256.
     #[error("invalid sha256: {0:?}")]
     InvalidSha256(String),
+    /// RFC 8785 canonical-JSON serialization failed (design §6).
+    #[error("canonical json: {0}")]
+    Canonical(String),
 }
 
 /// A SHA-256 content address, serialized as a lowercase-hex string.
