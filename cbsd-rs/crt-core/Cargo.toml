@@ -14,3 +14,9 @@ serde_json_canonicalizer = "0.3"
 sha2 = "0.10"
 hex = "0.4"
 thiserror = "2"
+# Detached OpenPGP signing/verification (design §6). Pure-Rust; default features
+# off to drop the bzip2 C dependency (compression is unused for detached sigs).
+pgp = { version = "0.19", default-features = false }
+# RNG traits for the signing API. crt-core names the bound but never sources
+# entropy itself — the caller injects the RNG, keeping the crate pure.
+rand = "0.8"

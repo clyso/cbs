@@ -169,14 +169,14 @@ clearly that legs 3–4 are not yet applicable.
 
 ## Progress
 
-| Commit                                   | Status  | Notes                                  |
-| ---------------------------------------- | ------- | -------------------------------------- |
-| 2.1 manifest model + canonical digest    | ✅ done | pure crt-core; byte-level golden test  |
-| 2.2 detached OpenPGP sign/verify         | ☐ todo  | rPGP 0.19; spike API first             |
-| 2.3 store: drafts + releases + templates | ☐ todo  | mutable drafts; write-once releases    |
-| 2.4 draft authoring (new/add/info)       | ☐ todo  | channel config; store-backed drafts    |
-| 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable |
-| 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped              |
+| Commit                                   | Status  | Notes                                     |
+| ---------------------------------------- | ------- | ----------------------------------------- |
+| 2.1 manifest model + canonical digest    | ✅ done | pure crt-core; byte-level golden test     |
+| 2.2 detached OpenPGP sign/verify         | ✅ done | rPGP 0.19, no-default-features (no C dep) |
+| 2.3 store: drafts + releases + templates | ☐ todo  | mutable drafts; write-once releases       |
+| 2.4 draft authoring (new/add/info)       | ☐ todo  | channel config; store-backed drafts       |
+| 2.5 seal (Vault + sign) + list           | ☐ todo  | put_release LAST; key bytes injectable    |
+| 2.6 verify (legs 0–2)                    | ☐ todo  | legs 3–4 reported skipped                 |
 
 (Update after each commit lands.)
 

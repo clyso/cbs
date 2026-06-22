@@ -11,6 +11,7 @@ use thiserror::Error;
 
 pub mod manifest;
 pub mod meta;
+pub mod seal;
 
 pub use manifest::{
     ArmoredSignature, Band, Blast, Branding, Conflict, Coverage, DataStructureChange, Draft,
@@ -19,6 +20,7 @@ pub use manifest::{
     upstream_weight,
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
+pub use seal::{sign_manifest, verify_manifest};
 
 /// Errors produced by `crt-core`.
 #[derive(Debug, Error)]
@@ -29,6 +31,9 @@ pub enum CrtCoreError {
     /// RFC 8785 canonical-JSON serialization failed (design §6).
     #[error("canonical json: {0}")]
     Canonical(String),
+    /// An OpenPGP sign/verify/parse operation failed (design §6).
+    #[error("openpgp: {0}")]
+    Pgp(String),
 }
 
 /// A SHA-256 content address, serialized as a lowercase-hex string.
