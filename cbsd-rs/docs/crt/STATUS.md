@@ -1,8 +1,9 @@
 # CRT v2 — implementation status & handoff
 
 > Operational status snapshot for CRT v2 (the Ceph Release Tool). Updated at the
-> end of M2. Not subject to the `seq-docs-convention` naming (operational file).
-> **Last updated:** 2026-06-23, on branch `wip/release-tool-v2`.
+> end of M3. Not subject to the `seq-docs-convention` naming (operational file).
+> **Last updated:** 2026-06-25 (M3 + v5 review), on branch
+> `wip/release-tool-v2`.
 
 ## What CRT v2 is
 
@@ -29,6 +30,7 @@ Three crates in the `cbsd-rs/` workspace (edition 2024, GPL-3.0-or-later):
 | `docs/crt/design/001-20260620T1318-v2-mvp.md`                      | **Authoritative design** (MVP)       |
 | `docs/crt/plans/001-20260621T0930-01-store-and-import.md`          | M1 plan                              |
 | `docs/crt/plans/001-20260621T2212-02-manifest-seal-sign-verify.md` | M2 plan (progress table + decisions) |
+| `docs/crt/plans/001-20260623T1717-03-sbom-notes-materialize.md`    | M3 plan (progress table + decisions) |
 | `docs/crt/reviews/001-*-impl-v2-mvp-v{1,2}.md`                     | M1 reviews                           |
 | `docs/crt/reviews/001-20260622T0515-impl-v2-mvp-v3.md`             | M2 commits 2.1–2.3 review            |
 | `docs/crt/reviews/001-20260622T2040-impl-v2-mvp-v4.md`             | M2 commits 2.4–2.6 review (GO/80)    |
@@ -47,7 +49,7 @@ fetch). Treat those as authoritative-as-landed.
 | --------- | --------------------------------------------------------------------- | ------------------ |
 | **M1**    | Patch ingestion into a content-addressed store                        | ✅ done            |
 | **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed |
-| **M3**    | Deterministic SBOM (§7.1) + release-notes rendering (§7.2)            | ☐ todo             |
+| **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done            |
 | **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | ☐ todo             |
 
 ### M1 — done (`3a0cbe4e`, `f87ac939`, `30d09904`)
@@ -86,33 +88,55 @@ plus `list` / `info`. Gate green: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets`, `cargo test --workspace` (no Vault, no
 minio, no network — live S3/Vault/URL paths are `#[ignore]`d).
 
-## Next: M3 (recommended)
+### M3 — done (commits 3.1–3.2; subjects are the stable reference)
 
-Deterministic projection over the sealed manifest (design §7):
+- **3.1** `crt: render release notes from the sealed manifest` — `minijinja`
+  linked in `crt-core` (exact `=2.21.0`); `RENDER_MINIJINJA_VERSION` moved into
+  `crt-core` and corrected `"2.5.0"` → `"2.21.0"` (matching the 2.1 golden
+  fixture — so the golden was **undisturbed**). Pure `render_notes`
+  (`trim_blocks`/`lstrip_blocks`; the default template re-expressed for
+  minijinja's `groupby`-as-filter). `release notes <name>` is **sealed-only**
+  and **version-gated**; renders `public_summary` and strips
+  `justification.internal` from the template context — structural, not by
+  template convention (v5 F4).
+- **3.2**
+  `crt: derive a deterministic CycloneDX SBOM and emit release artifacts` —
+  hand-rolled CycloneDX 1.6 (`crt-core::build_sbom`): one Ceph component, each
+  patch under `pedigree.patches[]`; `serialNumber` from the manifest digest,
+  `timestamp` from `release.created` (no random/wall-clock).
+  `release materialize <name> --out <dir>` emits `RELEASE-NOTES.md` +
+  `sbom.cdx.json`; determinism locked by a committed byte golden + a
+  re-build-equality test (v5 F1).
 
-- **SBOM** (§7.1): one CycloneDX JSON, each patch under `pedigree.patches[]`,
-  emitted **deterministically** (no random `serialNumber` / wall-clock time — a
-  pure function of the manifest). `sbom.cdx.json`.
-- **Release notes** (§7.2): `minijinja` render of the sealed manifest. Three
-  inputs are already pinned in the manifest: the template (by digest, stored
-  content-addressed), the branding **snapshot**, and the minijinja version.
-  Renders `public_summary`, **never** `justification.internal`.
-- **Verify leg 4** (artifact faithfulness): re-derive SBOM + re-render notes and
-  byte-compare to the committed copies.
-- CLI: `crt release notes <name>` (re-render from the sealed `RenderSpec`).
+**Verified end-to-end (M3):** seal → `release notes` renders the pinned template
+(internal note hidden); `release materialize` writes both artifacts and a re-run
+is byte-identical. Gate green: `cargo fmt --all --check`,
+`cargo clippy -p crt -p crt-core --all-targets`, `cargo test` (crt 44, crt-core
+26, crt-store 12), `cargo check --workspace`.
 
-**M3 must reconcile the provisional `RenderSpec.minijinja_version`.** M2 sealed
-the constant `"2.5.0"` (`crt/src/release.rs::RENDER_MINIJINJA_VERSION`)
-**without linking `minijinja`**. M3 adds the `minijinja` dependency, pins it to
-the linked version, validates the default template
-(`crt/assets/default-release-notes.md.j2`) actually renders, and updates the
-constant + the 2.1 golden test if the version or template digest shifts. This is
-**gate-accepted to shift** (M2 plan, "RenderSpec sequencing", option a) — safe
-**only** because no production release is sealed between M2 and M3.
+## Next: M4 (recommended)
 
-Then **M4**: `crt release materialize` (linear `release/<name>` branch + tag,
-signed `000-RELEASE/` bundle, design §8), `crt verify --tree <dir>` (offline),
-and verify leg 3 (git anchoring).
+Git materialization and the portable signed bundle (design §8, §11 legs 3–4):
+
+- **`crt release materialize`** extends the M3 artifact emit into a linear
+  `release/<name>` branch (`git am` per entry, each amended with a `Crt-Patch`
+  trailer) and an annotated tag, plus the signed `000-RELEASE/` bundle: the
+  record, its detached `.asc`, the M3 `sbom.cdx.json` / `RELEASE-NOTES.md`,
+  provenance, and a README.
+- **`source_tree_digest`**: pin the canonical directory-hash algorithm (§14).
+- **`crt verify --tree <dir>`** (offline, no store/git), **verify leg 3** (git
+  anchoring via `Crt-Patch` and `git patch-id --stable`), and **leg 4
+  activation** (byte-compare the committed `sbom.cdx.json` / `RELEASE-NOTES.md`
+  against an M3 re-derivation — the engines already exist in `crt-core`).
+- **Pin `serde_json` (exact)** with leg 4 (v5 F2): the M3 SBOM byte golden
+  already catches a pretty-printer shift in CI, but leg 4's byte-compare wants
+  the renderer pinned too, mirroring the `minijinja` exact pin on the notes
+  side.
+
+The `RenderSpec.minijinja_version` reconciliation is **done**:
+`minijinja 2.21.0` is linked and exact-pinned in `crt-core`, and
+`RENDER_MINIJINJA_VERSION` (now owned by `crt-core`) is the single source of
+truth — seal stamps it, `release notes` gates on it, and leg 4 (M4) will too.
 
 ## Carry-forward invariants (do not regress)
 
@@ -136,6 +160,11 @@ and verify leg 3 (git anchoring).
 
 ## Deferred / known backlog
 
+- **SBOM not run through a CycloneDX validator** (§7.1/§14): M3 tests the shape
+  structurally (parse + key fields) and checks `serialNumber` against the spec
+  regex, but no validator is on PATH here. Run one in M4 and, with it, refine
+  issue `references` (a bare `CVE-2026-0001` wants `iri-reference` form, or
+  belongs in the issue `id`).
 - **F2 (documented deviation):** a corrupt stored `ReleaseRecord`/`Manifest` (or
   `PatchMeta`) surfaces as operational **exit 1**, whereas §11 leg 1 frames a
   deserialize failure as a verify failure (**exit 3**). A _missing_ release/meta

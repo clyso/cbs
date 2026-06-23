@@ -1,6 +1,7 @@
 # CRT v2 — Plan M3: deterministic SBOM + notes + materialize (artifacts)
 
-> **Status:** Plan (approved). Implements **M3** of the design
+> **Status:** Plan (approved; **M3 complete** — both commits landed). Implements
+> **M3** of the design
 > [`../design/001-20260620T1318-v2-mvp.md`](../design/001-20260620T1318-v2-mvp.md)
 > (concept [`../000-concept.md`](../000-concept.md)). Part 03 of the multi-part
 > plan sharing seq `001` (M1 = part 01, M2 = part 02). Commit boundaries follow
@@ -56,9 +57,11 @@ leg 4 will reuse; `verify` keeps reporting legs 3–4 `skipped`.
   pinned in `crt-core/Cargo.toml` next to the constant so a bump touches both.
 - **SBOM is hand-rolled serde structs**, not a CycloneDX crate: §7.1 forbids a
   random `serialNumber`/wall-clock `timestamp`, which off-the-shelf crates
-  inject. `Vec`/`BTreeMap` and fixed field order give full determinism control
-  and keep `crt-core` dependency-light. CycloneDX 1.6 shape; validated against a
-  CycloneDX validator (§7.1/§14).
+  inject. `Vec` (never a map) and fixed field order give full determinism
+  control and keep `crt-core` dependency-light. CycloneDX 1.6 shape,
+  **structurally tested** (parse + key fields) and the `serialNumber` checked
+  against the spec regex; running the output through an actual CycloneDX
+  validator (§7.1/§14) is **deferred** — none is available in this environment.
 - **Golden test is undisturbed.** The 2.1 `crt-core` golden fixture already pins
   `minijinja_version: "2.21.0"` and a synthetic `template_digest`, decoupled
   from the seal constant; updating the constant or the template content does not
@@ -119,14 +122,43 @@ sealed release's pinned `RenderSpec`.
 
 ## Decisions, recorded as landed
 
-> Filled in as each commit lands (mirrors the M2 plan's per-commit blocks).
-
-- **3.1** — _pending._
-- **3.2** — _pending._
+- **3.1** — `minijinja` linked in `crt-core` (pinned **exact** `=2.21.0`).
+  `RENDER_MINIJINJA_VERSION` moved out of `crt/src/release.rs` into `crt-core`
+  and corrected from the provisional `"2.5.0"` to the real linked `"2.21.0"` —
+  which the 2.1 golden fixture already pinned, so the golden was **undisturbed**
+  (the "gate-accepted to shift" allowance went unused). `render_notes`
+  (`crt-core`) renders with `trim_blocks` + `lstrip_blocks`; the default
+  template was adapted to minijinja's `groupby`-as-filter via two-tuple
+  unpacking (`{% for grouper, items in entries | groupby("category") %}`).
+  `render_notes` renders from a **public projection** of the manifest with
+  `justification.internal` stripped (v5 F4), so internal-hiding is structural —
+  not a property of the default template happening not to reference it — guarded
+  by a render-output test that prints the field and asserts it never leaks.
+  `release notes` is **sealed-only** and **version-gated** (errors on a
+  `minijinja_version` mismatch). A test fixture string was renamed
+  `SECRET-internal` → `DO-NOT-LEAK-internal` (the literal "SECRET" tripped a
+  local commit secret-scan false positive — content unaffected).
+- **3.2** — SBOM is **hand-rolled** CycloneDX 1.6 serde structs (no crate), so
+  field order is fixed and no `uuid`/`chrono` is pulled in. `serialNumber` is
+  the first 32 nibbles of the manifest digest regrouped as a UUID URN —
+  schema-valid against the CycloneDX 1.6 loose `serialNumber` regex (not a
+  strict RFC-4122 UUID; strict-UUID shaping deferred as unneeded).
+  `metadata.timestamp` = `release.created`. Determinism is locked by a committed
+  byte golden (mirroring `manifest.rs`'s `CANONICAL_GOLDEN`) plus a
+  re-build-equality test (v5 F1; the earlier "the SBOM is unsigned, so no
+  golden" reasoning was dropped — leg 4 byte-compares regardless of signing).
+  `release materialize` emits the artifacts to `--out` (default `.`); the git
+  ref/tag + signed `000-RELEASE/` bundle and verify leg 4's byte-compare are
+  **M4**. **Deferred (§14 open items for M4):** run the SBOM through an actual
+  CycloneDX validator (none on PATH here) and, with it, refine issue
+  `references` (a bare `CVE-2026-0001` wants `iri-reference` form, or arguably
+  belongs in the issue `id`). Pinning `serde_json` (exact) is a **hard M4
+  deliverable** shipping with leg 4 (v5 F2), not drift-contingent — the M3 byte
+  golden now also catches a pretty-printer shift in CI.
 
 ## Progress
 
-| Commit | Subject                                                  | Status |
-| ------ | -------------------------------------------------------- | ------ |
-| 3.1    | render release notes from the sealed manifest            | ☐ todo |
-| 3.2    | derive a deterministic CycloneDX SBOM and emit artifacts | ☐ todo |
+| Commit | Subject                                                  | Status  |
+| ------ | -------------------------------------------------------- | ------- |
+| 3.1    | render release notes from the sealed manifest            | ✅ done |
+| 3.2    | derive a deterministic CycloneDX SBOM and emit artifacts | ✅ done |
