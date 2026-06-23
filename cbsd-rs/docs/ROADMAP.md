@@ -163,6 +163,29 @@ label as a coarse ordering hint, not a binding commitment.
   - `cbsd-worker`'s `WorkerConfig` derives `Debug` over a plain `api_key`;
     redact it as part of commit 15's tracing/`Debug` sweep.
 
+### Converge wire-format version markers on `schema_version`
+
+- Priority: L
+- Origin: cbscore-rs design 002 (wire types & schema versioning); maintainer
+  decision (2026-06-21) to keep the build report's existing `report_version`
+  marker rather than rename it during the cbscore Rust port.
+- Motivation: the cbscore-owned wire formats introduced by the Rust port (the
+  version descriptor, release descriptor, config, and secrets file) carry a
+  `schema_version` integer, but the build artifact report retains its historical
+  `report_version` marker. The two names denote the same concept; renaming the
+  report now would ripple into the `cbsd-worker` report parser and the
+  `cbsd-server` build-report consumer for no functional gain, so they coexist
+  for now.
+- Scope: rename the build report's `report_version` field to `schema_version` in
+  the cbscore-rs producer and update every consumer in lockstep (`cbsd-worker`'s
+  report parser, `cbsd-server`'s build-report storage) so all cbs wire formats
+  share one marker name and one `absent → v1` convention. Because this is an
+  internal format with no cross-version interchange, it can land as a single
+  coordinated commit.
+- Trigger: when a change already touches the build-report consumers in
+  `cbsd-worker`/`cbsd-server`, or during a broader wire-format consolidation
+  pass; not urgent.
+
 ## cbc (CLI client)
 
 (No roadmap items yet.)
