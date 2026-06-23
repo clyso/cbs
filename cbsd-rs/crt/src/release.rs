@@ -5,7 +5,10 @@
 //! Author a store-backed draft release (design §3/§5, plan M2.4). A draft is
 //! created by `new`, populated with patch entries by `add`, and inspected by
 //! `info`. Drafts live in the shared store (not on local disk) so any operator
-//! can pick up in-progress work; `seal` (M2.5) consumes one.
+//! can pick up in-progress work; `seal` (M2.5) consumes one. Two read paths over
+//! a *sealed* release also live here: `info` (human summary) and `notes`
+//! ([`render_sealed_notes`] — the §7.2 projection, re-rendered from the pinned
+//! `RenderSpec`).
 //!
 //! Entry metadata is authored with flags; the narrative fields
 //! (`public_summary` / `behavior_change` / `upgrade_notes`) come from flags or,
@@ -24,18 +27,12 @@ use crt_store::Store;
 
 use crate::config::Config;
 
-/// The notes template sealed into every release. M2 ships and stores it; M3
-/// renders it (design §7.2). Its bytes are digested into `RenderSpec` and
-/// stored content-addressed under the same digest.
+/// The notes template sealed into every release. Its bytes are digested into
+/// `RenderSpec` and stored content-addressed under the same digest; `release
+/// notes` / `release materialize` fetch it back by that digest and render it
+/// (design §7.2). The pinned `minijinja` version lives in `crt-core`
+/// ([`crt_core::RENDER_MINIJINJA_VERSION`]) — the crate that links the engine.
 const DEFAULT_NOTES_TEMPLATE: &str = include_str!("../assets/default-release-notes.md.j2");
-
-/// The minijinja version recorded in `RenderSpec` at seal. **Provisional in
-/// M2:** minijinja is not linked yet (it is an M3 dependency), so this is the
-/// version M3 is expected to pin and validate against. The approval gate
-/// (plan, "RenderSpec sequencing", option a) accepts that this and the template
-/// digest may shift when M3 wires real rendering — safe because no production
-/// release is sealed between M2 and M3.
-const RENDER_MINIJINJA_VERSION: &str = "2.5.0";
 
 /// clap mirror of [`Visibility`] (keeps `clap` out of the pure `crt-core`).
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -384,7 +381,7 @@ pub async fn seal_release<R: rand::Rng + rand::CryptoRng>(
         upgrade_notes: draft.upgrade_notes.clone(),
         branding,
         render: RenderSpec {
-            minijinja_version: RENDER_MINIJINJA_VERSION.to_owned(),
+            minijinja_version: crt_core::RENDER_MINIJINJA_VERSION.to_owned(),
             template_digest,
         },
     };
@@ -417,6 +414,40 @@ pub async fn list_releases(store: &dyn Store) -> Result<Vec<crt_core::ReleaseKey
         (&a.namespace, &a.channel, &a.name).cmp(&(&b.namespace, &b.channel, &b.name))
     });
     Ok(keys)
+}
+
+/// `crt release notes <name>`: re-render the canonical release notes for a
+/// **sealed** release from its pinned `RenderSpec` (design §7.2) — no re-seal.
+/// All three rendering inputs are pinned: the branding snapshot (in the
+/// manifest), the `minijinja` version (gated against this build's linked
+/// version), and the template (fetched from the store by its sealed digest).
+/// Errors if there is no sealed release for `name`, or the pinned `minijinja`
+/// version does not match this build — we refuse to silently re-render with a
+/// different engine, whose bytes could diverge from the sealed notes.
+pub async fn render_sealed_notes(store: &dyn Store, cfg: &Config, name: &str) -> Result<String> {
+    let key = cfg.resolve_release_key(name)?;
+    let record = store.get_release(&key).await.with_context(|| {
+        format!(
+            "no sealed release named {name:?} \
+             (notes render from a sealed release; seal it first)"
+        )
+    })?;
+
+    crt_core::check_render_version(&record.manifest.render)?;
+
+    let template_bytes = store
+        .get_template(&record.manifest.render.template_digest)
+        .await
+        .with_context(|| {
+            format!(
+                "fetching the sealed notes template {}",
+                record.manifest.render.template_digest
+            )
+        })?;
+    let template = std::str::from_utf8(&template_bytes)
+        .context("the sealed notes template is not valid UTF-8")?;
+
+    Ok(crt_core::render_notes(&record.manifest, template)?)
 }
 
 /// Render a human-readable summary of a draft or sealed release. Pure: risk
@@ -982,7 +1013,7 @@ mod tests {
         assert_eq!(record.manifest.schema_version, crt_core::SCHEMA_VERSION);
         assert_eq!(
             record.manifest.render.minijinja_version,
-            RENDER_MINIJINJA_VERSION
+            crt_core::RENDER_MINIJINJA_VERSION
         );
         assert!(
             store
@@ -1066,6 +1097,214 @@ mod tests {
         let keys = list_releases(&store).await.unwrap();
         let names: Vec<_> = keys.iter().map(|k| k.name.as_str()).collect();
         assert_eq!(names, vec!["ces-v18.2.0", "ces-v18.2.1"]);
+    }
+
+    #[tokio::test]
+    async fn render_sealed_notes_renders_the_pinned_template_and_hides_internal() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "v18.2.0",
+            test_author(),
+            "2026-06-22T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h = imported_meta(&store, b"a patch").await;
+        let mut f = fields("Fixes a thing.");
+        f.internal = Some("DO-NOT-LEAK internal note".to_owned());
+        add_entries(&store, &cfg, "ces-v18.2.0", &[h.to_hex()], &f)
+            .await
+            .unwrap();
+        let (secret, _) = test_keypair();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        // The real sealed asset renders: branding snapshot + title + the public
+        // summary appear; the internal note never does (design §7.2).
+        let notes = render_sealed_notes(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+        assert!(notes.contains("Clyso Enterprise Storage — ces-v18.2.0"));
+        assert!(notes.contains("Fixes a thing."));
+        assert!(!notes.contains("DO-NOT-LEAK"));
+
+        // No sealed release for the name ⇒ error.
+        assert!(
+            render_sealed_notes(&store, &cfg, "ces-v99.0.0")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn render_sealed_notes_covers_all_default_template_sections() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let key = cfg.resolve_release_key("ces-v18.2.0").unwrap();
+
+        let entry =
+            |order: u32, category: &str, summary: &str, behavior: Option<&str>| ManifestEntry {
+                blob_hash: blob_hash(format!("p{order}").as_bytes()),
+                patch_id: format!("pid-{order}"),
+                order,
+                visibility: Visibility::Public,
+                category: category.to_owned(),
+                risk: Risk {
+                    component: "rgw".to_owned(),
+                    blast: Blast::Availability,
+                    conflict: Conflict::Trivial,
+                    coverage: Coverage::Partial,
+                },
+                justification: Justification {
+                    kind: JustificationKind::Engineering,
+                    refs: vec![],
+                    public_summary: summary.to_owned(),
+                    internal: Some("DO-NOT-LEAK-internal".to_owned()),
+                },
+                behavior_change: behavior.map(str::to_owned),
+                upgrade_notes: None,
+                lifecycle: Lifecycle {
+                    status: PatchStatus::Active,
+                    first_shipped_in: None,
+                },
+                data_structure_change: None,
+                provenance: Provenance::UpstreamPr {
+                    prs: vec![],
+                    commits: vec![],
+                    state: UpstreamPrState::MergedMain,
+                },
+            };
+
+        // Hand-seal a rich record (every default-template branch) and render it.
+        let template_digest = Sha256::of(DEFAULT_NOTES_TEMPLATE.as_bytes());
+        let manifest = Manifest {
+            schema_version: crt_core::SCHEMA_VERSION,
+            release: ReleaseHeader {
+                product: "ceph".to_owned(),
+                namespace: key.namespace.clone(),
+                channel: key.channel.clone(),
+                name: "ces-v18.2.0".to_owned(),
+                base_ref: "v18.2.0".to_owned(),
+                created: "2026-06-22T00:00:00+00:00".to_owned(),
+                author: test_author(),
+            },
+            entries: vec![
+                entry(
+                    1,
+                    "security",
+                    "Fixes a CVE.",
+                    Some("Default TLS is now required."),
+                ),
+                entry(2, "fix", "Fixes a crash.", None),
+            ],
+            known_issues: vec![KnownIssue {
+                summary: "RGW may log spuriously.".to_owned(),
+                refs: vec![],
+            }],
+            upgrade_notes: Some("Restart OSDs after upgrade.".to_owned()),
+            branding: crt_core::Branding {
+                display_name: "Clyso Enterprise Storage".to_owned(),
+                blurb: "Hardened Ceph.".to_owned(),
+                footer: "(c) Clyso".to_owned(),
+            },
+            render: RenderSpec {
+                minijinja_version: crt_core::RENDER_MINIJINJA_VERSION.to_owned(),
+                template_digest,
+            },
+        };
+        let digest = crt_core::digest(&manifest).unwrap();
+        let record = crt_core::ReleaseRecord {
+            manifest,
+            digest,
+            signature: crt_core::ArmoredSignature("-----BEGIN PGP SIGNATURE-----".to_owned()),
+        };
+        store
+            .put_template(&template_digest, DEFAULT_NOTES_TEMPLATE.as_bytes())
+            .await
+            .unwrap();
+        store.put_release(&key, &record).await.unwrap();
+
+        let notes = render_sealed_notes(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+
+        // Groups are ordered by category (`fix` precedes `security`).
+        let fix_at = notes.find("## Fix").expect("fix group");
+        let sec_at = notes.find("## Security").expect("security group");
+        assert!(fix_at < sec_at, "groups are ordered by category");
+        assert!(notes.contains("Fixes a crash."));
+        assert!(notes.contains("Fixes a CVE."));
+        assert!(notes.contains("Behavior change: Default TLS is now required."));
+        assert!(notes.contains("## Known issues"));
+        assert!(notes.contains("RGW may log spuriously."));
+        assert!(notes.contains("## Upgrade notes"));
+        assert!(notes.contains("Restart OSDs after upgrade."));
+        assert!(notes.contains("(c) Clyso"));
+        // The internal note never leaks, even with rich content.
+        assert!(!notes.contains("DO-NOT-LEAK-internal"));
+    }
+
+    #[tokio::test]
+    async fn render_sealed_notes_refuses_a_minijinja_version_mismatch() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let key = cfg.resolve_release_key("ces-v18.2.0").unwrap();
+        // Hand-seal a record pinning a minijinja version this build does not
+        // link. `render_sealed_notes` reads + version-gates + renders (it does
+        // not verify the signature), so a placeholder signature suffices.
+        let template_digest = Sha256::of(DEFAULT_NOTES_TEMPLATE.as_bytes());
+        let manifest = Manifest {
+            schema_version: crt_core::SCHEMA_VERSION,
+            release: ReleaseHeader {
+                product: "ceph".to_owned(),
+                namespace: key.namespace.clone(),
+                channel: key.channel.clone(),
+                name: "ces-v18.2.0".to_owned(),
+                base_ref: "v18.2.0".to_owned(),
+                created: "2026-06-22T00:00:00+00:00".to_owned(),
+                author: test_author(),
+            },
+            entries: vec![],
+            known_issues: vec![],
+            upgrade_notes: None,
+            branding: crt_core::Branding {
+                display_name: "Clyso Enterprise Storage".to_owned(),
+                blurb: "b".to_owned(),
+                footer: "f".to_owned(),
+            },
+            render: RenderSpec {
+                minijinja_version: "0.0.0-not-linked".to_owned(),
+                template_digest,
+            },
+        };
+        let digest = crt_core::digest(&manifest).unwrap();
+        let record = crt_core::ReleaseRecord {
+            manifest,
+            digest,
+            signature: crt_core::ArmoredSignature("-----BEGIN PGP SIGNATURE-----".to_owned()),
+        };
+        store
+            .put_template(&template_digest, DEFAULT_NOTES_TEMPLATE.as_bytes())
+            .await
+            .unwrap();
+        store.put_release(&key, &record).await.unwrap();
+
+        let err = render_sealed_notes(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("version mismatch"));
     }
 
     #[test]

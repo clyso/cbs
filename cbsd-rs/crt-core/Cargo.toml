@@ -20,3 +20,9 @@ pgp = { version = "0.19", default-features = false }
 # RNG traits for the signing API. crt-core names the bound but never sources
 # entropy itself — the caller injects the RNG, keeping the crate pure.
 rand = "0.8"
+# Release-notes rendering (design §7.2). Pure-Rust, no C/tokio — safe in the
+# no-IO core. Pinned EXACT: `RENDER_MINIJINJA_VERSION` (src/notes.rs) is sealed
+# into every manifest's RenderSpec and gated at render/verify, so the linked
+# version must equal that constant — a bump must edit BOTH this line and the
+# constant. Defaults give `builtins` (groupby/title) + `serde` (from_serialize).
+minijinja = "=2.21.0"

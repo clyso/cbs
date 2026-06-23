@@ -11,6 +11,7 @@ use thiserror::Error;
 
 pub mod manifest;
 pub mod meta;
+pub mod notes;
 pub mod seal;
 
 pub use manifest::{
@@ -20,6 +21,7 @@ pub use manifest::{
     canonical_json, digest, upstream_weight,
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
+pub use notes::{RENDER_MINIJINJA_VERSION, check_render_version, render_notes};
 pub use seal::{sign_manifest, verify_manifest};
 
 /// Errors produced by `crt-core`.
@@ -34,6 +36,13 @@ pub enum CrtCoreError {
     /// An OpenPGP sign/verify/parse operation failed (design §6).
     #[error("openpgp: {0}")]
     Pgp(String),
+    /// A `minijinja` release-notes render failed (design §7.2).
+    #[error("notes render: {0}")]
+    Render(String),
+    /// The sealed manifest pins a `minijinja` version this build does not link
+    /// (design §7.2): refuse to silently re-render with a different engine.
+    #[error("minijinja version mismatch: manifest sealed {sealed}, this build links {linked}")]
+    RenderVersionMismatch { sealed: String, linked: String },
 }
 
 /// A SHA-256 content address, serialized as a lowercase-hex string.

@@ -141,6 +141,12 @@ enum ReleaseCmd {
         /// Release name.
         name: String,
     },
+    /// Re-render the release notes for a sealed release from its pinned
+    /// RenderSpec (design §7.2). Prints to stdout; no re-seal.
+    Notes {
+        /// Release name.
+        name: String,
+    },
     /// Verify a sealed release: signature, schema, and cross-reference (design
     /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
     /// reported as skipped until materialization lands.
@@ -377,6 +383,12 @@ async fn main() -> Result<()> {
                 }
                 ReleaseCmd::Info { name } => {
                     print!("{}", release::show_info(&store, &cfg, &name).await?);
+                }
+                ReleaseCmd::Notes { name } => {
+                    print!(
+                        "{}",
+                        release::render_sealed_notes(&store, &cfg, &name).await?
+                    );
                 }
                 ReleaseCmd::Verify { name, public_key } => {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(
