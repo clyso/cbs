@@ -147,6 +147,16 @@ enum ReleaseCmd {
         /// Release name.
         name: String,
     },
+    /// Emit the deterministic release artifacts (RELEASE-NOTES.md +
+    /// sbom.cdx.json) for a sealed release. M3 emits artifacts only; the git
+    /// ref/tag and signed 000-RELEASE/ bundle are M4 (design §8).
+    Materialize {
+        /// Release name.
+        name: String,
+        /// Output directory (created if absent).
+        #[arg(long, default_value = ".")]
+        out: PathBuf,
+    },
     /// Verify a sealed release: signature, schema, and cross-reference (design
     /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
     /// reported as skipped until materialization lands.
@@ -389,6 +399,11 @@ async fn main() -> Result<()> {
                         "{}",
                         release::render_sealed_notes(&store, &cfg, &name).await?
                     );
+                }
+                ReleaseCmd::Materialize { name, out } => {
+                    let written = release::materialize_artifacts(&store, &cfg, &name, &out).await?;
+                    println!("wrote {}", written.notes.display());
+                    println!("wrote {}", written.sbom.display());
                 }
                 ReleaseCmd::Verify { name, public_key } => {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(

@@ -12,6 +12,7 @@ use thiserror::Error;
 pub mod manifest;
 pub mod meta;
 pub mod notes;
+pub mod sbom;
 pub mod seal;
 
 pub use manifest::{
@@ -22,6 +23,7 @@ pub use manifest::{
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
 pub use notes::{RENDER_MINIJINJA_VERSION, check_render_version, render_notes};
+pub use sbom::build_sbom;
 pub use seal::{sign_manifest, verify_manifest};
 
 /// Errors produced by `crt-core`.
@@ -43,6 +45,9 @@ pub enum CrtCoreError {
     /// (design §7.2): refuse to silently re-render with a different engine.
     #[error("minijinja version mismatch: manifest sealed {sealed}, this build links {linked}")]
     RenderVersionMismatch { sealed: String, linked: String },
+    /// CycloneDX SBOM serialization failed (design §7.1).
+    #[error("sbom serialization: {0}")]
+    Sbom(String),
 }
 
 /// A SHA-256 content address, serialized as a lowercase-hex string.

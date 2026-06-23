@@ -17,6 +17,8 @@
 //! editor-buffer parsing, and rendering live here) are unit-tested; the IO
 //! shims (`$EDITOR`, `git config` author lookup) are thin.
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result, anyhow, bail};
 use crt_core::{
     Blast, Conflict, Coverage, Draft, Identity, Justification, JustificationKind, KnownIssue,
@@ -425,6 +427,19 @@ pub async fn list_releases(store: &dyn Store) -> Result<Vec<crt_core::ReleaseKey
 /// version does not match this build — we refuse to silently re-render with a
 /// different engine, whose bytes could diverge from the sealed notes.
 pub async fn render_sealed_notes(store: &dyn Store, cfg: &Config, name: &str) -> Result<String> {
+    Ok(sealed_record_and_notes(store, cfg, name).await?.1)
+}
+
+/// Load a sealed release and render its notes — the shared core of `release
+/// notes` and `release materialize`. Version-gates the sealed `RenderSpec`,
+/// loads the template by its sealed digest, and renders. Returns the record
+/// (whose manifest also feeds the SBOM) alongside the rendered notes. Errors if
+/// no sealed release exists or the pinned `minijinja` version does not match.
+async fn sealed_record_and_notes(
+    store: &dyn Store,
+    cfg: &Config,
+    name: &str,
+) -> Result<(crt_core::ReleaseRecord, String)> {
     let key = cfg.resolve_release_key(name)?;
     let record = store.get_release(&key).await.with_context(|| {
         format!(
@@ -440,14 +455,56 @@ pub async fn render_sealed_notes(store: &dyn Store, cfg: &Config, name: &str) ->
         .await
         .with_context(|| {
             format!(
-                "fetching the sealed notes template {}",
+                "loading the sealed notes template {}",
                 record.manifest.render.template_digest
             )
         })?;
     let template = std::str::from_utf8(&template_bytes)
         .context("the sealed notes template is not valid UTF-8")?;
 
-    Ok(crt_core::render_notes(&record.manifest, template)?)
+    let notes = crt_core::render_notes(&record.manifest, template)?;
+    Ok((record, notes))
+}
+
+/// The artifact files written by [`materialize_artifacts`].
+pub struct MaterializeOutput {
+    pub notes: PathBuf,
+    pub sbom: PathBuf,
+}
+
+/// `crt release materialize <name> --out <dir>`: emit the two deterministic
+/// projections of a sealed release — `RELEASE-NOTES.md` and `sbom.cdx.json` —
+/// into `out_dir` (created if absent). Both are pure functions of the sealed
+/// manifest, so re-running overwrites them with identical bytes. **M3 emits the
+/// artifacts only**; M4 extends this command with the git ref/tag and the signed
+/// `000-RELEASE/` bundle (design §8), and `verify` leg 4 then byte-compares the
+/// committed copies against a re-derivation.
+pub async fn materialize_artifacts(
+    store: &dyn Store,
+    cfg: &Config,
+    name: &str,
+    out_dir: &Path,
+) -> Result<MaterializeOutput> {
+    let (record, notes) = sealed_record_and_notes(store, cfg, name).await?;
+    let sbom = crt_core::build_sbom(&record.manifest)?;
+
+    // Async filesystem IO: this runs under tokio, so blocking `std::fs` would
+    // stall the executor (rust-2024). `tokio::fs` offloads to the blocking pool.
+    tokio::fs::create_dir_all(out_dir)
+        .await
+        .with_context(|| format!("creating the output directory {}", out_dir.display()))?;
+    let notes_path = out_dir.join("RELEASE-NOTES.md");
+    let sbom_path = out_dir.join("sbom.cdx.json");
+    tokio::fs::write(&notes_path, notes)
+        .await
+        .with_context(|| format!("writing {}", notes_path.display()))?;
+    tokio::fs::write(&sbom_path, sbom)
+        .await
+        .with_context(|| format!("writing {}", sbom_path.display()))?;
+    Ok(MaterializeOutput {
+        notes: notes_path,
+        sbom: sbom_path,
+    })
 }
 
 /// Render a human-readable summary of a draft or sealed release. Pure: risk
@@ -1305,6 +1362,90 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("version mismatch"));
+    }
+
+    #[tokio::test]
+    async fn materialize_writes_both_artifacts_deterministically() {
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        draft_with_one_entry(&store, &cfg, "ces-v18.2.0").await;
+        let (secret, _) = test_keypair();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+            .await
+            .unwrap();
+        assert!(out.notes.ends_with("RELEASE-NOTES.md"));
+        assert!(out.sbom.ends_with("sbom.cdx.json"));
+
+        let notes = std::fs::read_to_string(&out.notes).unwrap();
+        let sbom = std::fs::read_to_string(&out.sbom).unwrap();
+        // The notes file equals the standalone `release notes` projection.
+        assert_eq!(
+            notes,
+            render_sealed_notes(&store, &cfg, "ces-v18.2.0")
+                .await
+                .unwrap()
+        );
+        // The SBOM is CycloneDX and carries the backported patch.
+        assert!(sbom.contains("\"bomFormat\": \"CycloneDX\""));
+        assert!(sbom.contains("\"specVersion\": \"1.6\""));
+        assert!(sbom.contains("backport"));
+
+        // Re-materializing into a fresh dir yields byte-identical artifacts
+        // (the leg-4 determinism contract).
+        let dir2 = tempfile::tempdir().unwrap();
+        let out2 = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir2.path())
+            .await
+            .unwrap();
+        assert_eq!(sbom, std::fs::read_to_string(&out2.sbom).unwrap());
+        assert_eq!(notes, std::fs::read_to_string(&out2.notes).unwrap());
+    }
+
+    #[tokio::test]
+    async fn materialize_overwrites_in_place_deterministically() {
+        // The fixed filenames mean a second materialize into the *same* dir
+        // overwrites the first — exercise that path (`create_dir_all` on an
+        // existing dir + `write` over existing files) and assert the bytes are
+        // identical, since both runs project the same sealed manifest.
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        draft_with_one_entry(&store, &cfg, "ces-v18.2.0").await;
+        let (secret, _) = test_keypair();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let first = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+            .await
+            .unwrap();
+        let notes1 = std::fs::read_to_string(&first.notes).unwrap();
+        let sbom1 = std::fs::read_to_string(&first.sbom).unwrap();
+
+        // Same (now non-empty) dir: must overwrite cleanly with identical bytes.
+        let second = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+            .await
+            .unwrap();
+        assert_eq!(notes1, std::fs::read_to_string(&second.notes).unwrap());
+        assert_eq!(sbom1, std::fs::read_to_string(&second.sbom).unwrap());
     }
 
     #[test]
