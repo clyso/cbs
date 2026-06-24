@@ -67,6 +67,14 @@ no cloud SDK, no `serde_saphyr`.
 
 ## Build target & portability (resolves review B1)
 
+> **Extended/refined by design 012.** The acceptance gate below ("runs as PID 1
+> in the oldest supported `desc.distro` (rockylinux:9)") is refined by
+> `012-…-static-musl-acceptance-and-distro-independence.md`: a static-musl
+> binary has no libc linkage and is distro-independent, so the operative gate is
+> the **link-time staticness** check (`ldd`/`file`), and the runtime smoke run
+> uses a _representative_ EL image, not Rocky 9 as a canonical target. See 012
+> for the governing acceptance criteria.
+
 The runner spawns the builder container from `desc.distro` (e.g. `rockylinux:9`
 — EL9, glibc 2.34) and runs the mounted `cbsbuild` as PID 1 inside it. The build
 host (and `cbsd-worker`) is not that image, so a glibc-dynamic binary built on
@@ -93,7 +101,9 @@ the host cannot run there.
   note — the proof is a CI job, not a shipped dependency edge).
 - **Acceptance gate:** the static `cbsbuild` runs as PID 1 in the oldest
   supported `desc.distro` (rockylinux:9). Static linking makes this trivial, but
-  it is verified, not assumed.
+  it is verified, not assumed. _(Refined by 012: the operative gate is the
+  distro-independent link-time staticness check; the runtime run is a secondary
+  smoke test on a representative EL image, not pinned to Rocky 9.)_
 
 ## Failure isolation & async model (resolves review B2)
 
@@ -291,7 +301,9 @@ Cross-cutting properties that are easy to get wrong; each is tested.
    panic is detected via `JoinError::is_panic()` and mapped to the build-failure
    path; the worker profile pins `panic = "unwind"` (resolves review B2).
 7. **Binary portability** — the static-musl `cbsbuild` runs as PID 1 in the
-   oldest supported `desc.distro` (resolves review B1).
+   oldest supported `desc.distro` (resolves review B1). _(Refined by design 012:
+   the gate is the distro-independent link-time staticness check; a static-musl
+   binary is not pinned to any one distro.)_
 8. **Vault auth order** — AppRole → userpass → token; KV v2 mount `ces-kv`
    (resolves review H5).
 9. **S3 addressing** — credentials from the secrets store injected as a static
