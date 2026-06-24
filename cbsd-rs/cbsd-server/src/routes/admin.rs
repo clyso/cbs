@@ -45,7 +45,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(remove_entity_role));
 
     OpenApiRouter::new()
-        .routes(routes!(list_entities))
+        .routes(routes!(list_entities, create_entity))
         .nest("/entity", entity_router)
         .nest("/robots", robots::router())
         .routes(routes!(queue_status))
@@ -919,6 +919,15 @@ struct AddEntityRoleBody {
     role: String,
 }
 
+#[derive(Deserialize, ToSchema)]
+struct CreateEntityBody {
+    email: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    roles: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/admin/entities
 // ---------------------------------------------------------------------------
@@ -1000,6 +1009,114 @@ async fn list_entities(
     }
 
     Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/entities
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/entities",
+    tag = "admin",
+    request_body = CreateEntityBody,
+    responses(
+        (status = StatusCode::CREATED, description = "User provisioned", body = EntityWithRolesItem),
+        (status = StatusCode::BAD_REQUEST, description = "Bad request"),
+        (status = StatusCode::FORBIDDEN, description = "Forbidden"),
+        (status = StatusCode::CONFLICT, description = "Conflict"),
+    ),
+    security(("bearer" = []), ("cookie" = [])),
+)]
+async fn create_entity(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<CreateEntityBody>,
+) -> Result<(StatusCode, Json<EntityWithRolesItem>), (StatusCode, Json<ErrorDetail>)> {
+    require_cap(&user, "permissions:manage")?;
+
+    let email = normalize_email(&body.email);
+
+    // Hold a provisioned email to the same domain policy as a login, so an
+    // admin cannot create an account that could never authenticate. Skipped in
+    // dev mode, where login itself bypasses domain validation (design 020).
+    if !state.config.dev.enabled
+        && !crate::auth::oauth::is_email_domain_allowed(
+            &email,
+            &state.config.oauth.allowed_domains,
+            state.config.oauth.allow_any_google_account,
+        )
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "email domain not allowed",
+        ));
+    }
+
+    // Default the display name to the email local-part; Google's real name
+    // overwrites it on first login.
+    let name = body
+        .name
+        .unwrap_or_else(|| email.split('@').next().unwrap_or(&email).to_string());
+
+    let role_refs: Vec<&str> = body.roles.iter().map(String::as_str).collect();
+
+    db::users::provision_user(&state.pool, &email, &name, &role_refs)
+        .await
+        .map_err(|e| match e {
+            db::users::ProvisionUserError::AlreadyExists
+            | db::users::ProvisionUserError::RobotCollision
+            | db::users::ProvisionUserError::UniqueViolation => {
+                auth_error(StatusCode::CONFLICT, &e.to_string())
+            }
+            db::users::ProvisionUserError::RobotNamePrefix => {
+                auth_error(StatusCode::FORBIDDEN, &e.to_string())
+            }
+            db::users::ProvisionUserError::UnknownRole(_) => {
+                auth_error(StatusCode::BAD_REQUEST, &e.to_string())
+            }
+            db::users::ProvisionUserError::Db(err) => {
+                tracing::error!("failed to provision user '{email}': {err}");
+                auth_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to provision user",
+                )
+            }
+        })?;
+
+    tracing::info!(
+        "user {} provisioned entity '{email}' with roles [{}]",
+        user.email,
+        body.roles.join(", "),
+    );
+
+    // A freshly provisioned user is pending (first_login_at = null) and is
+    // never a robot. Re-fetch roles with their scopes for the response.
+    let entity_roles = db::roles::get_user_roles(&state.pool, &email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get roles for entity '{email}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?;
+    let roles = entity_roles
+        .into_iter()
+        .map(|ur| EntityRoleItem {
+            role: ur.role_name,
+            scopes: ur.scopes.into_iter().map(Into::into).collect(),
+        })
+        .collect();
+
+    Ok((
+        StatusCode::CREATED,
+        Json(EntityWithRolesItem {
+            email,
+            name,
+            active: true,
+            is_robot: false,
+            first_login_at: None,
+            roles,
+        }),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1411,6 +1528,70 @@ mod handler_tests {
             Err((status, _)) => {
                 panic!("mixed-case email must resolve to the lowercased user, got {status}")
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn create_entity_provisions_pending_user_with_role() {
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO roles (name, description, builtin) VALUES ('builder', '', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = test_app_state(pool);
+        let caller = auth_user("admin@example.com", "Admin", false, &["permissions:manage"]);
+        let body = CreateEntityBody {
+            email: "Alice@Example.com".to_string(),
+            name: None,
+            roles: vec!["builder".to_string()],
+        };
+
+        match create_entity(State(state), caller, Json(body)).await {
+            Ok((status, Json(entity))) => {
+                assert_eq!(status, StatusCode::CREATED);
+                assert_eq!(
+                    entity.email, "alice@example.com",
+                    "email normalized lowercase"
+                );
+                assert_eq!(entity.first_login_at, None, "provisioned user is pending");
+                assert!(!entity.is_robot);
+                assert_eq!(entity.roles.len(), 1);
+            }
+            Err((status, _)) => panic!("expected 201, got {status}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_entity_duplicate_returns_409() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+        let body1 = CreateEntityBody {
+            email: "alice@example.com".to_string(),
+            name: None,
+            roles: vec![],
+        };
+        let first = create_entity(
+            State(state.clone()),
+            auth_user("admin@example.com", "Admin", false, &["permissions:manage"]),
+            Json(body1),
+        )
+        .await;
+        assert!(first.is_ok(), "first provision should succeed");
+
+        let body2 = CreateEntityBody {
+            email: "alice@example.com".to_string(),
+            name: None,
+            roles: vec![],
+        };
+        match create_entity(
+            State(state),
+            auth_user("admin@example.com", "Admin", false, &["permissions:manage"]),
+            Json(body2),
+        )
+        .await
+        {
+            Err((status, _)) => assert_eq!(status, StatusCode::CONFLICT),
+            Ok(_) => panic!("duplicate provision must return 409"),
         }
     }
 }

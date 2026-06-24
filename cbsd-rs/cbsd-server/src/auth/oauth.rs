@@ -76,6 +76,23 @@ impl std::fmt::Display for AuthRejection {
     }
 }
 
+/// Whether an email's domain is permitted by the OAuth allow-list. Shared by
+/// the login path ([`validate_user_info`]) and user provisioning (design 020),
+/// so a provisioned address is held to the same domain policy as a login.
+/// `allow_any_google_account` short-circuits to `true`. The email is assumed
+/// already normalized (lowercase); the allow-list is normalized at config load.
+pub fn is_email_domain_allowed(
+    email: &str,
+    allowed_domains: &[String],
+    allow_any_google_account: bool,
+) -> bool {
+    if allow_any_google_account {
+        return true;
+    }
+    let domain = email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
+    allowed_domains.iter().any(|d| d == domain)
+}
+
 /// Validate the userinfo against the server's OAuth config. Returns
 /// `Err(AuthRejection::EmailNotVerified)` first so an attacker cannot
 /// probe `allowed_domains` with unverified accounts (audit-rem D2).
@@ -87,11 +104,8 @@ pub fn validate_user_info(
     if !info.email_verified {
         return Err(AuthRejection::EmailNotVerified);
     }
-    if !allow_any_google_account {
-        let domain = info.email.rsplit_once('@').map(|(_, d)| d).unwrap_or("");
-        if !allowed_domains.iter().any(|d| d == domain) {
-            return Err(AuthRejection::DomainNotAllowed);
-        }
+    if !is_email_domain_allowed(&info.email, allowed_domains, allow_any_google_account) {
+        return Err(AuthRejection::DomainNotAllowed);
     }
     Ok(())
 }
@@ -331,5 +345,26 @@ mod tests {
         let v = info("anyone@anywhere.com", false);
         let result = validate_user_info(&v, &[], true);
         assert_eq!(result, Err(AuthRejection::EmailNotVerified));
+    }
+
+    #[test]
+    fn domain_allowed_matches_list_and_short_circuits_on_allow_any() {
+        // Exercised directly by user provisioning, which has no
+        // email_verified gate (design 020).
+        let allowed = ["allowed.example.com".to_string()];
+        assert!(is_email_domain_allowed(
+            "ok@allowed.example.com",
+            &allowed,
+            false
+        ));
+        assert!(!is_email_domain_allowed(
+            "ok@other.example.com",
+            &allowed,
+            false
+        ));
+        // No '@' yields an empty domain that matches nothing.
+        assert!(!is_email_domain_allowed("malformed", &allowed, false));
+        // allow_any short-circuits regardless of the allow-list.
+        assert!(is_email_domain_allowed("anyone@anywhere.com", &[], true));
     }
 }

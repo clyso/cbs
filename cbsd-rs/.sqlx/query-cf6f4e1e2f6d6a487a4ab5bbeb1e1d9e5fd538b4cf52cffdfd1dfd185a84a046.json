@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT is_robot AS \"is_robot!\" FROM users WHERE email = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "is_robot!",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cf6f4e1e2f6d6a487a4ab5bbeb1e1d9e5fd538b4cf52cffdfd1dfd185a84a046"
+}

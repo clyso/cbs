@@ -38,12 +38,12 @@ no data migration. Verify before shipping commit 2:
 4 commits, ordered by dependency. Auto-generated `.sqlx/` and `Cargo.lock` do
 not count toward the authored-LOC estimates.
 
-| #   | Commit                                                          | ~LOC | Status  |
-| --- | --------------------------------------------------------------- | ---- | ------- |
-| 1   | `cbsd-rs/docs: add user-prepopulation design, reviews, plan`    | docs | Done    |
-| 2   | `cbsd-rs/server: lowercase email + robot-name identity`         | ~450 | Done    |
-| 3   | `cbsd-rs/server: record first-login time and surface it`        | ~350 | Done    |
-| 4   | `cbsd-rs/server: provision users with roles before first login` | ~500 | Pending |
+| #   | Commit                                                          | ~LOC | Status |
+| --- | --------------------------------------------------------------- | ---- | ------ |
+| 1   | `cbsd-rs/docs: add user-prepopulation design, reviews, plan`    | docs | Done   |
+| 2   | `cbsd-rs/server: lowercase email + robot-name identity`         | ~450 | Done   |
+| 3   | `cbsd-rs/server: record first-login time and surface it`        | ~350 | Done   |
+| 4   | `cbsd-rs/server: provision users with roles before first login` | ~500 | Done   |
 
 Design-summary item 1 ("case-insensitive identity + first-login time") maps to
 plan commits 2 and 3; item 2 ("provision users") maps to commit 4.

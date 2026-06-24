@@ -33,6 +33,8 @@ pub struct UsersArgs {
 enum UsersCommands {
     /// List all users with their roles
     List,
+    /// Pre-create a user with roles before they have ever logged in
+    Create(CreateArgs),
     /// Show user details including scopes and effective capabilities
     Get(GetArgs),
     /// Activate a user account
@@ -47,6 +49,19 @@ enum UsersCommands {
 struct GetArgs {
     /// User email address
     email: String,
+}
+
+#[derive(Args)]
+struct CreateArgs {
+    /// User email address
+    email: String,
+    /// Display name (defaults to the email local-part; overwritten by the
+    /// real name on first login)
+    #[arg(long)]
+    name: Option<String>,
+    /// Role to assign (repeatable); may be omitted to provision with no roles
+    #[arg(long)]
+    role: Vec<String>,
 }
 
 #[derive(Args)]
@@ -138,6 +153,14 @@ struct AddUserRoleBody {
     role: String,
 }
 
+#[derive(Serialize)]
+struct CreateUserBody {
+    email: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    roles: Vec<String>,
+}
+
 #[derive(Deserialize)]
 struct DeactivateResponse {
     #[allow(dead_code)]
@@ -179,6 +202,7 @@ pub async fn run(
 ) -> Result<(), Error> {
     match args.command {
         UsersCommands::List => cmd_list(config_path, opts).await,
+        UsersCommands::Create(a) => cmd_create(a, config_path, opts).await,
         UsersCommands::Get(a) => cmd_get(a, config_path, opts).await,
         UsersCommands::Activate(a) => cmd_activate(a, config_path, opts).await,
         UsersCommands::Deactivate(a) => cmd_deactivate(a, config_path, opts).await,
@@ -237,6 +261,39 @@ async fn cmd_list(config_path: Option<&std::path::Path>, opts: ClientOpts) -> Re
             login,
             role_names.join(", "),
         );
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// admin users create
+// ---------------------------------------------------------------------------
+
+async fn cmd_create(
+    args: CreateArgs,
+    config_path: Option<&std::path::Path>,
+    opts: ClientOpts,
+) -> Result<(), Error> {
+    let config = Config::load(config_path)?;
+    let client = CbcClient::new(&config.host, &config.token, opts)?;
+
+    let body = CreateUserBody {
+        email: args.email.clone(),
+        name: args.name.clone(),
+        roles: args.role.clone(),
+    };
+
+    let user: UserWithRoles = client.post("admin/entities", &body).await?;
+
+    let role_names: Vec<&str> = user.roles.iter().map(|r| r.role.as_str()).collect();
+    println!("user '{}' provisioned", user.email);
+    println!("    name: {}", user.name);
+    println!("   login: {}", login_state(&user));
+    if role_names.is_empty() {
+        println!("   roles: (none)");
+    } else {
+        println!("   roles: {}", role_names.join(", "));
     }
 
     Ok(())
