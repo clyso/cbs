@@ -16,6 +16,7 @@
 #
 # pyright: reportAny=false, reportUnknownArgumentType=false
 
+import errno
 import re
 
 import pydantic
@@ -147,7 +148,11 @@ def skopeo_inspect(img: str, secrets: SecretsMgr, *, tls_verify: bool = True) ->
 
     if retcode != 0:
         msg = f"error inspecting image '{img}': {err}"
-        if retcode == 2 or re.match(r".*not\s+found.*", err):
+        # Handle "image not found" across different Skopeo versions:
+        # - Newer versions of Skopeo explicitly return exit code 2.
+        # - Older versions return a generic error code but include "not found" in
+        #   stderr.
+        if retcode == errno.ENOENT or re.match(r".*not\s+found.*", err):
             logger.debug(msg)
             raise ImageNotFoundError(img) from None
         logger.error(msg)

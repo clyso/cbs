@@ -279,6 +279,9 @@ async def runner(
     if force:
         podman_args.append("--force")
 
+    if not tls_verify:
+        podman_args.append("--tls-verify=false")
+
     ctr_name = run_name if run_name else gen_run_name()
 
     report_host_path = config.paths.scratch / "build-report.json"
