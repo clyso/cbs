@@ -100,16 +100,24 @@ impl From<sqlx::Error> for CreateRobotError {
 // Name ↔ email helpers
 // ---------------------------------------------------------------------------
 
+/// Map a robot name to its synthetic `users.email`. The name is lowercased so
+/// robot identities obey the same case-insensitive invariant as human emails,
+/// and case-variant names (`CI` vs `ci`) collapse to one row. This is the
+/// structural choke point every robot email lookup funnels through, so no
+/// handler can construct a mixed-case robot identity (design 020).
 pub fn name_to_synthetic_email(name: &str) -> String {
-    format!("robot+{name}@robots")
+    format!("robot+{}@robots", name.to_lowercase())
 }
 
 pub fn synthetic_email_to_name(email: &str) -> Option<&str> {
     email.strip_prefix("robot+")?.strip_suffix("@robots")
 }
 
-/// Validate a robot name: `^[a-zA-Z0-9_][a-zA-Z0-9_.-]*[a-zA-Z0-9_]$`
-/// with total length 2–64 characters. The length check uses `chars().count()`
+/// Validate a robot name: `^[a-z0-9_][a-z0-9_.-]*[a-z0-9_]$`
+/// with total length 2–64 characters. Lowercase-only: robot names are
+/// lowercased at ingress (design 020), so this rejects any uppercase that
+/// reaches it as a tripwire for a caller that forgot to normalize. The length
+/// check uses `chars().count()`
 /// rather than `str::len()` so a multi-byte non-ASCII input (e.g. "робот")
 /// is classified by character count and then falls through to the
 /// character-class check, rather than indexing past the char slice.
@@ -122,21 +130,19 @@ pub fn validate_robot_name(name: &str) -> Result<(), String> {
     let first = chars[0];
     let last = chars[n - 1];
 
-    let is_border = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let is_border = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_';
     if !is_border(first) {
         return Err(format!(
-            "robot name must start with [a-zA-Z0-9_], got '{first}'"
+            "robot name must start with [a-z0-9_], got '{first}'"
         ));
     }
     if !is_border(last) {
-        return Err(format!(
-            "robot name must end with [a-zA-Z0-9_], got '{last}'"
-        ));
+        return Err(format!("robot name must end with [a-z0-9_], got '{last}'"));
     }
     for c in &chars[1..n - 1] {
-        if !c.is_ascii_alphanumeric() && *c != '_' && *c != '.' && *c != '-' {
+        if !c.is_ascii_lowercase() && !c.is_ascii_digit() && *c != '_' && *c != '.' && *c != '-' {
             return Err(format!(
-                "robot name contains invalid character '{c}': allowed [a-zA-Z0-9_.-]"
+                "robot name contains invalid character '{c}': allowed [a-z0-9_.-]"
             ));
         }
     }
@@ -878,11 +884,19 @@ mod tests {
         assert_eq!(synthetic_email_to_name("robot+ci@not-robots.com"), None);
         assert_eq!(synthetic_email_to_name("robot_ci@robots"), None);
 
-        // Bare-name punctuation is preserved through the round-trip.
-        for n in ["ab", "x.y-z_a", "A1B2", "CI.NIGHTLY"] {
-            let e = name_to_synthetic_email(n);
-            assert_eq!(synthetic_email_to_name(&e), Some(n));
+        // Bare-name punctuation is preserved through the round-trip; uppercase
+        // is lowercased into the synthetic email (design 020), so the
+        // round-trip yields the lowercased form and case variants collapse.
+        for (input, lowered) in [
+            ("ab", "ab"),
+            ("x.y-z_a", "x.y-z_a"),
+            ("A1B2", "a1b2"),
+            ("CI.NIGHTLY", "ci.nightly"),
+        ] {
+            let e = name_to_synthetic_email(input);
+            assert_eq!(synthetic_email_to_name(&e), Some(lowered));
         }
+        assert_eq!(name_to_synthetic_email("CI"), name_to_synthetic_email("ci"));
     }
 
     #[test]
@@ -893,8 +907,8 @@ mod tests {
             "ci-builder",
             "build_system",
             "x.y-z_a",
-            "A1B2",
-            "CI.NIGHTLY",
+            "a1b2",
+            "ci.nightly",
             "robot_42",
             &"a".repeat(64),
         ] {
@@ -918,6 +932,9 @@ mod tests {
             ("ab@cd", "@"),
             ("ab/cd", "slash"),
             ("робот", "non-ASCII"),
+            ("CI", "uppercase"),
+            ("Ab", "uppercase border"),
+            ("aBc", "uppercase middle"),
         ];
         for (n, label) in cases {
             assert!(
@@ -956,6 +973,18 @@ mod tests {
             .await
             .unwrap();
         let result = create_or_revive(&pool, "ci", None, None, "hash2", "pfx000000002", &[]).await;
+        assert!(matches!(result, Err(CreateRobotError::AlreadyActive)));
+    }
+
+    #[tokio::test]
+    async fn create_collapses_case_variant_names() {
+        let pool = test_pool().await;
+        create_or_revive(&pool, "ci", None, None, "hash1", "pfx000000001", &[])
+            .await
+            .unwrap();
+        // A case-variant name maps to the same synthetic email, so the second
+        // create observes the active robot and is rejected (design 020).
+        let result = create_or_revive(&pool, "CI", None, None, "hash2", "pfx000000002", &[]).await;
         assert!(matches!(result, Err(CreateRobotError::AlreadyActive)));
     }
 

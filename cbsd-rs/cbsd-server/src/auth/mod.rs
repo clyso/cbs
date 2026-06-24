@@ -14,3 +14,26 @@ pub mod extractors;
 pub mod oauth;
 pub mod paseto;
 pub mod token_cache;
+
+/// Canonical form for an email used as a user identity key: trimmed and
+/// lowercased.
+///
+/// Applied at every boundary where an externally-supplied email enters the
+/// system (OAuth callback, the `seed_admin` config value, the admin entity
+/// endpoints, user provisioning) so identity matching is case-insensitive and
+/// every `users.email` is stored lowercase. See design 020.
+pub fn normalize_email(email: &str) -> String {
+    email.trim().to_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_email_trims_and_lowercases() {
+        assert_eq!(normalize_email("  Alice@Example.COM "), "alice@example.com");
+        assert_eq!(normalize_email("bob@x.com"), "bob@x.com");
+        assert_eq!(normalize_email("ROBOT+CI@robots"), "robot+ci@robots");
+    }
+}

@@ -25,6 +25,7 @@ use utoipa_axum::routes;
 
 use crate::app::AppState;
 use crate::auth::extractors::{AuthUser, ErrorDetail, auth_error, first_robot_forbidden_cap};
+use crate::auth::normalize_email;
 use crate::auth::token_cache;
 use crate::db;
 use crate::routes::permissions::ScopeBody;
@@ -77,6 +78,7 @@ async fn deactivate_entity(
     user: AuthUser,
     Path(email): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     if !user.has_cap("permissions:manage") {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -203,6 +205,7 @@ async fn activate_entity(
     user: AuthUser,
     Path(email): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     if !user.has_cap("permissions:manage") {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -779,6 +782,7 @@ async fn set_entity_default_channel(
     Path(email): Path<String>,
     Json(body): Json<SetDefaultChannelBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     if !user.has_cap("permissions:manage") {
         return Err(auth_error(
             StatusCode::FORBIDDEN,
@@ -1014,6 +1018,7 @@ async fn get_entity_roles(
     user: AuthUser,
     Path(email): Path<String>,
 ) -> Result<Json<Vec<EntityRoleItem>>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     require_cap(&user, "permissions:view")?;
 
     let entity_roles = db::roles::get_user_roles(&state.pool, &email)
@@ -1058,6 +1063,7 @@ async fn replace_entity_roles(
     Path(email): Path<String>,
     Json(body): Json<ReplaceEntityRolesBody>,
 ) -> Result<Json<Vec<EntityRoleItem>>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     require_cap(&user, "permissions:manage")?;
 
     // Refuse to assign roles holding forbidden caps to robot targets. The
@@ -1164,6 +1170,7 @@ async fn add_entity_role(
     Path(email): Path<String>,
     Json(body): Json<AddEntityRoleBody>,
 ) -> Result<(StatusCode, Json<EntityRoleItem>), (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     require_cap(&user, "permissions:manage")?;
 
     db::roles::get_role(&state.pool, &body.role)
@@ -1179,15 +1186,17 @@ async fn add_entity_role(
             )
         })?;
 
-    // Assignment-time forbidden-cap reject for robot targets.
+    // The target must exist before we assign a role — otherwise add_user_role
+    // hits the user_roles foreign key and surfaces a 500 instead of a clear
+    // 404 (design 020 review v3). Mirrors deactivate_entity's NOT_FOUND mapping.
     let target_is_robot = db::users::get_user(&state.pool, &email)
         .await
         .map_err(|e| {
             tracing::error!("failed to look up entity '{email}': {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         })?
-        .map(|u| u.is_robot)
-        .unwrap_or(false);
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "user not found"))?
+        .is_robot;
 
     if target_is_robot {
         let caps = db::roles::get_role_caps(&state.pool, &body.role)
@@ -1268,6 +1277,7 @@ async fn remove_entity_role(
     user: AuthUser,
     Path((email, role)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorDetail>)> {
+    let email = normalize_email(&email);
     require_cap(&user, "permissions:manage")?;
 
     let removed = db::roles::remove_user_role(&state.pool, &email, &role)
@@ -1333,6 +1343,69 @@ mod handler_tests {
         match list_entities(State(state), caller, Query(query)).await {
             Ok(Json(rows)) => assert!(rows.is_empty(), "empty DB yields empty entity list"),
             Err((status, _)) => panic!("expected Ok, got {status}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_entity_role_on_unknown_user_returns_404() {
+        let pool = test_pool().await;
+        // Seed a role so role-existence validation passes and we reach the
+        // user-existence check. Runtime query — no .sqlx cache entry needed.
+        sqlx::query("INSERT INTO roles (name, description, builtin) VALUES ('builder', '', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = test_app_state(pool);
+        let caller = auth_user("admin@example.com", "Admin", false, &["permissions:manage"]);
+        let body = AddEntityRoleBody {
+            role: "builder".to_string(),
+        };
+
+        match add_entity_role(
+            State(state),
+            caller,
+            Path("ghost@example.com".to_string()),
+            Json(body),
+        )
+        .await
+        {
+            Err((status, _)) => assert_eq!(status, StatusCode::NOT_FOUND),
+            Ok(_) => panic!("adding a role to a non-existent user must return 404"),
+        }
+    }
+
+    #[tokio::test]
+    async fn add_entity_role_normalizes_mixed_case_email() {
+        let pool = test_pool().await;
+        sqlx::query("INSERT INTO roles (name, description, builtin) VALUES ('builder', '', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The stored user identity is lowercase.
+        db::users::create_or_update_user(&pool, "alice@example.com", "Alice")
+            .await
+            .unwrap();
+        let state = test_app_state(pool);
+        let caller = auth_user("admin@example.com", "Admin", false, &["permissions:manage"]);
+        let body = AddEntityRoleBody {
+            role: "builder".to_string(),
+        };
+
+        // Operator supplies a mixed-case email; boundary-#4 normalization
+        // resolves it to the lowercased row and the assignment succeeds (design
+        // 020 review v1 C2).
+        match add_entity_role(
+            State(state),
+            caller,
+            Path("Alice@Example.com".to_string()),
+            Json(body),
+        )
+        .await
+        {
+            Ok((status, _)) => assert_eq!(status, StatusCode::CREATED),
+            Err((status, _)) => {
+                panic!("mixed-case email must resolve to the lowercased user, got {status}")
+            }
         }
     }
 }

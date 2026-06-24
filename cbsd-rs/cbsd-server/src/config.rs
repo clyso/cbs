@@ -337,8 +337,21 @@ impl ServerConfig {
 pub fn load_config(path: &std::path::Path) -> ServerConfig {
     let contents = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("failed to read config file {}: {e}", path.display()));
-    let config: ServerConfig = serde_saphyr::from_str(&contents)
+    let mut config: ServerConfig = serde_saphyr::from_str(&contents)
         .unwrap_or_else(|e| panic!("failed to parse config file '{}':\n{e}", path.display()));
+    // Normalize the seed-admin email to the canonical lowercase identity so the
+    // first-startup bootstrap row matches the email a later OAuth (or dev-mode)
+    // login resolves to. Without this, a mixed-case `seed_admin` forks a second,
+    // zero-capability user row on first login (design 020).
+    if let Some(email) = config.seed.seed_admin.as_mut() {
+        *email = crate::auth::normalize_email(email.as_str());
+    }
+    // The allowed-domain check compares against the lowercased email domain, so
+    // normalize the configured domains to lowercase too — otherwise a mixed-case
+    // entry would never match a (now lowercased) login email (design 020).
+    for domain in &mut config.oauth.allowed_domains {
+        *domain = domain.trim().to_lowercase();
+    }
     config.validate();
     config
 }

@@ -41,7 +41,7 @@ not count toward the authored-LOC estimates.
 | #   | Commit                                                          | ~LOC | Status  |
 | --- | --------------------------------------------------------------- | ---- | ------- |
 | 1   | `cbsd-rs/docs: add user-prepopulation design, reviews, plan`    | docs | Done    |
-| 2   | `cbsd-rs/server: lowercase email + robot-name identity`         | ~450 | Pending |
+| 2   | `cbsd-rs/server: lowercase email + robot-name identity`         | ~450 | Done    |
 | 3   | `cbsd-rs/server: record first-login time and surface it`        | ~350 | Pending |
 | 4   | `cbsd-rs/server: provision users with roles before first login` | ~500 | Pending |
 

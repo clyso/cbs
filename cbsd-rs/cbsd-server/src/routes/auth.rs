@@ -242,6 +242,9 @@ async fn callback(
 
     // Resolve user info — dev mode or Google exchange.
     let user_info = if let Some(email) = params.dev_email.filter(|_| state.config.dev.enabled) {
+        // Normalize the dev email to the canonical lowercase identity, the same
+        // rule the production path applies below (design 020).
+        let email = crate::auth::normalize_email(&email);
         let name = email.split('@').next().unwrap_or(&email).to_string();
         // Dev-mode short-circuit synthesizes `email_verified = true`
         // because no real OAuth verification is happening; this path is
@@ -256,7 +259,7 @@ async fn callback(
             .code
             .ok_or_else(|| auth_error(StatusCode::BAD_REQUEST, "missing authorization code"))?;
 
-        let info = oauth::exchange_code_for_userinfo(&state.oauth, &code)
+        let mut info = oauth::exchange_code_for_userinfo(&state.oauth, &code)
             .await
             .map_err(|e| {
                 tracing::error!("OAuth code exchange failed: {e}");
@@ -265,6 +268,11 @@ async fn callback(
                     "failed to authenticate with Google",
                 )
             })?;
+
+        // Normalize to the canonical lowercase identity BEFORE validation, so
+        // the allowed-domain check compares a lowercase domain and the user
+        // row, token, and role lookups all key off the same value (design 020).
+        info.email = crate::auth::normalize_email(&info.email);
 
         // Per audit-rem D2: validate `email_verified` BEFORE the
         // allowed-domain check, and route both rejection reasons through
@@ -514,8 +522,12 @@ async fn revoke_all_tokens(
         ));
     }
 
+    // Normalize the operator-supplied target email to the canonical lowercase
+    // identity so it matches the stored user row (design 020).
+    let user_email = crate::auth::normalize_email(&body.user_email);
+
     // Verify target user exists
-    let target = db::users::get_user(&state.pool, &body.user_email)
+    let target = db::users::get_user(&state.pool, &user_email)
         .await
         .map_err(|e| {
             tracing::error!("failed to look up user: {e}");
@@ -526,14 +538,14 @@ async fn revoke_all_tokens(
         return Err(auth_error(StatusCode::NOT_FOUND, "user not found"));
     }
 
-    let count = db::tokens::revoke_all_for_user(&state.pool, &body.user_email)
+    let count = db::tokens::revoke_all_for_user(&state.pool, &user_email)
         .await
         .map_err(|e| {
             tracing::error!("failed to revoke tokens: {e}");
             auth_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to revoke tokens")
         })?;
 
-    tracing::info!("revoked {count} tokens for user {}", body.user_email);
+    tracing::info!("revoked {count} tokens for user {user_email}");
     Ok(Json(
         serde_json::json!({"detail": format!("revoked {count} tokens")}),
     ))

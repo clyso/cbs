@@ -207,7 +207,7 @@ fn parse_iso_date_to_next_day_epoch(s: &str) -> Result<i64, String> {
 async fn create_or_revive_robot(
     State(state): State<AppState>,
     user: AuthUser,
-    Json(body): Json<CreateRobotBody>,
+    Json(mut body): Json<CreateRobotBody>,
 ) -> Result<(StatusCode, Json<CreateRobotResponse>), (StatusCode, Json<ErrorDetail>)> {
     if !user.has_cap("robots:manage") {
         return Err(auth_error(
@@ -215,6 +215,12 @@ async fn create_or_revive_robot(
             "missing required capability: robots:manage",
         ));
     }
+
+    // Lowercase the robot name to its canonical identity BEFORE validation and
+    // before the synthetic email / `robot:` display name are derived, so every
+    // downstream use (validation, email, display name, response) is consistent
+    // (design 020).
+    body.name = body.name.to_lowercase();
 
     db::robots::validate_robot_name(&body.name)
         .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &format!("invalid robot name: {e}")))?;
