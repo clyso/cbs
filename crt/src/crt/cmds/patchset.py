@@ -11,6 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
 import datetime
 import errno
 import re
@@ -23,6 +24,16 @@ from typing import cast
 import click
 import pydantic
 import rich.box
+from cbscommon.git.cmds import (
+    git_branch_delete,
+    git_branch_from,
+    git_fetch_ref,
+    git_get_patch_sha_title,
+    git_patches_in_interval,
+    git_prepare_remote,
+)
+from cbscommon.git.exceptions import GitError
+from cbscommon.git.types import SHA
 from rich.console import Group, RenderableType
 from rich.padding import Padding
 from rich.table import Table
@@ -41,15 +52,6 @@ from crt.cmds import logger as parent_logger
 from crt.cmds._common import CRTProgress
 from crt.crtlib.errors.patchset import (
     MalformedPatchSetError,
-)
-from crt.crtlib.git_utils import (
-    SHA,
-    GitError,
-    git_branch_delete,
-    git_branch_from,
-    git_get_patch_sha_title,
-    git_patches_in_interval,
-    git_prepare_remote,
 )
 from crt.crtlib.models.common import (
     AuthorData,
@@ -575,8 +577,10 @@ def cmd_patchset_add(
         # obtain the right shas
         progress.new_task("prepare remote")
         try:
-            remote = git_prepare_remote(
-                ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
+            asyncio.run(
+                git_prepare_remote(
+                    ceph_repo_path, f"github.com/{gh_repo}", gh_repo, ctx.github_token
+                )
             )
         except Exception as e:
             progress.stop_error()
@@ -588,7 +592,9 @@ def cmd_patchset_add(
         progress.new_task("fetch patches")
 
         try:
-            _ = remote.fetch(refspec=f"{patches_branch}:{dst_branch}")
+            _ = asyncio.run(
+                git_fetch_ref(ceph_repo_path, patches_branch, dst_branch, gh_repo)
+            )
         except Exception as e:
             progress.stop_error()
             perror(f"unable to fetch branch '{patches_branch}': {e}")
@@ -596,7 +602,7 @@ def cmd_patchset_add(
     else:
         progress.new_task("create branch patches")
         try:
-            git_branch_from(ceph_repo_path, patches_branch, dst_branch)
+            asyncio.run(git_branch_from(ceph_repo_path, patches_branch, dst_branch))
         except GitError as e:
             progress.stop_error()
             perror(
@@ -606,7 +612,7 @@ def cmd_patchset_add(
 
     def _cleanup() -> None:
         try:
-            git_branch_delete(ceph_repo_path, dst_branch)
+            asyncio.run(git_branch_delete(ceph_repo_path, dst_branch))
         except Exception as e:
             progress.stop_error()
             perror(f"unable to delete temporary branch '{dst_branch}': {e}")
@@ -636,7 +642,9 @@ def cmd_patchset_add(
         if sha_end:
             try:
                 for sha, title in reversed(
-                    git_patches_in_interval(ceph_repo_path, sha_begin, sha_end)
+                    asyncio.run(
+                        git_patches_in_interval(ceph_repo_path, sha_begin, sha_end)
+                    )
                 ):
                     if sha not in existing_shas:
                         patches_lst.append((sha, title))
@@ -649,7 +657,9 @@ def cmd_patchset_add(
                 sys.exit(errno.ENOTRECOVERABLE)
         else:
             try:
-                sha, title = git_get_patch_sha_title(ceph_repo_path, sha_begin)
+                sha, title = asyncio.run(
+                    git_get_patch_sha_title(ceph_repo_path, sha_begin)
+                )
                 if sha not in existing_shas:
                     patches_lst.append((sha, title))
                 else:

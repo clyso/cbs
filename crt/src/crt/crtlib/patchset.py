@@ -12,28 +12,28 @@
 # GNU General Public License for more details.
 
 
+import asyncio
 import datetime
 import uuid
 from datetime import datetime as dt
 from pathlib import Path
 
 import pydantic
+from cbscommon.git.cmds import (
+    git_branch_delete,
+    git_branch_from,
+    git_check_patches_diff,
+    git_fetch_ref,
+    git_format_patch,
+    git_prepare_remote,
+)
+from cbscommon.git.exceptions import GitEmptyPatchDiffError, GitError, GitPatchDiffError
 
 from crt.crtlib.errors.patchset import (
     MalformedPatchSetError,
     NoSuchPatchSetError,
     PatchSetCheckError,
     PatchSetError,
-)
-from crt.crtlib.git_utils import (
-    GitEmptyPatchDiffError,
-    GitError,
-    GitPatchDiffError,
-    git_branch_delete,
-    git_branch_from,
-    git_check_patches_diff,
-    git_format_patch,
-    git_prepare_remote,
 )
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
@@ -57,8 +57,10 @@ def patchset_check_patches_diff(
     logger.debug(f"check patchset branch '{patchset_branch}' against '{base_ref}'")
 
     try:
-        added, skipped = git_check_patches_diff(
-            ceph_git_path, base_ref, patchset_branch, limit=patchset.base_sha
+        added, skipped = asyncio.run(
+            git_check_patches_diff(
+                ceph_git_path, base_ref, patchset_branch, limit=patchset.base_sha
+            )
         )
     except GitEmptyPatchDiffError:
         logger.warning(
@@ -263,23 +265,25 @@ def patchset_fetch_gh_patches(
         return
 
     # obtain patches
-    remote = git_prepare_remote(
-        ceph_repo_path, f"github.com/{repo_path}", repo_path, token
+    asyncio.run(
+        git_prepare_remote(ceph_repo_path, f"github.com/{repo_path}", repo_path, token)
     )
     src_ref = f"pull/{pr_id}/head"
     dst_ref = f"patchset/gh/{repo_path}/{pr_id}"
     try:
-        _ = remote.fetch(f"{src_ref}:{dst_ref}")
+        _ = asyncio.run(git_fetch_ref(ceph_repo_path, src_ref, dst_ref, repo_path))
     except Exception as e:
         msg = f"error fetching patchset '{pr_id}' from '{repo_path}': {e}"
         logger.error(msg)
         raise PatchSetError(msg=msg) from None
 
     try:
-        formatted_patchset = git_format_patch(
-            ceph_repo_path,
-            patchset.head_sha,
-            base_rev=patchset.base_sha,
+        formatted_patchset = asyncio.run(
+            git_format_patch(
+                ceph_repo_path,
+                patchset.head_sha,
+                base_rev=patchset.base_sha,
+            )
         )
     except GitError as e:
         msg = f"error formatting patch set: {e}"
@@ -383,7 +387,7 @@ def fetch_custom_patchset_patches(
 
         if run_locally:
             try:
-                git_branch_from(ceph_repo_path, meta.branch, dst_branch)
+                asyncio.run(git_branch_from(ceph_repo_path, meta.branch, dst_branch))
             except GitError as e:
                 msg = (
                     f"error creating patchset branch '{dst_branch}' "
@@ -393,10 +397,14 @@ def fetch_custom_patchset_patches(
                 raise PatchSetError(msg=msg) from None
         else:
             try:
-                remote = git_prepare_remote(
-                    ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
+                asyncio.run(
+                    git_prepare_remote(
+                        ceph_repo_path, f"github.com/{meta.repo}", meta.repo, token
+                    )
                 )
-                _ = remote.fetch(refspec=f"{meta.branch}:{dst_branch}")
+                _ = asyncio.run(
+                    git_fetch_ref(ceph_repo_path, meta.branch, dst_branch, meta.repo)
+                )
             except Exception as e:
                 msg = (
                     f"error fetching patchset branch '{meta.branch}' "
@@ -410,7 +418,7 @@ def fetch_custom_patchset_patches(
     def _cleanup() -> None:
         for branch in fetched_branches:
             try:
-                git_branch_delete(ceph_repo_path, branch)
+                asyncio.run(git_branch_delete(ceph_repo_path, branch))
             except Exception as e:
                 msg = f"unable to delete temporary branch '{branch}': {e}"
                 logger.error(msg)
@@ -425,7 +433,7 @@ def fetch_custom_patchset_patches(
             title = patch[1]
             logger.debug(f"format patch sha '{sha}' title '{title}'")
             try:
-                formatted_patch = git_format_patch(ceph_repo_path, sha)
+                formatted_patch = asyncio.run(git_format_patch(ceph_repo_path, sha))
             except GitError as e:
                 _cleanup()
                 msg = f"unable to obtain formatted patch for sha '{sha}': {e}"

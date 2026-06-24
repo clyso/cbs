@@ -11,6 +11,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
+import asyncio
 import errno
 import re
 import sys
@@ -18,12 +19,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 import click
+from cbscommon.git.cmds import (
+    git_prepare_remote,
+    git_revparse,
+)
+from cbscommon.git.exceptions import GitError
 
 from crt.cmds import Ctx, pass_ctx, perror, psuccess, pwarn, with_patches_repo_path
 from crt.cmds import logger as parent_logger
 from crt.crtlib.apply import ApplyError, patches_apply_to_manifest
 from crt.crtlib.errors.manifest import MalformedManifestError, NoSuchManifestError
-from crt.crtlib.git_utils import GitError, git_prepare_remote, git_revparse
 from crt.crtlib.manifest import load_manifest_by_name_or_uuid, store_manifest
 from crt.crtlib.patch import (
     PatchError,
@@ -164,18 +169,20 @@ def cmd_patch_add(
     if not ctx.run_locally:
         # update remote repo, maybe patches are not yet in the current repo state
         try:
-            _ = git_prepare_remote(
-                src_ceph_repo_path,
-                f"github.com/{src_gh_repo}",
-                src_gh_repo,
-                ctx.github_token,
+            asyncio.run(
+                git_prepare_remote(
+                    src_ceph_repo_path,
+                    f"github.com/{src_gh_repo}",
+                    src_gh_repo,
+                    ctx.github_token,
+                )
             )
         except Exception as e:
             perror(f"unable to update remote '{src_gh_repo}': {e}")
             sys.exit(errno.ENOTRECOVERABLE)
 
     try:
-        shas = [git_revparse(src_ceph_repo_path, sha) for sha in patch_sha]
+        shas = [asyncio.run(git_revparse(src_ceph_repo_path, sha)) for sha in patch_sha]
     except GitError as e:
         perror(f"unable to obtain sha: {e}")
         sys.exit(errno.EINVAL)

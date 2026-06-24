@@ -6,8 +6,8 @@ authors = [{ name = "Joao Eduardo Luis", email = "joao@clyso.com" }]
 requires-python = ">=3.13"
 dependencies = [
     "boto3==1.35.81",
+    "cbscommon",
     "click>=8.1.8",
-    "gitpython>=3.1.44",
     "httpx>=0.28.1",
     "pydantic>=2.10.6",
     "rich>=14.0.0",
@@ -20,3 +20,6 @@ crt = "crt.cmds.crt:cmd_crt"
 [build-system]
 requires = ["uv_build>=0.9.1,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.uv.sources]
+cbscommon = { workspace = true }

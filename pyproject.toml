@@ -7,7 +7,14 @@ requires-python = ">=3.13"
 dependencies = []
 
 [tool.uv.workspace]
-members = ["cbscore", "cbsdcore", "cbsd", "cbc", "crt"]
+members = [
+    "cbscore",
+    "cbsdcore",
+    "cbsd",
+    "cbc",
+    "crt",
+    "cbscommon",
+]
 
 [dependency-groups]
 dev = ["basedpyright==1.37.1", "lefthook==2.0.15", "ruff==0.14.13"]

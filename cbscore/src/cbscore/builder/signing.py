@@ -17,10 +17,13 @@ import datetime
 from datetime import datetime as dt
 from pathlib import Path
 
+from cbscommon.process.cmds import async_run_cmd
+from cbscommon.process.types import CmdArgs
+
 from cbscore.builder import BuilderError
 from cbscore.builder import logger as parent_logger
 from cbscore.builder.rpmbuild import ComponentBuild
-from cbscore.utils import CmdArgs, CommandError, async_run_cmd
+from cbscore.utils import CommandError
 from cbscore.utils.secrets.mgr import SecretsMgr
 
 logger = parent_logger.getChild("signing")

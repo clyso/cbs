@@ -20,6 +20,7 @@ from typing import Concatenate
 
 import click
 
+from cbscommon import logger as cbscommon_logger
 from cbscore.config import Config
 from cbscore.logger import logger as root_logger
 
@@ -61,3 +62,4 @@ def with_config[R, T, **P](
 
 def set_log_level(lvl: int) -> None:
     root_logger.setLevel(lvl)
+    cbscommon_logger.setLevel(lvl)

@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 import pydantic
+from cbscommon.git.cmds import get_git_repo_root
 
 from cbscore.errors import (
     MalformedVersionError,
@@ -24,7 +25,6 @@ from cbscore.images import logger as parent_logger
 from cbscore.images.errors import (
     ImageDescriptorError,
 )
-from cbscore.utils.git import get_git_repo_root
 
 logger = parent_logger.getChild("descriptors")
 
