@@ -8,3 +8,5 @@ description = "CES Build System core build library (cbscore Rust port)"
 
 [dependencies]
 cbscore-types = { path = "../cbscore-types" }
+regex = "1"
+uuid = { version = "1", features = ["v7"] }

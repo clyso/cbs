@@ -6,7 +6,8 @@ license = "GPL-3.0-or-later"
 repository.workspace = true
 description = "Zero-IO wire types and constants for the cbscore Rust port"
 
-# No dependencies yet. The wire types and their serde/uuid deps land with their
-# first consumer (M1+); the C0 scaffold ships only the tracing-target constants,
-# which need no external crates.
 [dependencies]
+camino = "1"
+serde.workspace = true
+serde_json.workspace = true
+thiserror = "2"

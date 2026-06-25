@@ -16,12 +16,18 @@
 //! produces (version/release descriptors, the build report), the schema-version
 //! markers, the `VersionType` enum, the type-layer error taxonomy, and the
 //! tracing-target constants (design 002). It performs no IO — no filesystem,
-//! subprocess, async, cloud SDK, or `regex`.
-//!
-//! This is the C0 scaffold (design 001 commit map): it ships the tracing-target
-//! constants every subsystem references. The wire types and their `serde` /
-//! `uuid` dependencies land with their first consumer in later commits, so no
-//! type carries an unused dependency edge.
+//! subprocess, async, cloud SDK, or `regex` — and exposes only pure types and
+//! helpers.
+
+pub mod error;
+pub mod schema;
+pub mod store;
+pub mod version;
+pub mod version_type;
+
+pub use error::Error;
+pub use version::{VersionComponent, VersionDescriptor, VersionImage, VersionSignedOffBy};
+pub use version_type::VersionType;
 
 /// Canonical `tracing` target strings for the cbscore subsystems.
 ///
