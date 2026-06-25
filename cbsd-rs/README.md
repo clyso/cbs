@@ -227,6 +227,28 @@ cbc admin users roles set bob@clyso.com \
 cbc admin users roles remove alice@clyso.com --role devel-builder
 ```
 
+### Pre-provisioning users (before first login)
+
+Create a user and assign roles **before** they have ever logged in, so their
+permissions are in effect the moment they first sign in via Google — no second
+round-trip after the user appears.
+
+```bash
+# Pre-create a user with one or more roles (--role is repeatable)
+cbc admin users create alice@clyso.com --role devel-builder
+
+# Optionally set a display name (otherwise the email local-part is shown until
+# Google supplies the real name on first login)
+cbc admin users create bob@clyso.com --name "Bob Builder" \
+    --role prod-builder --role viewer
+```
+
+Until the user first logs in they show as `pending` in `cbc admin users list`
+and `cbc admin users get`; the first Google login records the first-login time
+and the pre-assigned roles take effect unchanged. Email matching is
+case-insensitive (addresses are stored lowercase), and the email's domain must
+be permitted by the server's OAuth allow-list — the same check applied at login.
+
 ### Scope types
 
 | Type         | Checked against            | Example                           |
