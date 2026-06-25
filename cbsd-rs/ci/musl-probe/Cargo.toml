@@ -1,0 +1,35 @@
+# musl-probe — the cbscore-rs C0 de-risk gate (design 001 "B1" / design 012).
+#
+# A standalone, CI-only crate EXCLUDED from the cbsd-rs workspace (see the root
+# Cargo.toml `[workspace] exclude`). It links the two heaviest, most musl-risky
+# cbscore dependencies — aws-sdk-s3 (S3) and vaultrs (Vault) — into one binary
+# so CI can prove they compile and link FULLY STATIC for the musl target via
+# rustls+ring (no openssl-sys, no aws-lc-rs), and that the static binary runs on
+# a glibc EL builder distro.
+#
+# This is NOT a shipped dependency edge: aws-sdk-s3 enters `cbscore` at C4/C6 and
+# vaultrs at C4. `cargo build --workspace` never builds this crate. The Cargo.lock
+# is committed so the gate is deterministic; refresh it deliberately with
+# `cargo update` and re-run the proof.
+[package]
+name = "musl-probe"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "behavior-version-latest",
+    "rt-tokio",
+] }
+# The modern ring-backed rustls HTTPS connector (single rustls 0.23, no
+# aws-lc-rs). This is the musl-clean crypto provider C4's S3/Vault clients
+# inherit (design 012); aws-sdk-s3's `default-https-client` would instead pull
+# aws-lc-rs, so it is left off and the connector is built explicitly in main.rs.
+aws-smithy-http-client = { version = "1", default-features = false, features = [
+    "rustls-ring",
+] }
+# vaultrs/rustls -> reqwest/rustls-tls -> webpki-roots -> __rustls-ring (ring).
+vaultrs = { version = "0.7", default-features = false, features = ["rustls"] }

@@ -9,6 +9,11 @@ members = [
     "cbscore",
     "cbsbuild",
 ]
+# ci/musl-probe is a standalone, CI-only crate (the C0 static-musl de-risk gate)
+# built via its own manifest; keep it out of the shipped workspace graph so
+# `cargo build --workspace` never pulls aws-sdk-s3/vaultrs (they enter cbscore
+# at C4/C6, with their first consumer).
+exclude = ["ci/musl-probe"]
 resolver = "2"
 
 [workspace.package]

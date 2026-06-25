@@ -1,0 +1,111 @@
+# CI for the cbsd-rs workspace — runs on every push and pull request.
+#
+# This is the repo's first non-release workflow (release-cbsd-rs.yaml is
+# tags-only). Its primary job is the cbscore-rs C0 de-risk gate (design 001
+# "B1" / design 012): it proves the two heaviest, most musl-risky cbscore
+# dependencies — aws-sdk-s3 (S3) and vaultrs (Vault) — compile and link FULLY
+# STATIC for x86_64-unknown-linux-musl via rustls+ring (no openssl-sys, no
+# aws-lc-rs), and that the static binary RUNS on glibc EL containers (the
+# builder distro has no musl loader). The build runs in alpine:3.21 to mirror
+# container/ContainerFile.cbsd-rs's rust-builder stage (native musl, implicitly
+# static). The job container is NOT alpine, because actions/checkout needs a
+# glibc node; the musl build is invoked via `docker run alpine` from an
+# ubuntu-latest job.
+#
+# musl `ldd` is unreliable for static detection (it prints the ld-musl loader
+# path even for a static-PIE), so staticness is asserted via `file` and
+# `readelf` (no INTERP segment) plus the cross-distro smoke run, never ldd.
+
+name: CI cbsd-rs
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# Cancel superseded in-flight runs of this workflow on the same ref (e.g. rapid
+# pushes to a branch); the heavy musl build need not finish for a stale commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  musl-static-probe:
+    name: B1 de-risk (aws-sdk-s3 + vaultrs static-musl)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Build the probe static-musl in Alpine and assert linkage
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work/cbsd-rs/ci/musl-probe \
+            docker.io/library/alpine:3.21 sh -euc '
+              set -o pipefail
+              apk add --no-cache musl-dev gcc curl file binutils
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --default-toolchain 1.94.1 --profile minimal
+              . "$HOME/.cargo/env"
+              cargo build --release --locked
+              BIN=target/release/musl-probe
+              echo "--- file ---"
+              file "$BIN"
+              echo "--- readelf program headers (INTERP must be absent) ---"
+              if readelf -l "$BIN" | grep -qi INTERP; then
+                echo "FAIL: binary has a dynamic interpreter (not fully static)"
+                exit 1
+              fi
+              echo "OK: no INTERP segment"
+              if ! file "$BIN" | grep -qiE "static-pie linked|statically linked"; then
+                echo "FAIL: file does not report a static binary"
+                exit 1
+              fi
+              echo "OK: fully static (musl)"
+              if cargo tree -i openssl-sys >/dev/null 2>&1; then
+                echo "FAIL: openssl-sys present in the probe graph"
+                exit 1
+              fi
+              echo "OK: no openssl-sys"
+              if cargo tree -i aws-lc-rs >/dev/null 2>&1; then
+                echo "FAIL: aws-lc-rs present (the gate requires rustls+ring)"
+                exit 1
+              fi
+              echo "OK: no aws-lc-rs (rustls+ring)"
+            '
+
+      - name: Smoke-run the static binary on glibc EL (el9 + el10)
+        run: |
+          BIN=cbsd-rs/ci/musl-probe/target/release/musl-probe
+          test -x "$BIN" || { echo "probe binary missing after build"; exit 1; }
+          # Representative EL9 + EL10 images (swappable; Rocky/Alma/EL9/EL10 are
+          # equivalent for a static binary's execution — design 012). Running
+          # both makes the distro-independence of execution explicit.
+          for img in docker.io/library/rockylinux:9 docker.io/library/almalinux:10; do
+            echo "== $img =="
+            docker run --rm -v "$PWD:/work" -w /work "$img" "/work/$BIN"
+          done
+
+  workspace-no-heavy-deps:
+    name: shipped graph excludes the heavy deps
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@aad518f59d88bae90133242f9ddac7f8bbc5dddf # v1.94.1
+
+      - name: Assert aws-sdk-s3 and vaultrs are absent from the shipped graph
+        working-directory: cbsd-rs
+        env:
+          SQLX_OFFLINE: "true"
+        run: |
+          for crate in aws-sdk-s3 vaultrs; do
+            if cargo tree -i "$crate" >/dev/null 2>&1; then
+              echo "FAIL: $crate is in the shipped workspace graph (C0 ships no such edge)"
+              exit 1
+            fi
+            echo "OK: $crate absent from the shipped graph"
+          done

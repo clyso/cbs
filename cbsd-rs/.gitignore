@@ -1,2 +1,6 @@
 /target/
 .git-version
+
+# ci/musl-probe is built standalone (its Cargo.lock is committed for a
+# deterministic gate); ignore only its build output.
+/ci/musl-probe/target/
