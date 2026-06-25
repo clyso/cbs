@@ -6,6 +6,13 @@ every implementer claim and verifies against the actual code, the authoritative
 designs (001/002/003/006/010/012), the plans (01-bootstrap, 02-versions-create),
 and the Python source being ported.
 
+> **Post-review note (history rewrite):** this review covers the commits below
+> _before_ findings F1/F3/F4 were addressed; those fixes were subsequently
+> folded into the commits they belonged to via `--fixup`/autosquash, so the
+> reviewed `6ef1d27`/`f81cd86` are superseded by `de9b022` (2a) and `8ea550e`
+> (2b). The original SHAs remain in the reflog and the backup ref; the findings
+> and verdict below describe the as-reviewed state.
+
 - **Commits in scope (oldest→newest):** `7b5086c` (C0 scaffold + panic pin),
   `a18c1f9` (C0 musl probe + `ci-cbsd-rs.yaml`), `5d6d890` (C1 pure
   parse/validate), `6ef1d27` (C1/2a versions-create end-to-end), `f81cd86`
