@@ -7,6 +7,9 @@ repository.workspace = true
 description = "CES Build System build CLI (cbsbuild, cbscore Rust port)"
 
 [dependencies]
-anyhow = "1"
+camino = "1"
 cbscore = { path = "../cbscore" }
 clap = { version = "4", features = ["derive", "wrap_help"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

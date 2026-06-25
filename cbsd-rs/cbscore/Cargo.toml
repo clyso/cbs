@@ -8,5 +8,22 @@ description = "CES Build System core build library (cbscore Rust port)"
 
 [dependencies]
 cbscore-types = { path = "../cbscore-types" }
+camino = "1"
+chrono = { workspace = true }
 regex = "1"
+serde = { workspace = true }
+serde-saphyr = "0.0.26"
+thiserror = "2"
+tokio = { version = "1", features = [
+    "process",
+    "io-util",
+    "time",
+    "fs",
+    "rt",
+    "macros",
+] }
+tracing = "0.1"
 uuid = { version = "1", features = ["v7"] }
+
+[dev-dependencies]
+tempfile = "3"

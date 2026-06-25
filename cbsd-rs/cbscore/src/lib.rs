@@ -31,4 +31,6 @@ pub use cbscore_types as types;
 /// library build the CLI was linked against.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod components;
+pub mod utils;
 pub mod versions;

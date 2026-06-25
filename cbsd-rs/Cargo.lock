@@ -350,17 +350,28 @@ dependencies = [
 name = "cbsbuild"
 version = "0.1.0"
 dependencies = [
- "anyhow",
+ "camino",
  "cbscore",
  "clap",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "cbscore"
 version = "0.1.0"
 dependencies = [
+ "camino",
  "cbscore-types",
+ "chrono",
  "regex",
+ "serde",
+ "serde-saphyr",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

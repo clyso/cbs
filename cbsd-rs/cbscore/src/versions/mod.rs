@@ -16,10 +16,12 @@
 //! `cbscore-types` (design 002); these helpers need `regex`/`uuid`, so they
 //! live in the library. Source of truth: `cbscore/versions/utils.py`.
 
+pub mod create;
 pub mod parse;
 pub mod validate;
 pub mod version_type;
 
+pub use create::{CreateError, VersionSpec, create, version_create_helper, write_descriptor};
 pub use parse::{
     ParsedVersion, get_major_version, get_minor_version, normalize_version, parse_component_refs,
     parse_version,

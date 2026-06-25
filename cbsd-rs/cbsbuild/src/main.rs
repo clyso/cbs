@@ -11,59 +11,44 @@
 // GNU General Public License for more details.
 
 //! `cbsbuild` — the CES Build System build CLI (the Rust port of Python
-//! `cbscore`'s `cbsbuild` entry point).
-//!
-//! This is the C0 scaffold: the clap root and the global `--config` /
-//! `--debug` placeholders. The `build`, `runner build`, and `versions`
-//! subcommands land by capability in later commits (design 010 owns the full
-//! command tree). The binary is built static-musl and mounted into the builder
-//! container by the runner; designs 001 and 012 govern that portability gate.
+//! `cbscore`'s `cbsbuild` entry point). It is a thin clap tree over the
+//! `cbscore` library; each subcommand maps to a subsystem (design 010). The
+//! `build`/`runner build` and `versions list` commands land in later milestones.
 
-use std::path::PathBuf;
+mod bool_parser;
+mod cli;
+mod cmds;
+
+use std::process::ExitCode;
 
 use clap::Parser;
 
-/// Extended version: cargo version + git SHA from the production build.
-const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("CBS_BUILD_META"),);
+use crate::cli::{Cli, Command, VersionsCommand};
 
-/// CES Build System build CLI.
-#[derive(Parser)]
-#[command(name = "cbsbuild", version = VERSION, about = "CES Build System build CLI")]
-struct Cli {
-    /// Path to the cbsbuild config file. Read by the commands that load it
-    /// (`build`, `versions list`); `versions create` ignores it (design 010).
-    #[arg(short = 'c', long, default_value = "cbs-build.config.yaml")]
-    config: PathBuf,
-
-    /// Enable debug logging. The commands wire this into the tracing subscriber
-    /// (and honour the `CBS_DEBUG` env var) in M1; for now it reports versions.
-    #[arg(short = 'd', long)]
-    debug: bool,
-}
-
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
+    init_tracing(bool_parser::debug_enabled(cli.debug));
 
-    // C0 scaffold: the build/versions subcommands are not wired yet (M1+).
-    // `--debug` exercises the global flags and the linked crate stack by
-    // reporting the CLI and library versions.
-    if cli.debug {
-        eprintln!("cbsbuild {VERSION} (cbscore {})", cbscore::VERSION);
-        eprintln!("config: {}", cli.config.display());
+    match cli.command {
+        Command::Versions { command } => match command {
+            VersionsCommand::Create(args) => cmds::versions::create(&args).await,
+        },
     }
-
-    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Cli;
-    use clap::CommandFactory;
-
-    #[test]
-    fn cli_definition_is_valid() {
-        // clap's own invariant checker: catches conflicting flags, duplicate
-        // short/long names, and bad defaults at test time.
-        Cli::command().debug_assert();
-    }
+/// Configure the tracing subscriber from the resolved debug level: `--debug`
+/// (or a truthy `CBS_DEBUG`) enables the subsystem `DEBUG` spans; otherwise only
+/// warnings and errors are shown. Logs go to stderr so command output on stdout
+/// stays clean.
+fn init_tracing(debug: bool) {
+    let level = if debug {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::WARN
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_writer(std::io::stderr)
+        .init();
 }
