@@ -1,0 +1,12 @@
+[package]
+name = "cbsbuild"
+version = "0.1.0"
+edition.workspace = true
+license = "GPL-3.0-or-later"
+repository.workspace = true
+description = "CES Build System build CLI (cbsbuild, cbscore Rust port)"
+
+[dependencies]
+anyhow = "1"
+cbscore = { path = "../cbscore" }
+clap = { version = "4", features = ["derive", "wrap_help"] }

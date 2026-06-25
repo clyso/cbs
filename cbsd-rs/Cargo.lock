@@ -341,6 +341,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cbsbuild"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cbscore",
+ "clap",
+]
+
+[[package]]
+name = "cbscore"
+version = "0.1.0"
+dependencies = [
+ "cbscore-types",
+]
+
+[[package]]
+name = "cbscore-types"
+version = "0.1.0"
+
+[[package]]
 name = "cbsd-common"
 version = "0.1.0"
 

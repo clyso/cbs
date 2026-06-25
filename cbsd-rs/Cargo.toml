@@ -1,5 +1,14 @@
 [workspace]
-members = ["cbsd-common", "cbsd-proto", "cbsd-server", "cbsd-worker", "cbc"]
+members = [
+    "cbsd-common",
+    "cbsd-proto",
+    "cbsd-server",
+    "cbsd-worker",
+    "cbc",
+    "cbscore-types",
+    "cbscore",
+    "cbsbuild",
+]
 resolver = "2"
 
 [workspace.package]
@@ -12,3 +21,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 secrecy = "0.10"
+
+[profile.release]
+# Pin the panic strategy. A fault in the in-process build must unwind to the
+# tokio task boundary so the worker's `JoinError::is_panic()` can map it onto
+# the build-failure path (design 001, invariant 6). "unwind" is already the
+# default; pinning it stops a future profile edit from silently switching to
+# "abort" and voiding that isolation.
+panic = "unwind"
