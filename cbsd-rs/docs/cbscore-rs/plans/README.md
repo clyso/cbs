@@ -20,17 +20,18 @@ sub-number orders the milestones.
 
 | Phase                                         | Milestone | Capability                                                 | Commits | Status  |
 | --------------------------------------------- | --------- | ---------------------------------------------------------- | ------- | ------- |
-| [M0](001-20260623T1725-01-bootstrap.md)       | Bootstrap | Static `cbsbuild` runs as PID 1 in EL9; musl proof (C0)    | 2       | Pending |
-| [M1](001-20260623T1725-02-versions-create.md) | Versions  | `versions create [VERSION]` writes a descriptor (C1)       | 2       | Pending |
+| [M0](001-20260623T1725-01-bootstrap.md)       | Bootstrap | Static `cbsbuild` links musl + CI proof (C0)               | 2       | Done    |
+| [M1](001-20260623T1725-02-versions-create.md) | Versions  | `versions create [VERSION]` writes a descriptor (C1)       | 3       | Done    |
 | [M2](001-20260623T1725-03-build.md)           | Build     | `build <desc>`: container → RPMs → sign+S3 → image (C2–C6) | 8       | Pending |
 | [M3](001-20260623T1725-04-versions-list.md)   | List      | `versions list --from` lists releases (C7, fixed)          | 1       | Pending |
 | [M4](001-20260623T1725-05-worker.md)          | Worker    | `cbsd-worker` runs builds in-process (C8)                  | 2       | Pending |
 
-**Total (planned):** 15 commits across 5 milestones. The per-commit counts above
-are the recommended breakdown (the v1 plan-review's findings — the M2/C4 split,
-the C5 split decision, the C0 CI gate, the M4 image re-base — are folded into
-the plans); each milestone's exact boundaries are still confirmed at its
-commit-breakdown approval. See each plan's "Notes for the plan-review".
+**Total:** 16 commits across 5 milestones (M1 split 2→3 at implementation — see
+its plan). The per-commit counts above are the recommended breakdown (the v1
+plan-review's findings — the M2/C4 split, the C5 split decision, the C0 CI gate,
+the M4 image re-base — are folded into the plans); each milestone's exact
+boundaries are confirmed at its commit-breakdown approval. See each plan's
+"Notes for the plan-review".
 
 ## Dependency Graph
 
