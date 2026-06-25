@@ -507,6 +507,94 @@ pub async fn materialize_artifacts(
     })
 }
 
+/// What `release materialize` produced, for the caller to report.
+pub struct MaterializeSummary {
+    /// The `release/<name>` branch built in the destination repo.
+    pub branch: String,
+    /// The branch's commit hashes, in apply order.
+    pub commits: Vec<String>,
+    /// The loose artifact files, when `--out` requested them (decision 4).
+    pub loose: Option<MaterializeOutput>,
+}
+
+/// `crt release materialize <name>`: build the linear `release/<name>` branch in
+/// the destination repo from the sealed release (design §8) — `git am` each
+/// entry's patch blob in `order`, each commit carrying a `Crt-Patch` trailer.
+/// When `out` is given, the two deterministic artifacts are *also* emitted there
+/// as loose files (decision 4); the in-tree bundle is the authoritative copy.
+///
+/// **This is the M4 4.1 slice — the patched branch only.** The signed
+/// `000-RELEASE/` bundle commit and the annotated tag are appended by a later
+/// commit (design §8); `--push` is likewise deferred.
+pub async fn materialize(
+    store: &dyn Store,
+    cfg: &Config,
+    name: &str,
+    repo: Option<&Path>,
+    out: Option<&Path>,
+) -> Result<MaterializeSummary> {
+    // Optional loose-artifact emit (decision 4): reuses the M3 projection path,
+    // which also version-gates the sealed RenderSpec.
+    let loose = match out {
+        Some(dir) => Some(materialize_artifacts(store, cfg, name, dir).await?),
+        None => None,
+    };
+
+    // Load the sealed record for the branch build (entries + base ref).
+    let key = cfg.resolve_release_key(name)?;
+    let record = store.get_release(&key).await.with_context(|| {
+        format!("no sealed release named {name:?} to materialize; seal it first")
+    })?;
+
+    // Resolve the destination repo: `--repo <path>` is the local working copy
+    // (the 4.1 input); the configured `destination_repo` (a slug like
+    // `clyso/ceph`, used for the deferred push) is the fallback.
+    let repo_path: PathBuf = repo
+        .map(Path::to_path_buf)
+        .or_else(|| cfg.destination_repo.as_ref().map(PathBuf::from))
+        .context(
+            "no destination repo: pass --repo <path> or set `destination_repo` in the config",
+        )?;
+
+    // Collect each entry's patch blob, ordered by `order` (design §8 applies in
+    // order). Entries are normally appended in order; sort defensively.
+    let mut entries: Vec<&ManifestEntry> = record.manifest.entries.iter().collect();
+    entries.sort_by_key(|e| e.order);
+    let mut patches = Vec::with_capacity(entries.len());
+    for e in entries {
+        let bytes = store
+            .get_blob(&e.blob_hash)
+            .await
+            .with_context(|| format!("fetching patch blob {} (order {})", e.blob_hash, e.order))?;
+        patches.push(crate::git::PatchToApply {
+            order: e.order,
+            blob_hash: e.blob_hash.to_hex(),
+            bytes: bytes.to_vec(),
+        });
+    }
+
+    let branch = format!("release/{name}");
+
+    // Subprocess `git` is blocking; offload it so it never stalls the async
+    // executor (rust-2024). Owned inputs move into the task.
+    let commits = {
+        let repo_path = repo_path.clone();
+        let branch = branch.clone();
+        let base_ref = record.manifest.release.base_ref.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::git::materialize_branch(&repo_path, &branch, &base_ref, &patches)
+        })
+        .await
+        .context("the git materialization task panicked")??
+    };
+
+    Ok(MaterializeSummary {
+        branch,
+        commits,
+        loose,
+    })
+}
+
 /// Render a human-readable summary of a draft or sealed release. Pure: risk
 /// totals/bands are computed from the entries (concept §6.1). Shows
 /// `public_summary` only — `justification.internal` is never rendered.
@@ -690,6 +778,7 @@ mod tests {
         Config {
             component: "ceph".to_owned(),
             store: StoreConfig::Local(PathBuf::from("/tmp/store")),
+            destination_repo: None,
             risk_components: vec!["rgw".to_owned()],
             namespaces,
             public_key_url: None,

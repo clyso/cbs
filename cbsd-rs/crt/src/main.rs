@@ -147,15 +147,23 @@ enum ReleaseCmd {
         /// Release name.
         name: String,
     },
-    /// Emit the deterministic release artifacts (RELEASE-NOTES.md +
-    /// sbom.cdx.json) for a sealed release. M3 emits artifacts only; the git
-    /// ref/tag and signed 000-RELEASE/ bundle are M4 (design §8).
+    /// Materialize a sealed release (design §8): build the linear
+    /// `release/<name>` branch in the destination repo — `git am` each entry's
+    /// patch in order, each commit carrying a `Crt-Patch` trailer. With `--out`,
+    /// also emit the loose RELEASE-NOTES.md + sbom.cdx.json artifacts there. The
+    /// signed 000-RELEASE/ bundle and the annotated tag are a later milestone.
     Materialize {
         /// Release name.
         name: String,
-        /// Output directory (created if absent).
-        #[arg(long, default_value = ".")]
-        out: PathBuf,
+        /// Local working copy of the destination repo to build the branch in.
+        /// Overrides `destination_repo` from the config.
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Also write the loose artifacts (RELEASE-NOTES.md + sbom.cdx.json) to
+        /// this directory (created if absent). The in-tree bundle is
+        /// authoritative; this is an optional extra emit.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Verify a sealed release: signature, schema, and cross-reference (design
     /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
@@ -400,10 +408,19 @@ async fn main() -> Result<()> {
                         release::render_sealed_notes(&store, &cfg, &name).await?
                     );
                 }
-                ReleaseCmd::Materialize { name, out } => {
-                    let written = release::materialize_artifacts(&store, &cfg, &name, &out).await?;
-                    println!("wrote {}", written.notes.display());
-                    println!("wrote {}", written.sbom.display());
+                ReleaseCmd::Materialize { name, repo, out } => {
+                    let summary =
+                        release::materialize(&store, &cfg, &name, repo.as_deref(), out.as_deref())
+                            .await?;
+                    println!(
+                        "materialized {} ({} commit(s))",
+                        summary.branch,
+                        summary.commits.len()
+                    );
+                    if let Some(loose) = &summary.loose {
+                        println!("wrote {}", loose.notes.display());
+                        println!("wrote {}", loose.sbom.display());
+                    }
                 }
                 ReleaseCmd::Verify { name, public_key } => {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(

@@ -18,6 +18,12 @@ use serde::Deserialize;
 pub struct Config {
     pub component: String,
     pub store: StoreConfig,
+    /// Destination repository for `release materialize` (design §8/§9): where
+    /// the linear `release/<name>` branch is built. Holds the configured
+    /// identifier (e.g. a `clyso/ceph` slug used for the deferred push); the
+    /// `--repo <path>` flag supplies the local working copy and overrides it.
+    #[serde(default)]
+    pub destination_repo: Option<String>,
     /// Allowed risk-component labels (design §9). An **empty** list (or an
     /// absent key) disables validation — any component is accepted.
     #[serde(default)]
@@ -191,6 +197,7 @@ store:
         Config {
             component: "ceph".to_owned(),
             store: StoreConfig::Local(PathBuf::from("/tmp/store")),
+            destination_repo: None,
             risk_components: vec![],
             namespaces: ns_map,
             public_key_url: None,

@@ -238,6 +238,7 @@ mod tests {
         Config {
             component: "ceph".to_owned(),
             store: StoreConfig::Local(PathBuf::from("/tmp/store")),
+            destination_repo: None,
             risk_components: vec![],
             namespaces,
             public_key_url: None,
