@@ -32,5 +32,6 @@ pub use cbscore_types as types;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod components;
+pub mod images;
 pub mod utils;
 pub mod versions;

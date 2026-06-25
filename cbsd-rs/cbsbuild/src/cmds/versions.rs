@@ -16,9 +16,10 @@
 
 use std::process::ExitCode;
 
+use cbscore::images::desc::{ImageError, get_image_desc};
 use cbscore::utils::git::{get_git_repo_root, get_git_user};
 use cbscore::versions::{
-    get_version_type, parse_component_refs, resolve_version, version_create_helper,
+    get_version_type, parse_component_refs, parse_version, resolve_version, version_create_helper,
     write_descriptor,
 };
 
@@ -101,6 +102,27 @@ pub async fn create(args: &VersionsCreateArgs) -> ExitCode {
         println!("{json}");
     }
     println!("-> written to {path}");
+
+    // Trailing, non-fatal note: is there an image descriptor for this version?
+    // Skipped for versions without an M.m.p (UUIDv7 / patch-less), which cannot
+    // key an image descriptor (design 006).
+    let has_mmp = parse_version(&desc.version)
+        .map(|p| p.minor.is_some() && p.patch.is_some())
+        .unwrap_or(false);
+    if has_mmp {
+        match get_image_desc(&repo_root, &desc.version).await {
+            Ok(_) => {}
+            Err(ImageError::NoSuchVersion(_)) => {
+                println!("image descriptor for version '{}' missing", desc.version);
+            }
+            Err(e) => {
+                eprintln!(
+                    "error obtaining image descriptor for '{}': {e}",
+                    desc.version
+                );
+            }
+        }
+    }
 
     ExitCode::SUCCESS
 }
