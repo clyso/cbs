@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256 as Sha256Hasher};
 use thiserror::Error;
 
 pub mod manifest;
+pub mod materialize;
 pub mod meta;
 pub mod notes;
 pub mod sbom;
@@ -20,6 +21,9 @@ pub use manifest::{
     Justification, JustificationKind, KnownIssue, Lifecycle, Manifest, ManifestEntry, PatchStatus,
     ReleaseHeader, ReleaseKey, ReleaseRecord, RenderSpec, Risk, SCHEMA_VERSION, Visibility,
     canonical_json, digest, upstream_weight,
+};
+pub use materialize::{
+    MATERIALIZATION_RECORD_VERSION, MaterializationRecord, MaterializedPatch, source_tree_digest,
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
 pub use notes::{RENDER_MINIJINJA_VERSION, check_render_version, render_notes};

@@ -65,6 +65,19 @@ enum Command {
         #[command(subcommand)]
         cmd: ReleaseCmd,
     },
+    /// Offline / detached-tree verification of an extracted release tree (design
+    /// §10/§11): verify `000-RELEASE/record.json.asc` with the public key, then
+    /// recompute `source_tree_digest` and every bundle digest. No store, no git
+    /// — the primary trust path for a tarball/ZIP/clone recipient.
+    Verify {
+        /// Path to the extracted tree (the directory containing `000-RELEASE/`).
+        #[arg(long)]
+        tree: PathBuf,
+        /// Public key source (local path or http(s) URL). Overrides the
+        /// `public_key_url` from config.
+        #[arg(long)]
+        public_key: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -440,6 +453,30 @@ async fn main() -> Result<()> {
                             std::process::exit(EXIT_VERIFY);
                         }
                     }
+                }
+            }
+        }
+        Command::Verify { tree, public_key } => {
+            let source = public_key
+                .or_else(|| cfg.public_key_url.clone())
+                .context("no public key: pass --public-key or set public_key_url in the config")?;
+            let pubkey = verify::load_public_key(&source).await?;
+            let tree_display = tree.display().to_string();
+            // The tree walk is blocking; offload it off the async executor.
+            let verdict = tokio::task::spawn_blocking(move || verify::verify_tree(&tree, &pubkey))
+                .await
+                .context("the tree-verification task panicked")??;
+            match verdict {
+                verify::VerifyVerdict::Pass(report) => {
+                    print!("{}", verify::render_report(&report));
+                }
+                verify::VerifyVerdict::SignatureFailed(msg) => {
+                    eprintln!("verify --tree {tree_display}: signature FAILED — {msg}");
+                    std::process::exit(EXIT_SIGNATURE);
+                }
+                verify::VerifyVerdict::VerifyFailed(msg) => {
+                    eprintln!("verify --tree {tree_display}: FAILED — {msg}");
+                    std::process::exit(EXIT_VERIFY);
                 }
             }
         }

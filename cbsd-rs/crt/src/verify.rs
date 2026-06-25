@@ -19,11 +19,21 @@
 //! testable against an in-memory store with no network; [`load_public_key`] is
 //! the thin edge shim that fetches them (a local path, or an http(s) URL).
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
+
 use anyhow::{Context, Result, bail};
-use crt_core::Sha256;
+use crt_core::{ArmoredSignature, Sha256};
 use crt_store::Store;
 
 use crate::config::Config;
+
+/// The in-tree verification bundle directory (design §8).
+pub(crate) const BUNDLE_DIR: &str = "000-RELEASE";
+/// The signed record and its detached signature within [`BUNDLE_DIR`].
+pub(crate) const RECORD_JSON: &str = "record.json";
+pub(crate) const RECORD_SIG: &str = "record.json.asc";
 
 /// The verdict of a verification run. The three outcomes map to distinct
 /// process exit codes in `main` (signature vs verify vs — for the `Err` arm —
@@ -204,6 +214,229 @@ pub async fn load_public_key(source: &str) -> Result<String> {
     } else {
         std::fs::read_to_string(source).with_context(|| format!("reading public key file {source}"))
     }
+}
+
+/// `crt verify --tree <dir>`: offline / detached-tree verification of an
+/// extracted release tree (design §10/§11) — no store, no git. Read
+/// `000-RELEASE/record.json` and its detached `record.json.asc`, verify the
+/// signature over the **raw record bytes** with `public_key_armored`,
+/// deserialize and schema-check the record, then recompute `source_tree_digest`
+/// over the extracted source and **every** `bundle_digests` entry — requiring
+/// the bundle file set to be exactly `bundle_digests` (no missing or extra
+/// file, so nothing in the bundle escapes the signature). This is the primary
+/// trust path for a tarball/ZIP/clone recipient; it never runs leg 4 (§11).
+///
+/// Blocking (walks the tree); a caller under an async runtime must offload it
+/// (e.g. `tokio::task::spawn_blocking`).
+pub fn verify_tree(tree_dir: &Path, public_key_armored: &str) -> Result<VerifyVerdict> {
+    let bundle = tree_dir.join(BUNDLE_DIR);
+
+    let record_bytes = match std::fs::read(bundle.join(RECORD_JSON)) {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(VerifyVerdict::VerifyFailed(format!(
+                "cannot read {BUNDLE_DIR}/{RECORD_JSON} under {}: {e}",
+                tree_dir.display()
+            )));
+        }
+    };
+    let signature = match std::fs::read_to_string(bundle.join(RECORD_SIG)) {
+        Ok(s) => ArmoredSignature(s),
+        Err(e) => {
+            return Ok(VerifyVerdict::SignatureFailed(format!(
+                "cannot read {BUNDLE_DIR}/{RECORD_SIG}: {e}"
+            )));
+        }
+    };
+
+    // Leg 0 — signature over the EXACT on-disk record bytes. The `.asc` signs
+    // the file verbatim; there is no canonicalization or separate digest field,
+    // so re-serializing here would risk a byte drift that silently fails.
+    if let Err(e) = crt_core::verify_manifest(&record_bytes, &signature, public_key_armored) {
+        return Ok(VerifyVerdict::SignatureFailed(e.to_string()));
+    }
+
+    // Leg 1 — schema. Deserialize the SAME bytes the signature just covered.
+    let record: crt_core::MaterializationRecord = match serde_json::from_slice(&record_bytes) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(VerifyVerdict::VerifyFailed(format!(
+                "{BUNDLE_DIR}/{RECORD_JSON} does not deserialize: {e}"
+            )));
+        }
+    };
+    if record.schema_version != crt_core::MATERIALIZATION_RECORD_VERSION {
+        return Ok(VerifyVerdict::VerifyFailed(format!(
+            "record schema_version {} is not the supported {}",
+            record.schema_version,
+            crt_core::MATERIALIZATION_RECORD_VERSION
+        )));
+    }
+
+    // Leg 2 (offline subset) — recompute the source-tree digest over the
+    // extracted files (excluding the bundle + git dirs).
+    let recomputed = crt_core::source_tree_digest(&walk_source_tree(tree_dir)?);
+    if recomputed != record.source_tree_digest {
+        return Ok(VerifyVerdict::VerifyFailed(format!(
+            "recomputed source_tree_digest {recomputed} != record {}",
+            record.source_tree_digest
+        )));
+    }
+    if let Some(reason) = verify_bundle_digests(&bundle, &record.bundle_digests)? {
+        return Ok(VerifyVerdict::VerifyFailed(reason));
+    }
+
+    Ok(VerifyVerdict::Pass(VerifyReport {
+        legs: vec![
+            passed(
+                "0 signature",
+                "detached OpenPGP signature over record.json valid",
+            ),
+            passed(
+                "1 schema",
+                format!("record schema_version {}", record.schema_version),
+            ),
+            passed(
+                "2 source + bundle digests",
+                format!(
+                    "source_tree_digest matches; {} bundle file(s) match and are exhaustive",
+                    record.bundle_digests.len()
+                ),
+            ),
+        ],
+    }))
+}
+
+/// Compare every flat `000-RELEASE/` file (except the record and its signature)
+/// against `expected`, and require the two sets to match exactly — so any file
+/// added to the bundle is forced under the signed record (no unsigned bundle
+/// content). Returns `Some(reason)` on the first mismatch, `None` when sound.
+fn verify_bundle_digests(
+    bundle: &Path,
+    expected: &BTreeMap<String, Sha256>,
+) -> Result<Option<String>> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for entry in
+        std::fs::read_dir(bundle).with_context(|| format!("reading {}", bundle.display()))?
+    {
+        let entry = entry.with_context(|| format!("reading an entry in {}", bundle.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", entry.path().display()))?;
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => {
+                return Ok(Some(format!(
+                    "a {BUNDLE_DIR}/ file name is not valid UTF-8"
+                )));
+            }
+        };
+        if !file_type.is_file() {
+            return Ok(Some(format!(
+                "unexpected non-file {name:?} in {BUNDLE_DIR}/ (the bundle is flat files only)"
+            )));
+        }
+        if name == RECORD_JSON || name == RECORD_SIG {
+            continue;
+        }
+        let content = std::fs::read(entry.path())
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        let actual = Sha256::of(&content);
+        match expected.get(&name) {
+            None => {
+                return Ok(Some(format!(
+                    "bundle file {name:?} is not covered by bundle_digests (unsigned content)"
+                )));
+            }
+            Some(h) if *h != actual => {
+                return Ok(Some(format!(
+                    "bundle file {name:?} digest {actual} != record {h}"
+                )));
+            }
+            Some(_) => {
+                seen.insert(name);
+            }
+        }
+    }
+    // Exhaustiveness the other way: bundle_digests must not name a file absent
+    // from the bundle.
+    for name in expected.keys() {
+        if !seen.contains(name) {
+            return Ok(Some(format!(
+                "bundle_digests names {name:?} but it is absent from {BUNDLE_DIR}/"
+            )));
+        }
+    }
+    Ok(None)
+}
+
+/// Walk the materialized source tree rooted at `root`, returning each
+/// non-excluded file's repo-relative slash path mapped to a domain-separated
+/// content hash (design §8/§14, plan M4 decision 3). Regular files hash their
+/// bytes tagged `f\0`; symlinks hash their target tagged `l\0` (recorded by
+/// target so a ZIP/tar recipient — which may not follow links — agrees, and so
+/// a file↔symlink swap cannot collide). Mode is ignored (content-only), so an
+/// executable bit dropped by a ZIP extraction does not move the digest. The
+/// top-level `.git` and `000-RELEASE/` are excluded (§8) — `.git` whether it is
+/// a directory (a clone) or a file (a linked worktree's gitlink).
+///
+/// The digest hashes raw on-disk bytes, so it assumes a **faithful** extraction:
+/// a plain archive of the worktree, or a clone with content filters off (the
+/// canonical distribution per decision 3). A clone under `core.autocrlf=true`
+/// would rewrite source-file line endings and recompute a different digest —
+/// out of scope for the MVP, which distributes archives.
+pub fn walk_source_tree(root: &Path) -> Result<BTreeMap<String, Sha256>> {
+    let mut files = BTreeMap::new();
+    walk_into(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn walk_into(root: &Path, dir: &Path, files: &mut BTreeMap<String, Sha256>) -> Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("reading an entry in {}", dir.display()))?;
+        let path = entry.path();
+        let rel = rel_slash_path(root, &path)?;
+        // Exclude the top-level git and bundle entries (§8) *before* inspecting
+        // the node type: in a linked git worktree `.git` is a **file** (a
+        // `gitdir:` pointer), not a directory, and its bytes differ per checkout
+        // — hashing it would make the digest non-portable. The check is
+        // top-level (`rel == ".git"`), so a nested file literally named `.git`
+        // is unaffected.
+        if rel == ".git" || rel == BUNDLE_DIR {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("stat {}", path.display()))?;
+        if file_type.is_symlink() {
+            let target = std::fs::read_link(&path)
+                .with_context(|| format!("reading symlink {}", path.display()))?;
+            let mut tagged = b"l\0".to_vec();
+            tagged.extend_from_slice(target.as_os_str().as_bytes());
+            files.insert(rel, Sha256::of(&tagged));
+        } else if file_type.is_dir() {
+            walk_into(root, &path, files)?;
+        } else if file_type.is_file() {
+            let content =
+                std::fs::read(&path).with_context(|| format!("reading {}", path.display()))?;
+            let mut tagged = b"f\0".to_vec();
+            tagged.extend_from_slice(&content);
+            files.insert(rel, Sha256::of(&tagged));
+        }
+        // Other node types (fifo, socket, device) don't occur in a source tree.
+    }
+    Ok(())
+}
+
+/// `path` relative to `root`, as a canonical `/`-joined UTF-8 string.
+fn rel_slash_path(root: &Path, path: &Path) -> Result<String> {
+    let rel = path
+        .strip_prefix(root)
+        .with_context(|| format!("{} is not under {}", path.display(), root.display()))?;
+    let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+    parts
+        .map(|p| p.join("/"))
+        .with_context(|| format!("path {} has a non-UTF-8 component", rel.display()))
 }
 
 #[cfg(test)]
@@ -616,5 +849,213 @@ mod tests {
         let url = std::env::var("CRT_TEST_PUBKEY_URL").expect("CRT_TEST_PUBKEY_URL");
         let key = load_public_key(&url).await.unwrap();
         assert!(key.contains("BEGIN PGP PUBLIC KEY"));
+    }
+
+    /// Build a materialized tree under `dir`: a few source files (plus an
+    /// excluded `.git/`) and a signed, self-consistent `000-RELEASE/` bundle.
+    /// Returns the armored public key that verifies it.
+    fn build_signed_tree(dir: &Path) -> String {
+        let (secret, public) = test_keypair();
+
+        // Source files + an excluded .git/ (000-RELEASE/ is created below, after
+        // the source digest is taken).
+        std::fs::write(dir.join("src.txt"), "source\n").unwrap();
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub/nested.txt"), "nested\n").unwrap();
+        std::fs::create_dir(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/config"), "ignored").unwrap();
+        let source_digest = crt_core::source_tree_digest(&walk_source_tree(dir).unwrap());
+
+        // The bundle: the public-facing files, then the record + signature.
+        let bundle = dir.join("000-RELEASE");
+        std::fs::create_dir(&bundle).unwrap();
+        let mut bundle_digests = BTreeMap::new();
+        for (name, content) in [
+            ("sbom.cdx.json", "{\"bomFormat\":\"CycloneDX\"}\n"),
+            ("RELEASE-NOTES.md", "# Notes\n"),
+            ("provenance.json", "{\"patches\":[]}\n"),
+            ("README.md", "# 000-RELEASE\n"),
+            // Inside `000-RELEASE/`, a slash-free pattern matches every file in
+            // that directory; `000-RELEASE/* -text` would be resolved relative
+            // to the file's own dir (`000-RELEASE/000-RELEASE/*`) and match
+            // nothing. This mirrors what 4.3 actually writes.
+            (".gitattributes", "* -text\n"),
+        ] {
+            std::fs::write(bundle.join(name), content).unwrap();
+            bundle_digests.insert(name.to_owned(), Sha256::of(content.as_bytes()));
+        }
+
+        let record = crt_core::MaterializationRecord {
+            schema_version: crt_core::MATERIALIZATION_RECORD_VERSION,
+            s3_manifest_digest: blob_hash(b"sealed-manifest"),
+            base_ref: "v18.2.0".to_owned(),
+            created: "2026-06-25T00:00:00+00:00".to_owned(),
+            render: RenderSpec {
+                minijinja_version: "2.21.0".to_owned(),
+                template_digest: blob_hash(b"template"),
+            },
+            source_tree_digest: source_digest,
+            bundle_digests,
+            patches: vec![crt_core::MaterializedPatch {
+                order: 1,
+                blob_hash: blob_hash(b"blob"),
+                patch_id: "pid-1".to_owned(),
+                git_commit: "abc123".to_owned(),
+            }],
+        };
+        // Serialize ONCE; sign those exact bytes; write both. The verifier reads
+        // the record bytes verbatim (no canonicalization), so producer and
+        // verifier must agree on the literal bytes.
+        let record_bytes = serde_json::to_vec_pretty(&record).unwrap();
+        let sig =
+            crt_core::sign_manifest(rand::thread_rng(), &record_bytes, &secret, None).unwrap();
+        std::fs::write(bundle.join("record.json"), &record_bytes).unwrap();
+        std::fs::write(bundle.join("record.json.asc"), &sig.0).unwrap();
+        public
+    }
+
+    #[test]
+    fn verify_tree_passes_on_a_well_formed_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let public = build_signed_tree(dir.path());
+        assert!(matches!(
+            verify_tree(dir.path(), &public).unwrap(),
+            VerifyVerdict::Pass(_)
+        ));
+    }
+
+    #[test]
+    fn verify_tree_fails_on_a_mutated_source_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let public = build_signed_tree(dir.path());
+        std::fs::write(dir.path().join("src.txt"), "TAMPERED\n").unwrap();
+        assert!(matches!(
+            verify_tree(dir.path(), &public).unwrap(),
+            VerifyVerdict::VerifyFailed(_)
+        ));
+    }
+
+    #[test]
+    fn verify_tree_fails_on_a_mutated_bundle_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let public = build_signed_tree(dir.path());
+        std::fs::write(
+            dir.path().join("000-RELEASE/sbom.cdx.json"),
+            "{\"tampered\":true}\n",
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_tree(dir.path(), &public).unwrap(),
+            VerifyVerdict::VerifyFailed(_)
+        ));
+    }
+
+    #[test]
+    fn verify_tree_fails_on_a_wrong_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = build_signed_tree(dir.path());
+        let (_, other_public) = test_keypair();
+        assert!(matches!(
+            verify_tree(dir.path(), &other_public).unwrap(),
+            VerifyVerdict::SignatureFailed(_)
+        ));
+    }
+
+    #[test]
+    fn verify_tree_fails_on_a_stripped_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let public = build_signed_tree(dir.path());
+        std::fs::remove_file(dir.path().join("000-RELEASE/record.json.asc")).unwrap();
+        assert!(matches!(
+            verify_tree(dir.path(), &public).unwrap(),
+            VerifyVerdict::SignatureFailed(_)
+        ));
+    }
+
+    #[test]
+    fn verify_tree_fails_on_an_unsigned_bundle_file() {
+        // Exhaustiveness (v2 plan-review N2): a 000-RELEASE/ file absent from
+        // bundle_digests must fail — nothing in the bundle may escape the record.
+        let dir = tempfile::tempdir().unwrap();
+        let public = build_signed_tree(dir.path());
+        std::fs::write(dir.path().join("000-RELEASE/sneaked.txt"), "unsigned").unwrap();
+        assert!(matches!(
+            verify_tree(dir.path(), &public).unwrap(),
+            VerifyVerdict::VerifyFailed(_)
+        ));
+    }
+
+    #[test]
+    fn source_tree_digest_survives_a_tar_roundtrip_with_attrs_exec_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let work = tempfile::tempdir().unwrap();
+        let w = work.path();
+        std::fs::write(w.join("src.txt"), "hello\n").unwrap();
+        std::fs::write(w.join(".gitattributes"), "* text=auto\n").unwrap();
+        std::fs::write(w.join("run.sh"), "#!/bin/sh\necho hi\n").unwrap();
+        std::os::unix::fs::symlink("src.txt", w.join("link.txt")).unwrap();
+        // Excluded dirs with content, to prove they never enter the digest.
+        std::fs::create_dir(w.join(".git")).unwrap();
+        std::fs::write(w.join(".git/HEAD"), "ref: x").unwrap();
+        std::fs::create_dir(w.join("000-RELEASE")).unwrap();
+        std::fs::write(w.join("000-RELEASE/record.json"), "{}").unwrap();
+
+        let files = walk_source_tree(w).unwrap();
+        assert!(files.contains_key("src.txt"));
+        assert!(files.contains_key(".gitattributes"));
+        assert!(files.contains_key("run.sh"));
+        assert!(files.contains_key("link.txt"));
+        // The excluded *directories* contribute no entries — but `.gitattributes`
+        // is a legitimate source file and must remain (hence the trailing slash).
+        assert!(
+            !files
+                .keys()
+                .any(|k| k.starts_with(".git/") || k.starts_with("000-RELEASE/")),
+            "excluded dirs must not appear in the digest input"
+        );
+        let dig_work = crt_core::source_tree_digest(&files);
+
+        // An executable-bit flip is invisible (content-only / ignore mode).
+        let mut perm = std::fs::metadata(w.join("run.sh")).unwrap().permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(w.join("run.sh"), perm).unwrap();
+        assert_eq!(
+            dig_work,
+            crt_core::source_tree_digest(&walk_source_tree(w).unwrap()),
+            "an exec-bit flip must not move the digest"
+        );
+
+        // A plain tar of the worktree (minus .git), extracted elsewhere, yields
+        // the identical digest — the worktree ≡ tarball-recipient contract.
+        let archive_dir = tempfile::tempdir().unwrap();
+        let archive = archive_dir.path().join("tree.tar");
+        assert!(
+            std::process::Command::new("tar")
+                .arg("-cf")
+                .arg(&archive)
+                .arg("--exclude=./.git")
+                .arg("-C")
+                .arg(w)
+                .arg(".")
+                .status()
+                .unwrap()
+                .success()
+        );
+        let extracted = tempfile::tempdir().unwrap();
+        assert!(
+            std::process::Command::new("tar")
+                .arg("-xf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(extracted.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert_eq!(
+            dig_work,
+            crt_core::source_tree_digest(&walk_source_tree(extracted.path()).unwrap()),
+            "worktree and tar-extracted tree must agree"
+        );
     }
 }
