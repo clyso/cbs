@@ -37,9 +37,14 @@ fn setup_repo() -> tempfile::TempDir {
 
     let comp = dir.join("components").join("ceph");
     std::fs::create_dir_all(&comp).unwrap();
+    // A complete cbs.component.yaml: the loader now strictly requires the
+    // build/containers sections (review finding F2).
     std::fs::write(
         comp.join("cbs.component.yaml"),
-        "name: ceph\nrepo: https://github.com/ceph/ceph\n",
+        "name: ceph\nrepo: https://github.com/ceph/ceph\n\
+         build:\n  rpm:\n    build: build_rpms.sh\n    release-rpm: get_release_rpm.sh\n\
+         \x20 get-version: get_version.sh\n  deps: install_deps.sh\n\
+         containers:\n  path: containers\n",
     )
     .unwrap();
     tmp

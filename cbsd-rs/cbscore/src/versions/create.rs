@@ -20,7 +20,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::DateTime;
 use uuid::Uuid;
 
-use crate::components::{ComponentError, ComponentLoc, load_components};
+use crate::components::{ComponentError, CoreComponentLoc, load_components};
 use crate::types::store::descriptor_path;
 use crate::types::{
     Error, VersionComponent, VersionDescriptor, VersionImage, VersionSignedOffBy, VersionType,
@@ -131,7 +131,7 @@ fn uuidv7_timestamp(version: &str) -> Option<String> {
 /// Python). Pure (no IO).
 pub fn create(
     spec: &VersionSpec,
-    components: &BTreeMap<String, ComponentLoc>,
+    components: &BTreeMap<String, CoreComponentLoc>,
     component_uri_overrides: &BTreeMap<String, String>,
 ) -> Result<VersionDescriptor, Error> {
     validate_version(spec.version)?;
@@ -150,7 +150,7 @@ pub fn create(
         let repo = component_uri_overrides
             .get(name)
             .cloned()
-            .unwrap_or_else(|| loc.def.repo.clone());
+            .unwrap_or_else(|| loc.comp.repo.clone());
         components_res.push(VersionComponent {
             name: name.clone(),
             repo,
@@ -271,15 +271,24 @@ pub async fn write_descriptor(
 mod tests {
     use super::*;
 
-    fn one_component() -> BTreeMap<String, ComponentLoc> {
+    fn one_component() -> BTreeMap<String, CoreComponentLoc> {
+        use crate::components::{CoreComponent, CoreComponentBuild, CoreComponentContainers};
         let mut m = BTreeMap::new();
         m.insert(
             "ceph".to_string(),
-            ComponentLoc {
+            CoreComponentLoc {
                 path: Utf8PathBuf::from("/components/ceph"),
-                def: crate::components::ComponentDef {
+                comp: CoreComponent {
                     name: "ceph".to_string(),
                     repo: "https://github.com/ceph/ceph".to_string(),
+                    build: CoreComponentBuild {
+                        rpm: None,
+                        get_version: "get_version.sh".to_string(),
+                        deps: "install_deps.sh".to_string(),
+                    },
+                    containers: CoreComponentContainers {
+                        path: "containers".into(),
+                    },
                 },
             },
         );
@@ -397,7 +406,7 @@ mod tests {
         tokio::fs::create_dir(&ceph_dir).await.unwrap();
         tokio::fs::write(
             ceph_dir.join("cbs.component.yaml"),
-            "name: ceph\nrepo: https://default/ceph\n",
+            "name: ceph\nrepo: https://default/ceph\nbuild:\n  get-version: gv.sh\n  deps: deps.sh\ncontainers:\n  path: c\n",
         )
         .await
         .unwrap();
