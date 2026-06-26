@@ -19,13 +19,20 @@
 //! subprocess, async, cloud SDK, or `regex` — and exposes only pure types and
 //! helpers.
 
+pub mod config;
 pub mod error;
 pub mod schema;
+pub mod secrets;
 pub mod store;
 pub mod version;
 pub mod version_type;
 
+pub use config::{
+    Config, LoggingConfig, PathsConfig, RegistryStorageConfig, S3LocationConfig, S3StorageConfig,
+    SigningConfig, StorageConfig, VaultAppRole, VaultConfig, VaultUserPass,
+};
 pub use error::Error;
+pub use secrets::{GitSecret, RegistrySecret, Secrets, SigningSecret, StorageSecret};
 pub use version::{VersionComponent, VersionDescriptor, VersionImage, VersionSignedOffBy};
 pub use version_type::VersionType;
 
