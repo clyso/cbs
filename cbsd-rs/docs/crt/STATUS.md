@@ -45,12 +45,12 @@ fetch). Treat those as authoritative-as-landed.
 
 ## Milestone status
 
-| Milestone | Scope                                                                 | Status             |
-| --------- | --------------------------------------------------------------------- | ------------------ |
-| **M1**    | Patch ingestion into a content-addressed store                        | ✅ done            |
-| **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed |
-| **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done            |
-| **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | ☐ todo             |
+| Milestone | Scope                                                                 | Status                    |
+| --------- | --------------------------------------------------------------------- | ------------------------- |
+| **M1**    | Patch ingestion into a content-addressed store                        | ✅ done                   |
+| **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed        |
+| **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done                   |
+| **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | 🔶 4.1–4.3 done; 4.4 todo |
 
 ### M1 — done (`3a0cbe4e`, `f87ac939`, `30d09904`)
 
@@ -114,24 +114,30 @@ is byte-identical. Gate green: `cargo fmt --all --check`,
 `cargo clippy -p crt -p crt-core --all-targets`, `cargo test` (crt 44, crt-core
 26, crt-store 12), `cargo check --workspace`.
 
-## Next: M4 (recommended)
+## M4 — in progress (4.1–4.3 done; 4.4 remaining)
 
-Git materialization and the portable signed bundle (design §8, §11 legs 3–4):
+Git materialization and the portable signed bundle (design §8, §11 legs 3–4).
+See `docs/crt/plans/001-20260625T0831-04-git-materialize-verify-tree.md` for the
+full plan + per-commit progress table.
 
-- **`crt release materialize`** extends the M3 artifact emit into a linear
+- **4.1 done (`5dbeea3`)** — `crt release materialize` builds the linear
   `release/<name>` branch (`git am` per entry, each amended with a `Crt-Patch`
-  trailer) and an annotated tag, plus the signed `000-RELEASE/` bundle: the
-  record, its detached `.asc`, the M3 `sbom.cdx.json` / `RELEASE-NOTES.md`,
-  provenance, and a README.
-- **`source_tree_digest`**: pin the canonical directory-hash algorithm (§14).
-- **`crt verify --tree <dir>`** (offline, no store/git), **verify leg 3** (git
-  anchoring via `Crt-Patch` and `git patch-id --stable`), and **leg 4
-  activation** (byte-compare the committed `sbom.cdx.json` / `RELEASE-NOTES.md`
-  against an M3 re-derivation — the engines already exist in `crt-core`).
-- **Pin `serde_json` (exact)** with leg 4 (v5 F2): the M3 SBOM byte golden
-  already catches a pretty-printer shift in CI, but leg 4's byte-compare wants
-  the renderer pinned too, mirroring the `minijinja` exact pin on the notes
-  side.
+  trailer) in a clean checkout of the destination repo (`core.autocrlf=false`).
+- **4.2 done (`e359ecc`)** — `source_tree_digest` (canonical directory hash,
+  §14) and offline `crt verify --tree <dir>` (no store/git): signature +
+  `source_tree_digest` + exhaustive `bundle_digests`.
+- **4.3 done** — `materialize` appends the signed `000-RELEASE/` bundle commit
+  (`record.json` + detached `.asc`, `sbom.cdx.json`, `RELEASE-NOTES.md`,
+  `provenance.json`, `README.md`, `.gitattributes`) and an annotated tag
+  carrying the manifest digest; opt-in `--push`. `materialize` now needs the
+  Vault key (it signs the bundle).
+- **4.4 todo** — activate the ref-conditional `release verify` legs 0–4 (bundle
+  signature, in-tree record schema/cross-ref, git anchoring via `Crt-Patch` +
+  `git patch-id --stable`, and leg-4 byte-compare of `sbom.cdx.json` /
+  `RELEASE-NOTES.md` against an M3 re-derivation). **Pin `serde_json` (exact)**
+  with leg 4 (v5 F2): the M3 SBOM byte golden catches a pretty-printer shift,
+  but leg 4's byte-compare wants the renderer pinned too, mirroring the
+  `minijinja` exact pin on the notes side.
 
 The `RenderSpec.minijinja_version` reconciliation is **done**:
 `minijinja 2.21.0` is linked and exact-pinned in `crt-core`, and

@@ -82,16 +82,19 @@ validator is wired in.
    `000-RELEASE/` and `.git/`. To make the producer's worktree bytes equal the
    stored blob bytes (hence any faithful extraction), materialize checks out
    with git content filters **disabled** (`core.autocrlf=false`, no
-   clean/smudge), and the bundle's `.gitattributes` gets `000-RELEASE/* -text`
-   so the signed files are never EOL-mangled downstream. **Open sub-decisions
-   settled in 4.2 against the real `destination_repo`:** (a) audit its
-   `.gitattributes` for any transforming rule (`text=auto`, `eol`, smudge) that
-   desyncs a checkout from the blob bytes; (b) the executable-bit and symlink
-   treatment — a ZIP recipient (a §8 primary path) drops the exec bit and may
-   collapse symlinks, so **lean toward hashing content only (ignore mode) and
-   recording symlinks by target**, then prove digest-equality between the
-   producer worktree and a `tar`-extracted tree in a fixture that **includes an
-   attributes file, an executable file, and a symlink**. The canonical
+   clean/smudge), and the bundle's `000-RELEASE/.gitattributes` gets `* -text`
+   (a **slash-free** pattern, since a pattern is matched relative to the
+   `.gitattributes` file's own directory — `000-RELEASE/* -text` there would
+   resolve to `000-RELEASE/000-RELEASE/*` and match nothing; verified with
+   `git check-attr`) so the signed files are never EOL-mangled downstream.
+   **Open sub-decisions settled in 4.2 against the real `destination_repo`:**
+   (a) audit its `.gitattributes` for any transforming rule (`text=auto`, `eol`,
+   smudge) that desyncs a checkout from the blob bytes; (b) the executable-bit
+   and symlink treatment — a ZIP recipient (a §8 primary path) drops the exec
+   bit and may collapse symlinks, so **lean toward hashing content only (ignore
+   mode) and recording symlinks by target**, then prove digest-equality between
+   the producer worktree and a `tar`-extracted tree in a fixture that **includes
+   an attributes file, an executable file, and a symlink**. The canonical
    distribution is a plain archive of the worktree (minus `.git/`), **not**
    `git archive` (which re-applies attributes).
 4. **`materialize --out` fate.** M3's `--out` writes the two loose artifacts;
@@ -218,17 +221,29 @@ End-to-end: `materialize` then `verify --tree` (4.2) passes on real output.
   `base_ref`, `RenderSpec`, `created`, `source_tree_digest`, the BOM,
   `bundle_digests`); write `sbom.cdx.json`/`RELEASE-NOTES.md` (reuse M3),
   `provenance.json` (the `PublicProvenance` projection), `README.md`, and
-  `.gitattributes` (`000-RELEASE/* -text`); compute `bundle_digests` over every
-  other file; **sign `record.json` via the Vault key (edge), reusing
-  `sign_manifest`**; create the `000-RELEASE/` commit with all files incl.
-  `record.json.asc`; annotated tag; opt-in `--push`.
+  `000-RELEASE/.gitattributes` (`* -text` — slash-free; see decision 3); compute
+  `bundle_digests` over every other file; **sign `record.json` via the Vault key
+  (edge), reusing `sign_manifest`**; create the `000-RELEASE/` commit with all
+  files incl. `record.json.asc`; annotated tag; opt-in `--push`.
 - **Tests:** `bundle_digests` covers every non-record file; `record.json.asc`
   verifies against the test key; `verify --tree` (4.2) passes on the freshly
   materialized tree; the record + `provenance.json` are public-safe (no
   `visibility`/`internal`/`Crt-Visibility`); tag present at the bundle tip.
-  Vault mocked; `--push` `#[ignore]`d.
+  Signing key injected (no Vault in tests); `--push` is exercised against a
+  **local bare remote** (network-free, so it runs in CI rather than
+  `#[ignore]`d).
 - **Smell test:** one capability (emit the signed verification bundle); reverts
   cleanly. **~500–650 LOC.**
+- **As built (deviations from the plan-as-written):** (a) `PublicProvenance` is
+  added here, not in 4.2 — its only consumer is `provenance.json`, so deferring
+  it kept 4.2 to the verifier. (b) `.gitattributes` is `* -text` (slash-free),
+  not `000-RELEASE/* -text` (see decision 3). (c) 4.2's `walk_source_tree`
+  excluded `.git` only when it was a **directory**; a linked worktree's `.git`
+  is a **file**, so it was being hashed and differed per checkout — the
+  exclusion now fires on the top-level name regardless of node type, and the
+  end-to-end materialize→`verify --tree` test (over a real worktree) guards it.
+  (d) `materialize` now requires the Vault key (it signs the bundle), mirroring
+  `seal`.
 
 ### 4.4 — `crt release verify`: activate the ref-conditional legs (0–4)
 
@@ -304,9 +319,9 @@ as a standalone commit → **user runs the autosquash**. Commits: `crt:` prefix
 
 ## Progress
 
-| Commit | Subject                                               | Status |
-| ------ | ----------------------------------------------------- | ------ |
-| 4.1    | materialize a sealed release into a linear git branch | ☐ todo |
-| 4.2    | hash the source tree and `verify --tree` offline      | ☐ todo |
-| 4.3    | append the signed `000-RELEASE/` bundle + tag         | ☐ todo |
-| 4.4    | activate the ref-conditional verify legs (0–4)        | ☐ todo |
+| Commit | Subject                                               | Status                |
+| ------ | ----------------------------------------------------- | --------------------- |
+| 4.1    | materialize a sealed release into a linear git branch | ✅ done (`5dbeea3`)   |
+| 4.2    | hash the source tree and `verify --tree` offline      | ✅ done (`e359ecc`)   |
+| 4.3    | append the signed `000-RELEASE/` bundle + tag         | ✅ done (this commit) |
+| 4.4    | activate the ref-conditional verify legs (0–4)        | ☐ todo                |
