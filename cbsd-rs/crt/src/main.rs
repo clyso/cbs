@@ -185,9 +185,12 @@ enum ReleaseCmd {
         #[arg(long)]
         push: bool,
     },
-    /// Verify a sealed release: signature, schema, and cross-reference (design
-    /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
-    /// reported as skipped until materialization lands.
+    /// Verify a sealed release (design §11): the sealed manifest's signature,
+    /// schema, and cross-reference (legs 0–2) always run. With `--repo`, if the
+    /// release has been materialized (its tag exists), the ref-conditional legs
+    /// also run over the git artifact — the bundle signature, the in-tree
+    /// record's faithfulness, git anchoring (leg 3), and artifact faithfulness
+    /// (leg 4); otherwise legs 3–4 are reported skipped.
     Verify {
         /// Release name.
         name: String,
@@ -195,6 +198,10 @@ enum ReleaseCmd {
         /// `public_key_url` from config.
         #[arg(long)]
         public_key: Option<String>,
+        /// Local working copy of the destination repo. When given and the
+        /// release is materialized, runs the ref-conditional legs 3–4.
+        #[arg(long)]
+        repo: Option<PathBuf>,
     },
 }
 
@@ -470,21 +477,30 @@ async fn main() -> Result<()> {
                         println!("wrote {}", loose.sbom.display());
                     }
                 }
-                ReleaseCmd::Verify { name, public_key } => {
+                ReleaseCmd::Verify {
+                    name,
+                    public_key,
+                    repo,
+                } => {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(
                         "no public key: pass --public-key or set public_key_url in the config",
                     )?;
                     let pubkey = verify::load_public_key(&source).await?;
-                    match verify::verify_release(&store, &cfg, &name, &pubkey).await? {
+                    match verify::verify_release(&store, &cfg, &name, &pubkey, repo.as_deref())
+                        .await?
+                    {
                         verify::VerifyVerdict::Pass(report) => {
+                            println!("verify {name}: OK");
                             print!("{}", verify::render_report(&report));
                         }
-                        verify::VerifyVerdict::SignatureFailed(msg) => {
-                            eprintln!("verify {name}: signature FAILED — {msg}");
+                        verify::VerifyVerdict::SignatureFailed(report) => {
+                            eprintln!("verify {name}: signature FAILED");
+                            eprint!("{}", verify::render_report(&report));
                             std::process::exit(EXIT_SIGNATURE);
                         }
-                        verify::VerifyVerdict::VerifyFailed(msg) => {
-                            eprintln!("verify {name}: FAILED — {msg}");
+                        verify::VerifyVerdict::VerifyFailed(report) => {
+                            eprintln!("verify {name}: FAILED");
+                            eprint!("{}", verify::render_report(&report));
                             std::process::exit(EXIT_VERIFY);
                         }
                     }
@@ -503,14 +519,17 @@ async fn main() -> Result<()> {
                 .context("the tree-verification task panicked")??;
             match verdict {
                 verify::VerifyVerdict::Pass(report) => {
+                    println!("verify --tree {tree_display}: OK");
                     print!("{}", verify::render_report(&report));
                 }
-                verify::VerifyVerdict::SignatureFailed(msg) => {
-                    eprintln!("verify --tree {tree_display}: signature FAILED — {msg}");
+                verify::VerifyVerdict::SignatureFailed(report) => {
+                    eprintln!("verify --tree {tree_display}: signature FAILED");
+                    eprint!("{}", verify::render_report(&report));
                     std::process::exit(EXIT_SIGNATURE);
                 }
-                verify::VerifyVerdict::VerifyFailed(msg) => {
-                    eprintln!("verify --tree {tree_display}: FAILED — {msg}");
+                verify::VerifyVerdict::VerifyFailed(report) => {
+                    eprintln!("verify --tree {tree_display}: FAILED");
+                    eprint!("{}", verify::render_report(&report));
                     std::process::exit(EXIT_VERIFY);
                 }
             }

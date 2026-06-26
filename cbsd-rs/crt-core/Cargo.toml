@@ -8,7 +8,12 @@ description = "CRT core: content-addressing, manifest, sealing (no IO)"
 
 [dependencies]
 serde = { workspace = true }
-serde_json = { workspace = true }
+# Pinned EXACT (v5-review F2): `build_sbom` emits `sbom.cdx.json` via
+# `serde_json::to_string_pretty`, and verify leg 4 byte-compares the committed
+# SBOM against a re-derivation. A pretty-printer change across crt builds would
+# desync that compare, so the linked version is fixed (mirrors the `minijinja`
+# pin below; the committed SBOM byte golden in src/sbom.rs is the CI tripwire).
+serde_json = "=1.0.149"
 # RFC 8785 (JCS) canonical JSON — the signed-manifest byte contract (design §6).
 serde_json_canonicalizer = "0.3"
 sha2 = "0.10"

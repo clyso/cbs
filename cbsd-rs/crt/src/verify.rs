@@ -1,9 +1,9 @@
-// crt — verify a sealed release (design §11, legs 0–2).
+// crt — verify a sealed release (design §11, legs 0–4).
 // Copyright (C) 2026 Clyso
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! `crt release verify <name>` runs the store-backed verification legs that are
-//! applicable in M2 (design §11):
+//! `crt release verify <name>` runs the design §11 verification legs. The
+//! **sealed** legs 0–2 always run, over the store's signed `ReleaseRecord`:
 //!
 //! - **Leg 0 — signature** (fail-fast): the `ReleaseRecord.signature` verifies
 //!   over the canonical manifest with the published public key.
@@ -12,12 +12,21 @@
 //! - **Leg 2 — cross-reference:** the recomputed digest equals the stored one;
 //!   every referenced patch blob exists; and each referenced `PatchMeta` agrees
 //!   with the entry's denormalized `patch_id`.
-//! - **Legs 3–4** (git anchoring, artifact faithfulness) need a materialized
-//!   ref and are **reported as skipped** (M3/M4) — never silently passed.
 //!
-//! The core [`verify_release`] takes the public-key bytes, so it is fully
-//! testable against an in-memory store with no network; [`load_public_key`] is
-//! the thin edge shim that fetches them (a local path, or an http(s) URL).
+//! When `repo` points at the destination repo **and** the release has been
+//! materialized (its annotated tag exists), the **ref-conditional** legs also
+//! run over the materialized git artifact — the bundle signature (leg 0), the
+//! in-tree record's schema (leg 1) and its faithfulness to the sealed release
+//! (leg 2), git anchoring (leg 3: `Crt-Patch` trailer + offset-invariant
+//! `patch-id`), and artifact faithfulness (leg 4: SBOM/notes byte-compare).
+//! Otherwise legs 3–4 are **reported skipped** — never silently passed.
+//!
+//! [`verify_tree`] is the offline subset (legs 0–2 over an extracted tree, no
+//! store, no git) — the primary path for a tarball/ZIP/clone recipient, sharing
+//! the in-tree checks via [`verify_tree_legs`]. The core [`verify_release`]
+//! takes the public-key bytes, so it is testable against an in-memory store and
+//! a local repo with no network; [`load_public_key`] is the thin edge shim that
+//! fetches them (a local path, or an http(s) URL).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::ffi::OsStrExt;
@@ -35,22 +44,25 @@ pub(crate) const BUNDLE_DIR: &str = "000-RELEASE";
 pub(crate) const RECORD_JSON: &str = "record.json";
 pub(crate) const RECORD_SIG: &str = "record.json.asc";
 
-/// The verdict of a verification run. The three outcomes map to distinct
-/// process exit codes in `main` (signature vs verify vs — for the `Err` arm —
-/// operational), per design §11.
+/// The verdict of a verification run. Each outcome carries the per-leg
+/// [`VerifyReport`] (so a failure names the failing leg, design §11 F9), and the
+/// three outcomes map to distinct process exit codes in `main` (signature vs
+/// verify vs — for the `Err` arm — operational).
 pub enum VerifyVerdict {
     /// Every applicable leg passed; the report lists each leg (incl. skipped).
     Pass(VerifyReport),
-    /// Leg 0: the signature did not verify (or the public key was unusable).
-    SignatureFailed(String),
-    /// Leg 1 or 2: schema or cross-reference check failed.
-    VerifyFailed(String),
+    /// A signature leg (leg 0, sealed or bundle) did not verify.
+    SignatureFailed(VerifyReport),
+    /// A schema / cross-reference / anchoring / faithfulness leg (1–4) failed.
+    VerifyFailed(VerifyReport),
 }
 
-/// Whether a leg ran or was skipped (not applicable in M2).
+/// Whether a leg passed, was skipped (not applicable — e.g. no materialized
+/// ref), or failed.
 pub enum LegState {
     Passed,
     Skipped,
+    Failed,
 }
 
 /// One leg's outcome, for reporting.
@@ -60,7 +72,7 @@ pub struct LegStatus {
     pub detail: String,
 }
 
-/// The per-leg report of a passing verification.
+/// The per-leg report of a verification run (passing or failing).
 pub struct VerifyReport {
     pub legs: Vec<LegStatus>,
 }
@@ -81,14 +93,52 @@ fn skipped(leg: &'static str, detail: impl Into<String>) -> LegStatus {
     }
 }
 
-/// Verify the sealed release named `name` against `public_key_armored`. Returns
-/// a [`VerifyVerdict`]; only operational problems (no such release, store
-/// failure) surface as `Err`.
+fn failed(leg: &'static str, detail: impl Into<String>) -> LegStatus {
+    LegStatus {
+        leg,
+        state: LegState::Failed,
+        detail: detail.into(),
+    }
+}
+
+/// The verdict kind a leg group resolved to, before it is paired with the
+/// accumulated report into a [`VerifyVerdict`].
+enum VerdictKind {
+    Pass,
+    SignatureFailed,
+    VerifyFailed,
+}
+
+/// Everything the blocking ref-verification needs from the sealed release —
+/// pre-computed by the async caller so the blocking section touches no store.
+struct SealedRefInputs {
+    /// The sealed manifest digest the in-tree record must back-reference.
+    manifest_digest: Sha256,
+    base_ref: String,
+    /// `blob_hash` hex → (`order`, `patch_id`) of the sealed entries.
+    entries: BTreeMap<String, (u32, String)>,
+    /// The leg-4 re-derivations from the **sealed** manifest, to byte-compare.
+    sbom_expected: Vec<u8>,
+    notes_expected: Vec<u8>,
+}
+
+/// Verify the sealed release `name` against `public_key_armored`. The sealed
+/// legs 0–2 (signature, schema, cross-reference) always run. When `repo` points
+/// at the destination repo **and** the release has been materialized (its
+/// annotated tag exists), the ref-conditional legs additionally run over the
+/// materialized git artifact: the bundle signature (leg 0), the in-tree record's
+/// schema (leg 1) and its faithfulness to the sealed release (leg 2), git
+/// anchoring (leg 3), and artifact faithfulness (leg 4) — otherwise legs 3–4 are
+/// reported `skipped`.
+///
+/// Each [`VerifyVerdict`] carries the per-leg report; only operational problems
+/// (no such release, store/git failure) surface as `Err`.
 pub async fn verify_release(
     store: &dyn Store,
     cfg: &Config,
     name: &str,
     public_key_armored: &str,
+    repo: Option<&Path>,
 ) -> Result<VerifyVerdict> {
     let key = cfg.resolve_release_key(name)?;
     let record = store
@@ -97,93 +147,347 @@ pub async fn verify_release(
         .with_context(|| format!("no sealed release named {name:?}"))?;
 
     let canonical = crt_core::canonical_json(&record.manifest)?;
+    let mut legs: Vec<LegStatus> = Vec::new();
+    const SEAL_0: &str = "0 signature (sealed manifest)";
+    const SEAL_1: &str = "1 schema (sealed manifest)";
+    const SEAL_2: &str = "2 cross-reference (sealed manifest)";
 
-    // Leg 0 — signature (fail-fast). A bad signature or an unusable public key
-    // both surface here; an invalid release must fail before anything else.
+    // Leg 0 (sealed) — signature, fail-fast. A bad signature or an unusable
+    // public key both surface here; an invalid release fails before anything.
     if let Err(e) = crt_core::verify_manifest(&canonical, &record.signature, public_key_armored) {
-        return Ok(VerifyVerdict::SignatureFailed(e.to_string()));
+        legs.push(failed(SEAL_0, e.to_string()));
+        return Ok(VerifyVerdict::SignatureFailed(VerifyReport { legs }));
     }
+    legs.push(passed(SEAL_0, "detached OpenPGP signature valid"));
 
-    // Leg 1 — schema.
+    // Leg 1 (sealed) — schema.
     if record.manifest.schema_version != crt_core::SCHEMA_VERSION {
-        return Ok(VerifyVerdict::VerifyFailed(format!(
-            "manifest schema_version {} is not the supported {}",
-            record.manifest.schema_version,
-            crt_core::SCHEMA_VERSION
-        )));
+        legs.push(failed(
+            SEAL_1,
+            format!(
+                "manifest schema_version {} is not the supported {}",
+                record.manifest.schema_version,
+                crt_core::SCHEMA_VERSION
+            ),
+        ));
+        return Ok(VerifyVerdict::VerifyFailed(VerifyReport { legs }));
     }
+    legs.push(passed(
+        SEAL_1,
+        format!("schema_version {}", record.manifest.schema_version),
+    ));
 
-    // Leg 2 — cross-reference. The digest is the integrity anchor; it lives
-    // outside the signed bytes, so a mismatch is caught here, not by leg 0.
+    // Leg 2 (sealed) — cross-reference. The digest is the integrity anchor; it
+    // lives outside the signed bytes, so a mismatch is caught here, not leg 0.
     let recomputed = Sha256::of(&canonical);
     if recomputed != record.digest {
-        return Ok(VerifyVerdict::VerifyFailed(format!(
-            "recomputed digest {recomputed} != stored digest {}",
-            record.digest
-        )));
+        legs.push(failed(
+            SEAL_2,
+            format!(
+                "recomputed digest {recomputed} != stored digest {}",
+                record.digest
+            ),
+        ));
+        return Ok(VerifyVerdict::VerifyFailed(VerifyReport { legs }));
     }
     for entry in &record.manifest.entries {
         if !store.has_blob(&entry.blob_hash).await? {
-            return Ok(VerifyVerdict::VerifyFailed(format!(
-                "referenced patch blob {} is missing from the store",
-                entry.blob_hash
-            )));
+            legs.push(failed(
+                SEAL_2,
+                format!(
+                    "referenced patch blob {} is missing from the store",
+                    entry.blob_hash
+                ),
+            ));
+            return Ok(VerifyVerdict::VerifyFailed(VerifyReport { legs }));
         }
         // The referenced PatchMeta must exist and agree with the entry's
         // denormalized patch_id. A *missing* meta is a verify failure; a meta
-        // that is present but unreadable surfaces as an operational error
-        // (exit 1) rather than a verify failure (a narrow MVP simplification of
-        // design §11 leg 1's "deserialize and validate").
+        // present but unreadable surfaces as an operational error (exit 1)
+        // rather than a verify failure (the MVP simplification of §11 leg 1).
         let meta = match store.get_meta(&entry.blob_hash).await {
             Ok(meta) => meta,
             Err(e) if e.is_not_found() => {
-                return Ok(VerifyVerdict::VerifyFailed(format!(
-                    "referenced patch meta for {} is missing",
-                    entry.blob_hash
-                )));
+                legs.push(failed(
+                    SEAL_2,
+                    format!("referenced patch meta for {} is missing", entry.blob_hash),
+                ));
+                return Ok(VerifyVerdict::VerifyFailed(VerifyReport { legs }));
             }
             Err(e) => return Err(e.into()),
         };
         if meta.patch_id != entry.patch_id {
-            return Ok(VerifyVerdict::VerifyFailed(format!(
-                "entry {} records patch_id {:?} but the stored meta has {:?}",
-                entry.blob_hash, entry.patch_id, meta.patch_id
-            )));
+            legs.push(failed(
+                SEAL_2,
+                format!(
+                    "entry {} records patch_id {:?} but the stored meta has {:?}",
+                    entry.blob_hash, entry.patch_id, meta.patch_id
+                ),
+            ));
+            return Ok(VerifyVerdict::VerifyFailed(VerifyReport { legs }));
+        }
+    }
+    legs.push(passed(
+        SEAL_2,
+        format!(
+            "digest matches; {} referenced blob(s) present and consistent",
+            record.manifest.entries.len()
+        ),
+    ));
+
+    // Ref-conditional legs. Without a destination repo there is nothing to
+    // anchor against, so legs 3–4 are reported skipped (never silently passed).
+    let Some(repo_path) = repo else {
+        legs.push(skipped(
+            "3 git anchoring",
+            "no destination repo (pass --repo)",
+        ));
+        legs.push(skipped(
+            "4 artifact faithfulness",
+            "no destination repo (pass --repo)",
+        ));
+        return Ok(VerifyVerdict::Pass(VerifyReport { legs }));
+    };
+
+    // Re-derive the deterministic artifacts from the *sealed* manifest for leg 4
+    // (version-gated render — a minijinja mismatch is an operational error, as
+    // in `release notes`). The byte-compare happens in the blocking section.
+    let sbom_expected = crt_core::build_sbom(&record.manifest)?.into_bytes();
+    let notes_expected = crate::release::render_notes_for(store, &record)
+        .await?
+        .into_bytes();
+
+    let sealed = SealedRefInputs {
+        manifest_digest: record.digest,
+        base_ref: record.manifest.release.base_ref.clone(),
+        entries: record
+            .manifest
+            .entries
+            .iter()
+            .map(|e| (e.blob_hash.to_hex(), (e.order, e.patch_id.clone())))
+            .collect(),
+        sbom_expected,
+        notes_expected,
+    };
+    let repo_path = repo_path.to_path_buf();
+    let tag = name.to_owned();
+    let public_key = public_key_armored.to_owned();
+
+    // Subprocess git + a tree checkout + a tree walk are blocking; offload them.
+    let (ref_legs, kind) = tokio::task::spawn_blocking(move || {
+        verify_ref_legs(&repo_path, &tag, &public_key, &sealed)
+    })
+    .await
+    .context("the ref-verification task panicked")??;
+    legs.extend(ref_legs);
+    Ok(match kind {
+        VerdictKind::Pass => VerifyVerdict::Pass(VerifyReport { legs }),
+        VerdictKind::SignatureFailed => VerifyVerdict::SignatureFailed(VerifyReport { legs }),
+        VerdictKind::VerifyFailed => VerifyVerdict::VerifyFailed(VerifyReport { legs }),
+    })
+}
+
+/// Blocking: when the materialized tag exists, check the tree out and run the
+/// ref-conditional legs (0' bundle signature, 1'/2' in-tree record, 3 git
+/// anchoring, 4 artifact faithfulness); otherwise return the two `skipped` legs.
+/// The checkout uses `core.autocrlf=false` so its bytes equal the materialize
+/// worktree's (and a recipient's plain extraction) — **not** `git archive`,
+/// which would re-apply `.gitattributes` (design §8/§14).
+fn verify_ref_legs(
+    repo: &Path,
+    tag: &str,
+    public_key: &str,
+    sealed: &SealedRefInputs,
+) -> Result<(Vec<LegStatus>, VerdictKind)> {
+    if !crate::git::tag_exists(repo, tag)? {
+        return Ok((
+            vec![
+                skipped("3 git anchoring", "release not materialized (no tag)"),
+                skipped(
+                    "4 artifact faithfulness",
+                    "release not materialized (no tag)",
+                ),
+            ],
+            VerdictKind::Pass,
+        ));
+    }
+    let wt = crate::git::checkout_detached(repo, tag)?;
+    let result = verify_ref_legs_in_tree(wt.path(), repo, tag, public_key, sealed);
+    // Read-only audit: the verdict is already captured, so a teardown failure
+    // must not mask it — warn and leave the scratch worktree.
+    if let Err(e) = wt.remove() {
+        eprintln!("warning: removing the verification worktree failed: {e:#}");
+    }
+    result
+}
+
+/// The ref-conditional legs over the checked-out materialized `tree`.
+fn verify_ref_legs_in_tree(
+    tree: &Path,
+    repo: &Path,
+    tag: &str,
+    public_key: &str,
+    sealed: &SealedRefInputs,
+) -> Result<(Vec<LegStatus>, VerdictKind)> {
+    let mut legs: Vec<LegStatus> = Vec::new();
+
+    // Legs 0–2 over the in-tree record + extracted tree (shared with
+    // `verify --tree`): bundle signature, record schema, source + bundle digests.
+    let record = match verify_tree_legs(tree, public_key, &mut legs)? {
+        TreeOutcome::Ok(record) => *record,
+        TreeOutcome::SignatureFailed => return Ok((legs, VerdictKind::SignatureFailed)),
+        TreeOutcome::VerifyFailed => return Ok((legs, VerdictKind::VerifyFailed)),
+    };
+
+    // Leg 2 (extend) — the in-tree record is a faithful projection of the sealed
+    // release: it back-references the sealed digest, and its BOM equals the
+    // sealed entries on (order, blob_hash, patch_id) and count. The BOM's
+    // patch_id was copied from the sealed entry at materialize time, so this
+    // catches a tampered-but-validly-signed record.json, not a value mismatch.
+    const IN_2: &str = "2 cross-reference (in-tree record)";
+    if record.s3_manifest_digest != sealed.manifest_digest {
+        legs.push(failed(
+            IN_2,
+            format!(
+                "in-tree s3_manifest_digest {} != sealed digest {}",
+                record.s3_manifest_digest, sealed.manifest_digest
+            ),
+        ));
+        return Ok((legs, VerdictKind::VerifyFailed));
+    }
+    let bom: BTreeMap<String, (u32, String)> = record
+        .patches
+        .iter()
+        .map(|p| (p.blob_hash.to_hex(), (p.order, p.patch_id.clone())))
+        .collect();
+    if bom.len() != record.patches.len() || bom != sealed.entries {
+        legs.push(failed(
+            IN_2,
+            "in-tree patch BOM is not a faithful projection of the sealed entries",
+        ));
+        return Ok((legs, VerdictKind::VerifyFailed));
+    }
+    legs.push(passed(
+        IN_2,
+        format!(
+            "back-reference + {}-entry BOM match the sealed release",
+            record.patches.len()
+        ),
+    ));
+
+    // Leg 3 — git anchoring. Each patch commit's Crt-Patch trailer names its
+    // blob, and the patch_id recomputed from the commit's diff (offset-invariant)
+    // equals the sealed entry's.
+    match anchor_history(repo, tag, &sealed.base_ref, &sealed.entries)? {
+        Ok(n) => legs.push(passed(
+            "3 git anchoring",
+            format!("{n} commit(s) anchor to the sealed entries via Crt-Patch + patch-id"),
+        )),
+        Err(reason) => {
+            legs.push(failed("3 git anchoring", reason));
+            return Ok((legs, VerdictKind::VerifyFailed));
         }
     }
 
-    Ok(VerifyVerdict::Pass(VerifyReport {
-        legs: vec![
-            passed("0 signature", "detached OpenPGP signature valid"),
-            passed(
-                "1 schema",
-                format!("schema_version {}", record.manifest.schema_version),
-            ),
-            passed(
-                "2 cross-reference",
-                format!(
-                    "digest matches; {} referenced blob(s) present and consistent",
-                    record.manifest.entries.len()
-                ),
-            ),
-            skipped("3 git anchoring", "no materialized ref (M3/M4)"),
-            skipped(
-                "4 artifact faithfulness",
-                "no materialized artifacts (M3/M4)",
-            ),
-        ],
-    }))
+    // Leg 4 — artifact faithfulness: the committed SBOM + notes byte-match a
+    // re-derivation from the sealed manifest.
+    let bundle = tree.join(BUNDLE_DIR);
+    const IN_4: &str = "4 artifact faithfulness";
+    if let Err(reason) = byte_match(
+        &bundle.join("sbom.cdx.json"),
+        &sealed.sbom_expected,
+        "sbom.cdx.json",
+    ) {
+        legs.push(failed(IN_4, reason));
+        return Ok((legs, VerdictKind::VerifyFailed));
+    }
+    if let Err(reason) = byte_match(
+        &bundle.join("RELEASE-NOTES.md"),
+        &sealed.notes_expected,
+        "RELEASE-NOTES.md",
+    ) {
+        legs.push(failed(IN_4, reason));
+        return Ok((legs, VerdictKind::VerifyFailed));
+    }
+    legs.push(passed(
+        IN_4,
+        "sbom.cdx.json + RELEASE-NOTES.md byte-match a re-derivation from the sealed manifest",
+    ));
+
+    Ok((legs, VerdictKind::Pass))
 }
 
-/// Render a passing report for the operator. Skipped legs are shown explicitly
-/// so a reader cannot mistake "not run" for "passed".
+/// Leg 3: walk `base_ref..tag^` (the patch commits, oldest first) and confirm
+/// each commit's `Crt-Patch` trailer names a sealed entry whose `patch_id`
+/// equals the one recomputed from the **commit's diff** via
+/// `git patch-id --stable` (offset-invariant — it verifies what `git am`
+/// actually landed, not a re-derivation of the import-time id). The outer
+/// `Result` is operational (a git failure); the inner names the leg verdict
+/// (`Ok(count)` or `Err(reason)`).
+fn anchor_history(
+    repo: &Path,
+    tag: &str,
+    base_ref: &str,
+    entries: &BTreeMap<String, (u32, String)>,
+) -> Result<std::result::Result<usize, String>> {
+    let range = format!("{base_ref}..{tag}^");
+    let log = crate::git::git(repo, &["log", "--reverse", "--format=%H", &range])
+        .with_context(|| format!("walking the materialized history {range}"))?;
+    let commits: Vec<&str> = log.split_whitespace().collect();
+    for sha in &commits {
+        let trailer = crate::git::git(
+            repo,
+            &[
+                "log",
+                "-1",
+                "--format=%(trailers:key=Crt-Patch,valueonly)",
+                sha,
+            ],
+        )?;
+        let Some(blob_hex) = trailer.trim().strip_prefix("sha256:").map(str::to_owned) else {
+            return Ok(Err(format!("commit {sha} has no Crt-Patch trailer")));
+        };
+        let Some((_, patch_id)) = entries.get(&blob_hex) else {
+            return Ok(Err(format!(
+                "commit {sha} Crt-Patch {blob_hex} matches no sealed entry"
+            )));
+        };
+        let patch = crate::git::git_bytes(repo, &["format-patch", "-1", "--stdout", sha])?;
+        let out = crate::git::git_with_stdin(repo, &["patch-id", "--stable"], &patch)?;
+        let recomputed = out.split_whitespace().next().unwrap_or("");
+        if recomputed != patch_id {
+            return Ok(Err(format!(
+                "commit {sha}: recomputed patch_id {recomputed} != sealed entry patch_id {patch_id}"
+            )));
+        }
+    }
+    Ok(Ok(commits.len()))
+}
+
+/// Read `path` and compare its bytes to `expected`; `Err(reason)` on any
+/// difference or read error (leg-4 helper).
+fn byte_match(path: &Path, expected: &[u8], label: &str) -> std::result::Result<(), String> {
+    match std::fs::read(path) {
+        Ok(actual) if actual == expected => Ok(()),
+        Ok(_) => Err(format!(
+            "{BUNDLE_DIR}/{label} does not byte-match a re-derivation from the sealed manifest"
+        )),
+        Err(e) => Err(format!("cannot read {BUNDLE_DIR}/{label}: {e}")),
+    }
+}
+
+/// Render the per-leg report for the operator. Skipped legs are shown
+/// explicitly so a reader cannot mistake "not run" for "passed", and a failing
+/// leg is tagged `FAIL` (design §11 F9). The caller prints the overall verdict
+/// header; this renders only the legs.
 #[must_use]
 pub fn render_report(report: &VerifyReport) -> String {
-    let mut out = String::from("verify: OK\n");
+    let mut out = String::new();
     for leg in &report.legs {
         let tag = match leg.state {
             LegState::Passed => "pass",
             LegState::Skipped => "skip",
+            LegState::Failed => "FAIL",
         };
         out.push_str(&format!("  [{tag}] leg {} — {}\n", leg.leg, leg.detail));
     }
@@ -216,36 +520,70 @@ pub async fn load_public_key(source: &str) -> Result<String> {
     }
 }
 
+/// The outcome of the offline in-tree legs: the validated record, or which leg
+/// group failed (the legs are already pushed onto the caller's report).
+enum TreeOutcome {
+    Ok(Box<crt_core::MaterializationRecord>),
+    SignatureFailed,
+    VerifyFailed,
+}
+
 /// `crt verify --tree <dir>`: offline / detached-tree verification of an
-/// extracted release tree (design §10/§11) — no store, no git. Read
-/// `000-RELEASE/record.json` and its detached `record.json.asc`, verify the
-/// signature over the **raw record bytes** with `public_key_armored`,
-/// deserialize and schema-check the record, then recompute `source_tree_digest`
-/// over the extracted source and **every** `bundle_digests` entry — requiring
-/// the bundle file set to be exactly `bundle_digests` (no missing or extra
-/// file, so nothing in the bundle escapes the signature). This is the primary
-/// trust path for a tarball/ZIP/clone recipient; it never runs leg 4 (§11).
+/// extracted release tree (design §10/§11) — no store, no git. The primary
+/// trust path for a tarball/ZIP/clone recipient; it runs legs 0–2 (and never
+/// leg 4, §11) via the shared [`verify_tree_legs`].
 ///
 /// Blocking (walks the tree); a caller under an async runtime must offload it
 /// (e.g. `tokio::task::spawn_blocking`).
 pub fn verify_tree(tree_dir: &Path, public_key_armored: &str) -> Result<VerifyVerdict> {
+    let mut legs = Vec::new();
+    let kind = match verify_tree_legs(tree_dir, public_key_armored, &mut legs)? {
+        TreeOutcome::Ok(_) => VerdictKind::Pass,
+        TreeOutcome::SignatureFailed => VerdictKind::SignatureFailed,
+        TreeOutcome::VerifyFailed => VerdictKind::VerifyFailed,
+    };
+    Ok(match kind {
+        VerdictKind::Pass => VerifyVerdict::Pass(VerifyReport { legs }),
+        VerdictKind::SignatureFailed => VerifyVerdict::SignatureFailed(VerifyReport { legs }),
+        VerdictKind::VerifyFailed => VerifyVerdict::VerifyFailed(VerifyReport { legs }),
+    })
+}
+
+/// The offline in-tree legs over an extracted tree, pushing each outcome onto
+/// `legs` (design §10/§11): verify `000-RELEASE/record.json.asc` over the **raw**
+/// `record.json` bytes (leg 0), deserialize + schema-check the record (leg 1),
+/// then recompute `source_tree_digest` over the extracted source and **every**
+/// `bundle_digests` entry, requiring the bundle file set to be exactly
+/// `bundle_digests` (leg 2). Shared by `verify --tree` and the ref-conditional
+/// `release verify`. Returns the validated record on success.
+fn verify_tree_legs(
+    tree_dir: &Path,
+    public_key_armored: &str,
+    legs: &mut Vec<LegStatus>,
+) -> Result<TreeOutcome> {
+    const BUNDLE_0: &str = "0 signature (000-RELEASE bundle)";
+    const BUNDLE_1: &str = "1 schema (in-tree record)";
+    const BUNDLE_2: &str = "2 source + bundle digests";
     let bundle = tree_dir.join(BUNDLE_DIR);
 
     let record_bytes = match std::fs::read(bundle.join(RECORD_JSON)) {
         Ok(b) => b,
         Err(e) => {
-            return Ok(VerifyVerdict::VerifyFailed(format!(
-                "cannot read {BUNDLE_DIR}/{RECORD_JSON} under {}: {e}",
-                tree_dir.display()
-            )));
+            legs.push(failed(
+                BUNDLE_0,
+                format!("cannot read {BUNDLE_DIR}/{RECORD_JSON}: {e}"),
+            ));
+            return Ok(TreeOutcome::SignatureFailed);
         }
     };
     let signature = match std::fs::read_to_string(bundle.join(RECORD_SIG)) {
         Ok(s) => ArmoredSignature(s),
         Err(e) => {
-            return Ok(VerifyVerdict::SignatureFailed(format!(
-                "cannot read {BUNDLE_DIR}/{RECORD_SIG}: {e}"
-            )));
+            legs.push(failed(
+                BUNDLE_0,
+                format!("cannot read {BUNDLE_DIR}/{RECORD_SIG}: {e}"),
+            ));
+            return Ok(TreeOutcome::SignatureFailed);
         }
     };
 
@@ -253,58 +591,67 @@ pub fn verify_tree(tree_dir: &Path, public_key_armored: &str) -> Result<VerifyVe
     // the file verbatim; there is no canonicalization or separate digest field,
     // so re-serializing here would risk a byte drift that silently fails.
     if let Err(e) = crt_core::verify_manifest(&record_bytes, &signature, public_key_armored) {
-        return Ok(VerifyVerdict::SignatureFailed(e.to_string()));
+        legs.push(failed(BUNDLE_0, e.to_string()));
+        return Ok(TreeOutcome::SignatureFailed);
     }
+    legs.push(passed(
+        BUNDLE_0,
+        "detached OpenPGP signature over record.json valid",
+    ));
 
     // Leg 1 — schema. Deserialize the SAME bytes the signature just covered.
     let record: crt_core::MaterializationRecord = match serde_json::from_slice(&record_bytes) {
         Ok(r) => r,
         Err(e) => {
-            return Ok(VerifyVerdict::VerifyFailed(format!(
-                "{BUNDLE_DIR}/{RECORD_JSON} does not deserialize: {e}"
-            )));
+            legs.push(failed(
+                BUNDLE_1,
+                format!("{BUNDLE_DIR}/{RECORD_JSON} does not deserialize: {e}"),
+            ));
+            return Ok(TreeOutcome::VerifyFailed);
         }
     };
     if record.schema_version != crt_core::MATERIALIZATION_RECORD_VERSION {
-        return Ok(VerifyVerdict::VerifyFailed(format!(
-            "record schema_version {} is not the supported {}",
-            record.schema_version,
-            crt_core::MATERIALIZATION_RECORD_VERSION
-        )));
+        legs.push(failed(
+            BUNDLE_1,
+            format!(
+                "record schema_version {} is not the supported {}",
+                record.schema_version,
+                crt_core::MATERIALIZATION_RECORD_VERSION
+            ),
+        ));
+        return Ok(TreeOutcome::VerifyFailed);
     }
+    legs.push(passed(
+        BUNDLE_1,
+        format!("record schema_version {}", record.schema_version),
+    ));
 
-    // Leg 2 (offline subset) — recompute the source-tree digest over the
-    // extracted files (excluding the bundle + git dirs).
+    // Leg 2 — recompute the source-tree digest over the extracted files
+    // (excluding the bundle + git dirs) and every bundle digest.
     let recomputed = crt_core::source_tree_digest(&walk_source_tree(tree_dir)?);
     if recomputed != record.source_tree_digest {
-        return Ok(VerifyVerdict::VerifyFailed(format!(
-            "recomputed source_tree_digest {recomputed} != record {}",
-            record.source_tree_digest
-        )));
+        legs.push(failed(
+            BUNDLE_2,
+            format!(
+                "recomputed source_tree_digest {recomputed} != record {}",
+                record.source_tree_digest
+            ),
+        ));
+        return Ok(TreeOutcome::VerifyFailed);
     }
     if let Some(reason) = verify_bundle_digests(&bundle, &record.bundle_digests)? {
-        return Ok(VerifyVerdict::VerifyFailed(reason));
+        legs.push(failed(BUNDLE_2, reason));
+        return Ok(TreeOutcome::VerifyFailed);
     }
+    legs.push(passed(
+        BUNDLE_2,
+        format!(
+            "source_tree_digest matches; {} bundle file(s) match and are exhaustive",
+            record.bundle_digests.len()
+        ),
+    ));
 
-    Ok(VerifyVerdict::Pass(VerifyReport {
-        legs: vec![
-            passed(
-                "0 signature",
-                "detached OpenPGP signature over record.json valid",
-            ),
-            passed(
-                "1 schema",
-                format!("record schema_version {}", record.schema_version),
-            ),
-            passed(
-                "2 source + bundle digests",
-                format!(
-                    "source_tree_digest matches; {} bundle file(s) match and are exhaustive",
-                    record.bundle_digests.len()
-                ),
-            ),
-        ],
-    }))
+    Ok(TreeOutcome::Ok(Box::new(record)))
 }
 
 /// Compare every flat `000-RELEASE/` file (except the record and its signature)
@@ -630,7 +977,7 @@ mod tests {
         );
         store.put_release(&key(), &record).await.unwrap();
 
-        let verdict = verify_release(&store, &cfg, "ces-v18.2.0", &public)
+        let verdict = verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
             .await
             .unwrap();
         let report = match verdict {
@@ -663,7 +1010,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::SignatureFailed(_)
@@ -688,7 +1035,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -709,7 +1056,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -731,7 +1078,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -749,7 +1096,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -812,7 +1159,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
                 .await
                 .unwrap(),
             VerifyVerdict::Pass(_)

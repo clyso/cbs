@@ -432,10 +432,9 @@ pub async fn render_sealed_notes(store: &dyn Store, cfg: &Config, name: &str) ->
 }
 
 /// Load a sealed release and render its notes — the shared core of `release
-/// notes` and `release materialize`. Version-gates the sealed `RenderSpec`,
-/// loads the template by its sealed digest, and renders. Returns the record
-/// (whose manifest also feeds the SBOM) alongside the rendered notes. Errors if
-/// no sealed release exists or the pinned `minijinja` version does not match.
+/// notes` and `release materialize`. Returns the record (whose manifest also
+/// feeds the SBOM) alongside the rendered notes. Errors if no sealed release
+/// exists or the pinned `minijinja` version does not match.
 async fn sealed_record_and_notes(
     store: &dyn Store,
     cfg: &Config,
@@ -448,7 +447,19 @@ async fn sealed_record_and_notes(
              (notes render from a sealed release; seal it first)"
         )
     })?;
+    let notes = render_notes_for(store, &record).await?;
+    Ok((record, notes))
+}
 
+/// Render a sealed release's notes from an already-loaded record (the shared
+/// core of [`sealed_record_and_notes`] and `verify`'s leg 4). Version-gates the
+/// sealed `RenderSpec`, loads the template by its sealed digest, and renders —
+/// so a re-render is byte-identical to the materialized notes. Errors if the
+/// pinned `minijinja` version does not match this build.
+pub(crate) async fn render_notes_for(
+    store: &dyn Store,
+    record: &crt_core::ReleaseRecord,
+) -> Result<String> {
     crt_core::check_render_version(&record.manifest.render)?;
 
     let template_bytes = store
@@ -463,8 +474,7 @@ async fn sealed_record_and_notes(
     let template = std::str::from_utf8(&template_bytes)
         .context("the sealed notes template is not valid UTF-8")?;
 
-    let notes = crt_core::render_notes(&record.manifest, template)?;
-    Ok((record, notes))
+    Ok(crt_core::render_notes(&record.manifest, template)?)
 }
 
 /// The loose artifact files written by [`write_loose_artifacts`].
@@ -1794,10 +1804,18 @@ mod tests {
         .unwrap();
         match verdict {
             crate::verify::VerifyVerdict::Pass(_) => {}
-            crate::verify::VerifyVerdict::SignatureFailed(m) => {
-                panic!("verify --tree signature failed: {m}")
+            crate::verify::VerifyVerdict::SignatureFailed(r) => {
+                panic!(
+                    "verify --tree signature failed:\n{}",
+                    crate::verify::render_report(&r)
+                )
             }
-            crate::verify::VerifyVerdict::VerifyFailed(m) => panic!("verify --tree failed: {m}"),
+            crate::verify::VerifyVerdict::VerifyFailed(r) => {
+                panic!(
+                    "verify --tree failed:\n{}",
+                    crate::verify::render_report(&r)
+                )
+            }
         }
 
         // Public-safe by construction: the structured record + provenance name
@@ -1982,6 +2000,526 @@ mod tests {
                 &["rev-parse", "--verify", "release/ces-v18.2.0"]
             )
             .is_err()
+        );
+    }
+
+    /// Import a patch with its **real** `git patch-id --stable` (as `patch
+    /// import` would compute), so the sealed entry's `patch_id` matches what
+    /// leg 3 recomputes from the materialized commit. (The default
+    /// `imported_meta` stores a synthetic id, which leg 3 would reject.)
+    async fn import_with_real_patch_id(
+        store: &ObjectBackedStore,
+        repo: &Path,
+        patch: &[u8],
+    ) -> Sha256 {
+        let hash = blob_hash(patch);
+        let out = crate::git::git_with_stdin(repo, &["patch-id", "--stable"], patch).unwrap();
+        let patch_id = out.split_whitespace().next().unwrap().to_owned();
+        let meta = PatchMeta {
+            blob_hash: hash,
+            patch_id,
+            author: test_author(),
+            authored: "2026-06-25T00:00:00+00:00".to_owned(),
+            subject: "feat: change".to_owned(),
+            body: "body".to_owned(),
+            cherry_picked_from: vec![],
+            provenance: Provenance::UpstreamPr {
+                prs: vec![],
+                commits: vec![],
+                state: UpstreamPrState::MergedMain,
+            },
+            source_repo: "ceph/ceph".to_owned(),
+        };
+        store.put_blob(&hash, patch).await.unwrap();
+        store.put_meta(&hash, &meta).await.unwrap();
+        hash
+    }
+
+    /// The `@@` hunk headers of a `format-patch` mailbox (the line-number
+    /// coordinates), for proving an apply landed at an offset.
+    fn hunk_headers(mailbox: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(mailbox)
+            .lines()
+            .filter(|l| l.starts_with("@@"))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn verify_release_runs_ref_legs_on_a_materialized_release() {
+        // With --repo at a materialized release, the ref-conditional legs run and
+        // pass: bundle signature, in-tree record faithfulness, git anchoring, and
+        // artifact faithfulness.
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, public) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = import_with_real_patch_id(&store, repo.path(), &p1).await;
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h1.to_hex()],
+            &fields("Adds a.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+        materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let verdict =
+            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
+                .await
+                .unwrap();
+        let report = match verdict {
+            crate::verify::VerifyVerdict::Pass(r) => r,
+            other => panic!("expected Pass, got: {}", render_verdict(&other)),
+        };
+        let rendered = crate::verify::render_report(&report);
+        for needle in [
+            "[pass] leg 0 signature (000-RELEASE bundle)",
+            "[pass] leg 2 cross-reference (in-tree record)",
+            "[pass] leg 3 git anchoring",
+            "[pass] leg 4 artifact faithfulness",
+        ] {
+            assert!(
+                rendered.contains(needle),
+                "missing {needle:?} in:\n{rendered}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_leg3_anchors_through_an_apply_offset() {
+        // The reason leg 3 recomputes patch_id from the *commit diff* (not the
+        // stored blob): offset-invariance. Build a patch, then shift the base so
+        // it applies at an offset — the materialized commit's hunk coordinates
+        // differ from the stored mailbox, yet `patch-id --stable` still anchors.
+        let repo = tempfile::tempdir().unwrap();
+        let p = repo.path();
+        let g = |args: &[&str]| crate::git::git(p, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&["config", "user.name", "T"]);
+        g(&["config", "user.email", "t@example.com"]);
+        // A file long enough that the change sits in the *middle*: its hunk
+        // context (±3 lines) never touches the file edges, so prepending lines
+        // shifts the hunk without breaking `git apply`'s exact-context match.
+        let head: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+        let tail: String = (11..=20).map(|i| format!("line {i}\n")).collect();
+        let base_v0 = format!("{head}TARGET\n{tail}");
+        let patched = format!("{head}CHANGED\n{tail}");
+        let offset_base = format!("PRE1\nPRE2\nPRE3\n{base_v0}");
+
+        std::fs::write(p.join("f.txt"), &base_v0).unwrap();
+        g(&["add", "f.txt"]);
+        g(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "base v0",
+        ]);
+        // The patch (TARGET -> CHANGED), generated against base v0.
+        std::fs::write(p.join("f.txt"), &patched).unwrap();
+        g(&["add", "f.txt"]);
+        g(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "feat: change TARGET",
+        ]);
+        let patch = crate::git::git_bytes(p, &["format-patch", "-1", "--stdout"]).unwrap();
+        g(&["reset", "--hard", "HEAD~1"]);
+        // Shift the base: prepend lines far above the hunk so the patch applies
+        // at an offset (its context still matches, just lower in the file).
+        std::fs::write(p.join("f.txt"), &offset_base).unwrap();
+        g(&["add", "f.txt"]);
+        g(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "base: prepend lines (offsets the patch)",
+        ]);
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, public) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h = import_with_real_patch_id(&store, p, &patch).await;
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h.to_hex()],
+            &fields("Change TARGET."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+        materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(p),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        // Canary: the materialized commit's hunk coordinates differ from the
+        // stored patch (the apply landed at an offset) — so leg 3 is not
+        // tautological — yet the offset-invariant patch-id is identical.
+        let patch_commit = g(&["rev-parse", "ces-v18.2.0^"]).trim().to_owned();
+        let commit_diff =
+            crate::git::git_bytes(p, &["format-patch", "-1", "--stdout", &patch_commit]).unwrap();
+        assert_ne!(
+            hunk_headers(&commit_diff),
+            hunk_headers(&patch),
+            "the patch must apply at a different offset, else leg 3 proves nothing"
+        );
+        let pid = |m: &[u8]| {
+            crate::git::git_with_stdin(p, &["patch-id", "--stable"], m)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(
+            pid(&commit_diff),
+            pid(&patch),
+            "patch-id --stable is offset-invariant"
+        );
+
+        // Leg 3 anchors despite the offset.
+        let verdict = crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(p))
+            .await
+            .unwrap();
+        let report = match verdict {
+            crate::verify::VerifyVerdict::Pass(r) => r,
+            other => panic!("expected Pass, got: {}", render_verdict(&other)),
+        };
+        assert!(
+            crate::verify::render_report(&report).contains("[pass] leg 3 git anchoring"),
+            "leg 3 must anchor through the offset"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_leg3_fails_on_a_mismatched_patch_id() {
+        // A sealed entry whose patch_id does not match what `git am` landed must
+        // fail leg 3. `imported_meta` stores a synthetic patch_id, so the
+        // recomputed (real) id will not match.
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, public) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = imported_meta(&store, &p1).await; // synthetic patch_id
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h1.to_hex()],
+            &fields("Adds a.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+        materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        let verdict =
+            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
+                .await
+                .unwrap();
+        let report = match verdict {
+            crate::verify::VerifyVerdict::VerifyFailed(r) => r,
+            other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
+        };
+        assert!(
+            crate::verify::render_report(&report).contains("[FAIL] leg 3 git anchoring"),
+            "leg 3 must reject a mismatched patch_id"
+        );
+    }
+
+    /// Render any verdict (with its report) for test panics.
+    fn render_verdict(v: &crate::verify::VerifyVerdict) -> String {
+        let (tag, r) = match v {
+            crate::verify::VerifyVerdict::Pass(r) => ("Pass", r),
+            crate::verify::VerifyVerdict::SignatureFailed(r) => ("SignatureFailed", r),
+            crate::verify::VerifyVerdict::VerifyFailed(r) => ("VerifyFailed", r),
+        };
+        format!("{tag}\n{}", crate::verify::render_report(r))
+    }
+
+    /// Seal a one-patch release (real patch_id) and materialize it into a fresh
+    /// synthetic repo. Returns the store, config, repo (kept alive), and the
+    /// signing key pair — the base for the forge-then-resign failure tests.
+    async fn materialize_one_patch_release()
+    -> (ObjectBackedStore, Config, tempfile::TempDir, String, String) {
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, public) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = import_with_real_patch_id(&store, repo.path(), &p1).await;
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h1.to_hex()],
+            &fields("Adds a.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+        materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap();
+        (store, cfg, repo, secret, public)
+    }
+
+    /// Re-forge the materialized bundle at `tag` into a **validly re-signed** but
+    /// possibly unfaithful one: check it out, let `mutate` rewrite 000-RELEASE/
+    /// sidecar files and return the new `record.json` bytes, re-sign those with
+    /// `secret`, amend the bundle commit, and move the tag onto it. A normal
+    /// materialize can never produce these states — this forges the
+    /// internally-consistent-but-unfaithful bundle that legs 2b / 4 must catch.
+    fn reforge_bundle(repo: &Path, tag: &str, secret: &str, mutate: impl FnOnce(&Path) -> Vec<u8>) {
+        let scratch = tempfile::tempdir().unwrap();
+        let work = scratch.path().join("t");
+        let work_str = work.to_str().unwrap();
+        crate::git::git(
+            repo,
+            &[
+                "-c",
+                "core.autocrlf=false",
+                "worktree",
+                "add",
+                "--detach",
+                work_str,
+                tag,
+            ],
+        )
+        .unwrap();
+        let bundle = work.join("000-RELEASE");
+        let record_bytes = mutate(&bundle);
+        let sig = crt_core::sign_manifest(rand::thread_rng(), &record_bytes, secret, None).unwrap();
+        std::fs::write(bundle.join("record.json"), &record_bytes).unwrap();
+        std::fs::write(bundle.join("record.json.asc"), &sig.0).unwrap();
+        crate::git::git(&work, &["add", "000-RELEASE"]).unwrap();
+        crate::git::git(
+            &work,
+            &[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--amend",
+                "--no-edit",
+            ],
+        )
+        .unwrap();
+        crate::git::git(
+            &work,
+            &[
+                "-c",
+                "tag.gpgsign=false",
+                "tag",
+                "-f",
+                "-a",
+                tag,
+                "-m",
+                "reforged",
+            ],
+        )
+        .unwrap();
+        crate::git::git(repo, &["worktree", "remove", "--force", work_str]).unwrap();
+    }
+
+    #[tokio::test]
+    async fn verify_leg2_fails_on_a_forged_in_tree_record() {
+        // A validly re-signed record.json whose s3_manifest_digest no longer
+        // points at the sealed manifest. The bundle signature (leg 0), schema
+        // (leg 1), source/bundle digests (leg 2), and git anchoring (leg 3) all
+        // still pass — only the in-tree cross-reference (leg 2b) catches it.
+        let (store, cfg, repo, secret, public) = materialize_one_patch_release().await;
+        reforge_bundle(repo.path(), "ces-v18.2.0", &secret, |bundle| {
+            let bytes = std::fs::read(bundle.join("record.json")).unwrap();
+            let mut record: crt_core::MaterializationRecord =
+                serde_json::from_slice(&bytes).unwrap();
+            record.s3_manifest_digest = blob_hash(b"not the sealed manifest digest");
+            serde_json::to_vec_pretty(&record).unwrap()
+        });
+
+        let verdict =
+            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
+                .await
+                .unwrap();
+        let report = match verdict {
+            crate::verify::VerifyVerdict::VerifyFailed(r) => r,
+            other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
+        };
+        let rendered = crate::verify::render_report(&report);
+        assert!(
+            rendered.contains("[FAIL] leg 2 cross-reference (in-tree record)"),
+            "{rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_leg4_fails_on_a_self_consistent_but_unfaithful_sbom() {
+        // A tampered SBOM whose digest is updated in the re-signed record, so
+        // legs 0/1/2/2b/3 all pass — only leg 4's byte-compare against a
+        // re-derivation from the sealed manifest catches it.
+        let (store, cfg, repo, secret, public) = materialize_one_patch_release().await;
+        reforge_bundle(repo.path(), "ces-v18.2.0", &secret, |bundle| {
+            let tampered = b"{\"bomFormat\": \"CycloneDX\", \"tampered\": true}\n".to_vec();
+            std::fs::write(bundle.join("sbom.cdx.json"), &tampered).unwrap();
+            let bytes = std::fs::read(bundle.join("record.json")).unwrap();
+            let mut record: crt_core::MaterializationRecord =
+                serde_json::from_slice(&bytes).unwrap();
+            record
+                .bundle_digests
+                .insert("sbom.cdx.json".to_owned(), crt_core::Sha256::of(&tampered));
+            serde_json::to_vec_pretty(&record).unwrap()
+        });
+
+        let verdict =
+            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
+                .await
+                .unwrap();
+        let report = match verdict {
+            crate::verify::VerifyVerdict::VerifyFailed(r) => r,
+            other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
+        };
+        let rendered = crate::verify::render_report(&report);
+        assert!(
+            rendered.contains("[FAIL] leg 4 artifact faithfulness"),
+            "{rendered}"
         );
     }
 

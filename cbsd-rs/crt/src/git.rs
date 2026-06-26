@@ -282,6 +282,43 @@ pub fn tag_exists(repo: &Path, tag: &str) -> Result<bool> {
     Ok(!git(repo, &["tag", "--list", tag])?.trim().is_empty())
 }
 
+/// Check `refname` out into a fresh **detached** scratch worktree for read-only
+/// inspection (e.g. `release verify`'s ref-conditional legs), returning the live
+/// [`Worktree`] for the caller to [`Worktree::remove`]. Unlike
+/// [`materialize_branch`] it creates no branch. Content filters are disabled
+/// (`core.autocrlf=false`) so the checked-out bytes equal the materialize
+/// worktree's (and any faithful extraction's) — never `git archive`, which
+/// re-applies `.gitattributes` (design §8/§14).
+///
+/// Subprocess `git`, blocking — offload under an async runtime.
+pub fn checkout_detached(repo: &Path, refname: &str) -> Result<Worktree> {
+    let parent = tempfile::Builder::new()
+        .prefix("crt-verify-")
+        .tempdir()
+        .context("creating the verification scratch directory")?;
+    let work = parent.path().join("tree");
+    let work_str = path_str(&work)?;
+    git(
+        repo,
+        &[
+            "-c",
+            "core.autocrlf=false",
+            "worktree",
+            "add",
+            "--detach",
+            work_str,
+            refname,
+        ],
+    )
+    .with_context(|| format!("checking out {refname} for verification"))?;
+    Ok(Worktree {
+        repo: repo.to_path_buf(),
+        branch: refname.to_owned(),
+        path: work,
+        _scratch: parent,
+    })
+}
+
 /// A path as `&str` for a `git` argument; errors on non-UTF-8 (these are
 /// program-constructed scratch paths, so this is effectively infallible).
 fn path_str(p: &Path) -> Result<&str> {
