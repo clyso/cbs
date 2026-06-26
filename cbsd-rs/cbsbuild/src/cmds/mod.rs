@@ -13,4 +13,5 @@
 //! Command handlers — the thin glue between the clap tree (design 010) and the
 //! `cbscore` library.
 
+pub mod build;
 pub mod versions;

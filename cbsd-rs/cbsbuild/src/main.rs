@@ -23,7 +23,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use crate::cli::{Cli, Command, VersionsCommand};
+use crate::cli::{Cli, Command, RunnerCommand, VersionsCommand};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -33,6 +33,10 @@ async fn main() -> ExitCode {
     match cli.command {
         Command::Versions { command } => match command {
             VersionsCommand::Create(args) => cmds::versions::create(&args).await,
+        },
+        Command::Build(args) => cmds::build::build(&cli.config, cli.debug, &args).await,
+        Command::Runner { command } => match command {
+            RunnerCommand::Build(args) => cmds::build::runner_build(&cli.config, &args).await,
         },
     }
 }

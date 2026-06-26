@@ -50,6 +50,94 @@ pub enum Command {
         #[command(subcommand)]
         command: VersionsCommand,
     },
+    /// Build a version descriptor (host side: spins the builder container).
+    Build(BuildArgs),
+    /// In-container build entry. Hidden: operators use `build` (design 010).
+    #[command(hide = true)]
+    Runner {
+        #[command(subcommand)]
+        command: RunnerCommand,
+    },
+}
+
+/// `runner` subcommands (the in-container half; design 009/010).
+#[derive(Subcommand)]
+pub enum RunnerCommand {
+    /// Run the in-container build for a mounted descriptor.
+    Build(RunnerBuildArgs),
+}
+
+/// Coerce `--tls-verify`'s value with the Click-equivalent `BOOL` parser, so
+/// `--tls-verify=yes`/`on`/`0` are accepted (not just clap's `true`/`false`).
+fn parse_tls_bool(value: &str) -> Result<bool, String> {
+    crate::bool_parser::parse_bool(value).ok_or_else(|| format!("invalid boolean value '{value}'"))
+}
+
+/// Flags for `build <DESCRIPTOR>` (design 010 §build).
+#[derive(Args)]
+pub struct BuildArgs {
+    /// The version descriptor to build.
+    pub descriptor: Utf8PathBuf,
+
+    /// Build timeout in seconds (podman's `--timeout` and the await deadline).
+    #[arg(long, default_value_t = 14400.0, value_name = "SECONDS")]
+    pub timeout: f64,
+
+    /// Override `config.signing.gpg` with this GPG signing id.
+    #[arg(long, value_name = "ID")]
+    pub sign_with_gpg_id: Option<String>,
+
+    /// Override `config.signing.transit` with this Vault transit id.
+    #[arg(long, value_name = "ID")]
+    pub sign_with_transit: Option<String>,
+
+    /// Write the build's container output to this file (must not exist).
+    #[arg(long, value_name = "PATH")]
+    pub log_file: Option<Utf8PathBuf>,
+
+    /// Skip running the per-component build scripts.
+    #[arg(long)]
+    pub skip_build: bool,
+
+    /// Rebuild even when a release/image already exists.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Verify registry TLS. Value-taking: `--tls-verify=false` (design 010).
+    #[arg(
+        long,
+        default_value = "true",
+        action = clap::ArgAction::Set,
+        value_parser = parse_tls_bool,
+        value_name = "BOOL"
+    )]
+    pub tls_verify: bool,
+}
+
+/// Flags for the hidden `runner build` (design 010 §"runner build").
+#[derive(Args)]
+pub struct RunnerBuildArgs {
+    /// The mounted descriptor path inside the container.
+    #[arg(long, value_name = "PATH")]
+    pub desc: Utf8PathBuf,
+
+    /// Skip running the per-component build scripts.
+    #[arg(long)]
+    pub skip_build: bool,
+
+    /// Rebuild even when a release/image already exists.
+    #[arg(long)]
+    pub force: bool,
+
+    /// Verify registry TLS. Value-taking, as emitted by the host runner (009).
+    #[arg(
+        long,
+        default_value = "true",
+        action = clap::ArgAction::Set,
+        value_parser = parse_tls_bool,
+        value_name = "BOOL"
+    )]
+    pub tls_verify: bool,
 }
 
 /// `versions` subcommands.

@@ -174,6 +174,21 @@ pub async fn load_vault(path: &Utf8Path) -> Result<VaultConfig, ConfigError> {
     Ok(vault)
 }
 
+/// Store a vault config to `path` as YAML. Used by the runner to marshal the
+/// vault config into the builder container (design 009).
+pub async fn store_vault(vault: &VaultConfig, path: &Utf8Path) -> Result<(), ConfigError> {
+    let yaml = serde_yaml_ng::to_string(vault).map_err(|e| ConfigError::Store {
+        path: path.to_owned(),
+        msg: e.to_string(),
+    })?;
+    tokio::fs::write(path, yaml)
+        .await
+        .map_err(|source| ConfigError::Write {
+            path: path.to_owned(),
+            source,
+        })
+}
+
 /// Load and validate a secrets file from `path` (design 004; `Secrets.load`).
 pub async fn load_secrets(path: &Utf8Path) -> Result<Secrets, SecretsError> {
     let raw = read_checked(path).await.map_err(|e| match e {

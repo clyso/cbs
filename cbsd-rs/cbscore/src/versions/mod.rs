@@ -18,6 +18,7 @@
 
 pub mod create;
 pub mod parse;
+pub mod read;
 pub mod validate;
 pub mod version_type;
 
@@ -26,5 +27,6 @@ pub use parse::{
     ParsedVersion, get_major_version, get_minor_version, normalize_version, parse_component_refs,
     parse_version,
 };
+pub use read::{ReadError, read_descriptor};
 pub use validate::{resolve_version, validate_version};
 pub use version_type::{get_version_type, get_version_type_desc};
