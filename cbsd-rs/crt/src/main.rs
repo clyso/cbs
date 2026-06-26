@@ -17,6 +17,7 @@ use crate::release::{
     BlastArg, ConflictArg, CoverageArg, EntryFields, JustificationArg, VisibilityArg,
 };
 
+mod bundle;
 mod config;
 mod git;
 mod import;
@@ -162,9 +163,11 @@ enum ReleaseCmd {
     },
     /// Materialize a sealed release (design §8): build the linear
     /// `release/<name>` branch in the destination repo — `git am` each entry's
-    /// patch in order, each commit carrying a `Crt-Patch` trailer. With `--out`,
-    /// also emit the loose RELEASE-NOTES.md + sbom.cdx.json artifacts there. The
-    /// signed 000-RELEASE/ bundle and the annotated tag are a later milestone.
+    /// patch in order, each commit carrying a `Crt-Patch` trailer — then append
+    /// the signed `000-RELEASE/` verification bundle commit and an annotated tag
+    /// carrying the manifest digest. Signing the bundle's `record.json` needs the
+    /// Vault key (a `vault` section in the secrets file). With `--out`, also emit
+    /// the loose RELEASE-NOTES.md + sbom.cdx.json artifacts there.
     Materialize {
         /// Release name.
         name: String,
@@ -177,6 +180,10 @@ enum ReleaseCmd {
         /// authoritative; this is an optional extra emit.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Publish the branch + tag to `origin` after building them locally
+        /// (opt-in; requires push access to the destination remote).
+        #[arg(long)]
+        push: bool,
     },
     /// Verify a sealed release: signature, schema, and cross-reference (design
     /// §11 legs 0–2). Legs 3–4 (git anchoring, artifact faithfulness) are
@@ -421,15 +428,43 @@ async fn main() -> Result<()> {
                         release::render_sealed_notes(&store, &cfg, &name).await?
                     );
                 }
-                ReleaseCmd::Materialize { name, repo, out } => {
-                    let summary =
-                        release::materialize(&store, &cfg, &name, repo.as_deref(), out.as_deref())
-                            .await?;
+                ReleaseCmd::Materialize {
+                    name,
+                    repo,
+                    out,
+                    push,
+                } => {
+                    // Materialize signs the `000-RELEASE/` bundle, so it needs
+                    // the Vault key — same edge shim as `seal`.
+                    let secrets = secrets::load(&cli.secrets)?;
+                    let vault = secrets.vault.with_context(|| {
+                        format!(
+                            "materialize signs the 000-RELEASE bundle and needs a `vault` \
+                             section in {}",
+                            cli.secrets.display()
+                        )
+                    })?;
+                    let signing = vault::fetch_signing_key(&vault).await?;
+                    let created = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, false);
+                    let summary = release::materialize(
+                        &store,
+                        &cfg,
+                        &name,
+                        repo.as_deref(),
+                        out.as_deref(),
+                        &signing.armored_private_key,
+                        signing.passphrase.as_deref(),
+                        created,
+                        push,
+                    )
+                    .await?;
                     println!(
-                        "materialized {} ({} commit(s))",
+                        "materialized {} ({} patch commit(s))",
                         summary.branch,
                         summary.commits.len()
                     );
+                    println!("  bundle commit {}", summary.bundle_commit);
+                    println!("  tag           {}", summary.tag);
                     if let Some(loose) = &summary.loose {
                         println!("wrote {}", loose.notes.display());
                         println!("wrote {}", loose.sbom.display());

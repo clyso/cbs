@@ -17,6 +17,7 @@
 //! editor-buffer parsing, and rendering live here) are unit-tested; the IO
 //! shims (`$EDITOR`, `git config` author lookup) are thin.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -466,28 +467,36 @@ async fn sealed_record_and_notes(
     Ok((record, notes))
 }
 
-/// The artifact files written by [`materialize_artifacts`].
+/// The loose artifact files written by [`write_loose_artifacts`].
+#[derive(Debug)]
 pub struct MaterializeOutput {
     pub notes: PathBuf,
     pub sbom: PathBuf,
 }
 
-/// `crt release materialize <name> --out <dir>`: emit the two deterministic
-/// projections of a sealed release — `RELEASE-NOTES.md` and `sbom.cdx.json` —
-/// into `out_dir` (created if absent). Both are pure functions of the sealed
-/// manifest, so re-running overwrites them with identical bytes. **M3 emits the
-/// artifacts only**; M4 extends this command with the git ref/tag and the signed
-/// `000-RELEASE/` bundle (design §8), and `verify` leg 4 then byte-compares the
-/// committed copies against a re-derivation.
-pub async fn materialize_artifacts(
+/// Project a sealed release into its two deterministic artifacts **once**: the
+/// rendered `RELEASE-NOTES.md` and the CycloneDX `sbom.cdx.json`. Both the loose
+/// `--out` emit and the signed `000-RELEASE/` bundle consume these same bytes,
+/// so the two copies cannot drift. Version-gates the sealed `RenderSpec` (via
+/// `sealed_record_and_notes`). Returns the record alongside the bytes.
+async fn prepare_artifacts(
     store: &dyn Store,
     cfg: &Config,
     name: &str,
-    out_dir: &Path,
-) -> Result<MaterializeOutput> {
+) -> Result<(crt_core::ReleaseRecord, String, String)> {
     let (record, notes) = sealed_record_and_notes(store, cfg, name).await?;
     let sbom = crt_core::build_sbom(&record.manifest)?;
+    Ok((record, notes, sbom))
+}
 
+/// Write the loose `RELEASE-NOTES.md` + `sbom.cdx.json` into `out_dir` (created
+/// if absent), overwriting any existing copies. The bytes are pure projections,
+/// so a re-run is byte-identical.
+async fn write_loose_artifacts(
+    out_dir: &Path,
+    notes: &str,
+    sbom: &str,
+) -> Result<MaterializeOutput> {
     // Async filesystem IO: this runs under tokio, so blocking `std::fs` would
     // stall the executor (rust-2024). `tokio::fs` offloads to the blocking pool.
     tokio::fs::create_dir_all(out_dir)
@@ -508,47 +517,56 @@ pub async fn materialize_artifacts(
 }
 
 /// What `release materialize` produced, for the caller to report.
+#[derive(Debug)]
 pub struct MaterializeSummary {
     /// The `release/<name>` branch built in the destination repo.
     pub branch: String,
-    /// The branch's commit hashes, in apply order.
+    /// The patch commit hashes, in apply order (pre-bundle).
     pub commits: Vec<String>,
+    /// The annotated tag carrying the manifest digest.
+    pub tag: String,
+    /// The `000-RELEASE/` bundle commit at the branch tip.
+    pub bundle_commit: String,
     /// The loose artifact files, when `--out` requested them (decision 4).
     pub loose: Option<MaterializeOutput>,
 }
 
 /// `crt release materialize <name>`: build the linear `release/<name>` branch in
-/// the destination repo from the sealed release (design §8) — `git am` each
-/// entry's patch blob in `order`, each commit carrying a `Crt-Patch` trailer.
-/// When `out` is given, the two deterministic artifacts are *also* emitted there
-/// as loose files (decision 4); the in-tree bundle is the authoritative copy.
+/// the destination repo from the sealed release, then append the signed
+/// `000-RELEASE/` verification bundle commit and an annotated tag carrying the
+/// manifest digest (design §8). `git am` applies each entry's patch blob in
+/// `order`, each commit carrying a `Crt-Patch` trailer; the bundle's
+/// `record.json` is signed with the **injected** Vault key (this pipeline never
+/// touches Vault). With `out`, the notes + SBOM are *also* emitted there as
+/// loose files (decision 4) from the same bytes the bundle uses. With `push`,
+/// the branch + tag are published to `origin` (opt-in, network).
 ///
-/// **This is the M4 4.1 slice — the patched branch only.** The signed
-/// `000-RELEASE/` bundle commit and the annotated tag are appended by a later
-/// commit (design §8); `--push` is likewise deferred.
+/// The signing key bytes are injected and `created` is sourced by the caller, so
+/// the whole path is unit-testable with a generated key and an
+/// `object_store::InMemory` store (`crt-core` stays clock- and Vault-free).
+#[allow(clippy::too_many_arguments)]
 pub async fn materialize(
     store: &dyn Store,
     cfg: &Config,
     name: &str,
     repo: Option<&Path>,
     out: Option<&Path>,
+    signing_key_armored: &str,
+    passphrase: Option<&str>,
+    created: String,
+    push: bool,
 ) -> Result<MaterializeSummary> {
-    // Optional loose-artifact emit (decision 4): reuses the M3 projection path,
-    // which also version-gates the sealed RenderSpec.
+    // Project the sealed release once; both the loose `--out` copy and the
+    // bundle consume these exact bytes (no drift).
+    let (record, notes, sbom) = prepare_artifacts(store, cfg, name).await?;
+
     let loose = match out {
-        Some(dir) => Some(materialize_artifacts(store, cfg, name, dir).await?),
+        Some(dir) => Some(write_loose_artifacts(dir, &notes, &sbom).await?),
         None => None,
     };
 
-    // Load the sealed record for the branch build (entries + base ref).
-    let key = cfg.resolve_release_key(name)?;
-    let record = store.get_release(&key).await.with_context(|| {
-        format!("no sealed release named {name:?} to materialize; seal it first")
-    })?;
-
-    // Resolve the destination repo: `--repo <path>` is the local working copy
-    // (the 4.1 input); the configured `destination_repo` (a slug like
-    // `clyso/ceph`, used for the deferred push) is the fallback.
+    // Resolve the destination repo: `--repo <path>` is the local working copy;
+    // the configured `destination_repo` slug is the fallback (used for push).
     let repo_path: PathBuf = repo
         .map(Path::to_path_buf)
         .or_else(|| cfg.destination_repo.as_ref().map(PathBuf::from))
@@ -556,12 +574,14 @@ pub async fn materialize(
             "no destination repo: pass --repo <path> or set `destination_repo` in the config",
         )?;
 
-    // Collect each entry's patch blob, ordered by `order` (design §8 applies in
-    // order). Entries are normally appended in order; sort defensively.
+    // Collect each entry's patch blob in `order` for `git am`, plus the
+    // blob_hash → (order, patch_id) join the bundle BOM walk needs. Entries are
+    // normally appended in order; sort defensively.
     let mut entries: Vec<&ManifestEntry> = record.manifest.entries.iter().collect();
     entries.sort_by_key(|e| e.order);
     let mut patches = Vec::with_capacity(entries.len());
-    for e in entries {
+    let mut entry_map: BTreeMap<String, (u32, String)> = BTreeMap::new();
+    for e in &entries {
         let bytes = store
             .get_blob(&e.blob_hash)
             .await
@@ -571,19 +591,72 @@ pub async fn materialize(
             blob_hash: e.blob_hash.to_hex(),
             bytes: bytes.to_vec(),
         });
+        entry_map.insert(e.blob_hash.to_hex(), (e.order, e.patch_id.clone()));
     }
 
-    let branch = format!("release/{name}");
+    // The public bundle files (besides record.json/.asc), built from the same
+    // projection bytes. `provenance.json` is a public-safe projection — no
+    // visibility, no internal justification.
+    let provenance = crt_core::PublicProvenance::from_entries(&record.manifest.entries);
+    let provenance_bytes =
+        serde_json::to_vec_pretty(&provenance).context("serializing provenance.json")?;
+    let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    files.insert("sbom.cdx.json".to_owned(), sbom.into_bytes());
+    files.insert("RELEASE-NOTES.md".to_owned(), notes.into_bytes());
+    files.insert("provenance.json".to_owned(), provenance_bytes);
+    files.insert("README.md".to_owned(), bundle_readme(name).into_bytes());
+    // Inside `000-RELEASE/`, a slash-free `* -text` matches every bundle file in
+    // that directory, so the signed files are never EOL-mangled on checkout. A
+    // pattern *with* a slash (`000-RELEASE/* -text`) would resolve relative to
+    // this directory and match nothing (verified with `git check-attr`).
+    files.insert(".gitattributes".to_owned(), b"* -text\n".to_vec());
 
-    // Subprocess `git` is blocking; offload it so it never stalls the async
-    // executor (rust-2024). Owned inputs move into the task.
-    let commits = {
+    let branch = format!("release/{name}");
+    let inputs = crate::bundle::BundleInputs {
+        files,
+        s3_manifest_digest: record.digest,
+        base_ref: record.manifest.release.base_ref.clone(),
+        created,
+        render: record.manifest.render.clone(),
+        entries: entry_map,
+        signing_key_armored: signing_key_armored.to_owned(),
+        passphrase: passphrase.map(str::to_owned),
+        manifest_digest: record.digest,
+        tag: name.to_owned(),
+    };
+
+    // Subprocess git + filesystem IO + signing are blocking; offload so they
+    // never stall the async executor (rust-2024). Owned inputs move into the
+    // task.
+    let (commits, result) = {
         let repo_path = repo_path.clone();
         let branch = branch.clone();
         let base_ref = record.manifest.release.base_ref.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::git::materialize_branch(&repo_path, &branch, &base_ref, &patches)
-        })
+        let push_remote = if push {
+            Some("origin".to_owned())
+        } else {
+            None
+        };
+        tokio::task::spawn_blocking(
+            move || -> Result<(Vec<String>, crate::bundle::BundleResult)> {
+                // Refuse up front if the tag already exists, before building
+                // anything. The branch has an implicit guard (`git worktree add
+                // -b` fails on an existing branch); the tag needs an explicit
+                // one, else a later failure's `cleanup_failed` could delete a
+                // tag this run did not create.
+                if crate::git::tag_exists(&repo_path, &inputs.tag)? {
+                    anyhow::bail!(
+                        "tag {:?} already exists in the destination repo \
+                         (releases are write-once)",
+                        inputs.tag
+                    );
+                }
+                let (wt, commits) =
+                    crate::git::materialize_branch(&repo_path, &branch, &base_ref, &patches)?;
+                let result = crate::bundle::write_bundle(wt, inputs, push_remote.as_deref())?;
+                Ok((commits, result))
+            },
+        )
         .await
         .context("the git materialization task panicked")??
     };
@@ -591,8 +664,43 @@ pub async fn materialize(
     Ok(MaterializeSummary {
         branch,
         commits,
+        tag: result.tag,
+        bundle_commit: result.bundle_commit,
         loose,
     })
+}
+
+/// The `000-RELEASE/README.md`: what the bundle is and how to verify it offline.
+/// A pure function of the release `name` (deterministic).
+fn bundle_readme(name: &str) -> String {
+    format!(
+        "# 000-RELEASE — CRT verification bundle\n\
+         \n\
+         This directory is the portable, signed verification bundle for the Clyso\n\
+         downstream Ceph release `{name}` (Ceph Release Tool, design §8).\n\
+         \n\
+         ## Contents\n\
+         \n\
+         - `record.json` — the signed materialization record: the source-tree\n\
+         digest, the per-file bundle digests, the patch BOM, and a back-reference\n\
+         to the sealed manifest.\n\
+         - `record.json.asc` — detached OpenPGP signature over `record.json`. It\n\
+         transitively covers every other file here, since `record.json` lists\n\
+         their digests.\n\
+         - `sbom.cdx.json` — CycloneDX SBOM of the release.\n\
+         - `RELEASE-NOTES.md` — the rendered release notes.\n\
+         - `provenance.json` — public per-patch provenance.\n\
+         - `.gitattributes` — keeps these files byte-exact across checkout.\n\
+         \n\
+         ## Verify offline\n\
+         \n\
+         ```\n\
+         crt verify --tree . --public-key <clyso-public-key>\n\
+         ```\n\
+         \n\
+         This recomputes the source-tree and bundle digests and checks the\n\
+         signature — no network, no git history, and no S3 access required.\n"
+    )
 }
 
 /// Render a human-readable summary of a draft or sealed release. Pure: risk
@@ -1471,7 +1579,10 @@ mod tests {
         .unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let out = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+        let (_, notes_bytes, sbom_bytes) = prepare_artifacts(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+        let out = write_loose_artifacts(dir.path(), &notes_bytes, &sbom_bytes)
             .await
             .unwrap();
         assert!(out.notes.ends_with("RELEASE-NOTES.md"));
@@ -1491,10 +1602,13 @@ mod tests {
         assert!(sbom.contains("\"specVersion\": \"1.6\""));
         assert!(sbom.contains("backport"));
 
-        // Re-materializing into a fresh dir yields byte-identical artifacts
-        // (the leg-4 determinism contract).
+        // Re-projecting into a fresh dir yields byte-identical artifacts (the
+        // leg-4 determinism contract; this is the exact path `materialize` uses).
         let dir2 = tempfile::tempdir().unwrap();
-        let out2 = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir2.path())
+        let (_, notes2, sbom2) = prepare_artifacts(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+        let out2 = write_loose_artifacts(dir2.path(), &notes2, &sbom2)
             .await
             .unwrap();
         assert_eq!(sbom, std::fs::read_to_string(&out2.sbom).unwrap());
@@ -1523,18 +1637,352 @@ mod tests {
         .unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let first = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+        let (_, notes_a, sbom_a) = prepare_artifacts(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+        let first = write_loose_artifacts(dir.path(), &notes_a, &sbom_a)
             .await
             .unwrap();
         let notes1 = std::fs::read_to_string(&first.notes).unwrap();
         let sbom1 = std::fs::read_to_string(&first.sbom).unwrap();
 
         // Same (now non-empty) dir: must overwrite cleanly with identical bytes.
-        let second = materialize_artifacts(&store, &cfg, "ces-v18.2.0", dir.path())
+        let (_, notes_b, sbom_b) = prepare_artifacts(&store, &cfg, "ces-v18.2.0")
+            .await
+            .unwrap();
+        let second = write_loose_artifacts(dir.path(), &notes_b, &sbom_b)
             .await
             .unwrap();
         assert_eq!(notes1, std::fs::read_to_string(&second.notes).unwrap());
         assert_eq!(sbom1, std::fs::read_to_string(&second.sbom).unwrap());
+    }
+
+    /// A fresh destination repo with a configured identity and one base commit
+    /// on `main`.
+    fn git_init_base(repo: &Path) {
+        let g = |args: &[&str]| crate::git::git(repo, args).unwrap();
+        g(&["init", "-q", "-b", "main"]);
+        g(&["config", "user.name", "Test Releaser"]);
+        g(&["config", "user.email", "rel@example.com"]);
+        std::fs::write(repo.join("README.md"), "base\n").unwrap();
+        g(&["add", "README.md"]);
+        g(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "base: initial commit",
+        ]);
+    }
+
+    /// Commit `content` to `file` on `main`, capture the patch via
+    /// `format-patch`, then roll `main` back so the change lives only in the
+    /// returned mailbox bytes (exactly as an imported blob would).
+    fn make_patch(repo: &Path, file: &str, content: &str, subject: &str) -> Vec<u8> {
+        let g = |args: &[&str]| crate::git::git(repo, args).unwrap();
+        std::fs::write(repo.join(file), content).unwrap();
+        g(&["add", file]);
+        g(&["-c", "commit.gpgsign=false", "commit", "-q", "-m", subject]);
+        let bytes = crate::git::git_bytes(repo, &["format-patch", "-1", "--stdout"]).unwrap();
+        g(&["reset", "--hard", "HEAD~1"]);
+        bytes
+    }
+
+    #[tokio::test]
+    async fn materialize_builds_a_signed_bundle_that_verifies_offline() {
+        // The M4 seam: author → seal → materialize must build a branch + signed
+        // `000-RELEASE/` bundle + annotated tag whose extracted tree passes the
+        // offline `verify --tree`, with no classification leaking into the
+        // public bundle.
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+        let p2 = make_patch(repo.path(), "b.txt", "beta\n", "feat: add b.txt");
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, public) = test_keypair();
+
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = imported_meta(&store, &p1).await;
+        let h2 = imported_meta(&store, &p2).await;
+        // One entry is Private — its classification must not reach the bundle.
+        let mut private_fields = fields("Adds a.txt.");
+        private_fields.visibility = Visibility::Private;
+        private_fields.internal = Some("DO-NOT-LEAK-internal".to_owned());
+        add_entries(&store, &cfg, "ces-v18.2.0", &[h1.to_hex()], &private_fields)
+            .await
+            .unwrap();
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h2.to_hex()],
+            &fields("Adds b.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        let summary = materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(summary.branch, "release/ces-v18.2.0");
+        assert_eq!(summary.commits.len(), 2);
+        assert_eq!(summary.tag, "ces-v18.2.0");
+
+        // The annotated tag exists and carries the sealed manifest digest.
+        let record = store
+            .get_release(&cfg.resolve_release_key("ces-v18.2.0").unwrap())
+            .await
+            .unwrap();
+        let g = |args: &[&str]| crate::git::git(repo.path(), args).unwrap();
+        assert_eq!(g(&["cat-file", "-t", "ces-v18.2.0"]).trim(), "tag");
+        assert!(
+            g(&["tag", "-l", "--format=%(contents)", "ces-v18.2.0"])
+                .contains(&record.digest.to_hex()),
+            "the annotated tag carries the manifest digest"
+        );
+
+        // Check the tag out into a fresh tree and verify it fully offline.
+        let verify_root = tempfile::tempdir().unwrap();
+        let tree = verify_root.path().join("t");
+        g(&[
+            "-c",
+            "core.autocrlf=false",
+            "worktree",
+            "add",
+            "--detach",
+            tree.to_str().unwrap(),
+            "ces-v18.2.0",
+        ]);
+        let tree_for_verify = tree.clone();
+        let verdict = tokio::task::spawn_blocking(move || {
+            crate::verify::verify_tree(&tree_for_verify, &public)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        match verdict {
+            crate::verify::VerifyVerdict::Pass(_) => {}
+            crate::verify::VerifyVerdict::SignatureFailed(m) => {
+                panic!("verify --tree signature failed: {m}")
+            }
+            crate::verify::VerifyVerdict::VerifyFailed(m) => panic!("verify --tree failed: {m}"),
+        }
+
+        // Public-safe by construction: the structured record + provenance name
+        // no classification field, and the Private entry's internal note leaks
+        // into *no* bundle file (the canary is checked across every file, so
+        // RELEASE-NOTES.md and sbom.cdx.json are real backstops too).
+        let bundle = tree.join(crate::verify::BUNDLE_DIR);
+        let record_json = std::fs::read_to_string(bundle.join("record.json")).unwrap();
+        let provenance = std::fs::read_to_string(bundle.join("provenance.json")).unwrap();
+        for hay in [&record_json, &provenance] {
+            assert!(!hay.contains("visibility"), "{hay}");
+            assert!(!hay.contains("internal"), "{hay}");
+        }
+        for entry in std::fs::read_dir(&bundle).unwrap() {
+            let path = entry.unwrap().path();
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !body.contains("DO-NOT-LEAK-internal"),
+                "internal note leaked into {}",
+                path.display()
+            );
+        }
+        // The record's BOM anchors each patch to a materialized commit.
+        assert!(record_json.contains("git_commit"));
+        // `.gitattributes` keeps the signed files byte-exact (slash-free pattern).
+        assert_eq!(
+            std::fs::read_to_string(bundle.join(".gitattributes")).unwrap(),
+            "* -text\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn materialize_push_publishes_the_branch_and_tag() {
+        // `--push` is opt-in; exercise it against a *local bare* remote (no
+        // network) so the real push path runs in CI. The branch + annotated tag
+        // must land in the remote.
+        let bare = tempfile::tempdir().unwrap();
+        crate::git::git(bare.path(), &["init", "-q", "--bare"]).unwrap();
+
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        crate::git::git(
+            repo.path(),
+            &["remote", "add", "origin", bare.path().to_str().unwrap()],
+        )
+        .unwrap();
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, _) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = imported_meta(&store, &p1).await;
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h1.to_hex()],
+            &fields("Adds a.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            true, // push
+        )
+        .await
+        .unwrap();
+
+        // The branch and the annotated tag are now in the bare remote.
+        assert!(
+            crate::git::git(
+                bare.path(),
+                &["rev-parse", "--verify", "release/ces-v18.2.0"]
+            )
+            .is_ok(),
+            "the release branch was not pushed to the remote"
+        );
+        assert_eq!(
+            crate::git::git(bare.path(), &["cat-file", "-t", "ces-v18.2.0"])
+                .unwrap()
+                .trim(),
+            "tag",
+            "the annotated tag was not pushed to the remote"
+        );
+    }
+
+    #[tokio::test]
+    async fn materialize_refuses_a_preexisting_tag() {
+        // The tag is write-once: if it already exists in the destination repo,
+        // materialize must refuse up front (before building anything), so a
+        // failed run can never delete a tag it did not create.
+        let repo = tempfile::tempdir().unwrap();
+        git_init_base(repo.path());
+        // Pre-create the release tag (on the base commit) — but no branch.
+        crate::git::git(repo.path(), &["tag", "ces-v18.2.0"]).unwrap();
+        let p1 = make_patch(repo.path(), "a.txt", "alpha\n", "feat: add a.txt");
+
+        let store = ObjectBackedStore::in_memory();
+        let cfg = test_config();
+        let (secret, _) = test_keypair();
+        new_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            "main",
+            test_author(),
+            "2026-06-25T00:00:00+00:00".to_owned(),
+        )
+        .await
+        .unwrap();
+        let h1 = imported_meta(&store, &p1).await;
+        add_entries(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &[h1.to_hex()],
+            &fields("Adds a.txt."),
+        )
+        .await
+        .unwrap();
+        seal_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &secret,
+            None,
+            rand::thread_rng(),
+        )
+        .await
+        .unwrap();
+
+        let err = materialize(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            Some(repo.path()),
+            None,
+            &secret,
+            None,
+            "2026-06-25T12:00:00+00:00".to_owned(),
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("already exists"),
+            "expected a write-once tag refusal, got: {err:#}"
+        );
+        // The pre-existing tag is untouched, and no release branch was created.
+        assert!(crate::git::git(repo.path(), &["rev-parse", "--verify", "ces-v18.2.0"]).is_ok());
+        assert!(
+            crate::git::git(
+                repo.path(),
+                &["rev-parse", "--verify", "release/ces-v18.2.0"]
+            )
+            .is_err()
+        );
     }
 
     #[test]

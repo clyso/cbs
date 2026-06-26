@@ -23,7 +23,8 @@ pub use manifest::{
     canonical_json, digest, upstream_weight,
 };
 pub use materialize::{
-    MATERIALIZATION_RECORD_VERSION, MaterializationRecord, MaterializedPatch, source_tree_digest,
+    MATERIALIZATION_RECORD_VERSION, MaterializationRecord, MaterializedPatch,
+    PublicPatchProvenance, PublicProvenance, source_tree_digest,
 };
 pub use meta::{Identity, PatchMeta, Provenance, UpstreamPrState, cherry_picked_from};
 pub use notes::{RENDER_MINIJINJA_VERSION, check_render_version, render_notes};

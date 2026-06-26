@@ -7,10 +7,11 @@
 //! than `git -C`.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
+use tempfile::TempDir;
 
 /// Run `git <args>` in `repo`; return stdout as a UTF-8 string.
 pub fn git(repo: &Path, args: &[&str]) -> Result<String> {
@@ -75,19 +76,79 @@ pub struct PatchToApply {
     pub bytes: Vec<u8>,
 }
 
-/// Build the linear `release/<name>` branch in `repo` (design §8): create an
-/// isolated working copy at `base_ref`, then `git am` each patch in `order`,
-/// amending a `Crt-Patch: sha256:<blob_hash>` trailer onto each resulting
-/// commit. There is **no** `Crt-Visibility` trailer — visibility is store-only,
-/// so the branch leaks no classification.
+/// A scratch git worktree holding a freshly built release branch, kept alive so
+/// the caller can append the signed `000-RELEASE/` commit and the annotated tag
+/// before teardown (design §8; see [`crate::bundle`]). The branch persists in
+/// `repo` after [`Worktree::remove`]; the `TempDir` is only a directory-cleanup
+/// backstop if an explicit teardown is skipped (e.g. on panic) — call `remove`
+/// or `cleanup_failed` so `git worktree` also forgets the registration.
+#[derive(Debug)]
+pub struct Worktree {
+    repo: PathBuf,
+    branch: String,
+    path: PathBuf,
+    _scratch: TempDir,
+}
+
+impl Worktree {
+    /// The working directory holding the materialized source.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The branch built in this worktree.
+    #[must_use]
+    pub fn branch(&self) -> &str {
+        &self.branch
+    }
+
+    /// Run `git <args>` in the worktree, returning stdout as UTF-8.
+    pub fn git(&self, args: &[&str]) -> Result<String> {
+        git(&self.path, args)
+    }
+
+    /// Tear down the worktree; the branch persists in `repo`.
+    pub fn remove(self) -> Result<()> {
+        let p = path_str(&self.path)?;
+        git(&self.repo, &["worktree", "remove", "--force", p])
+            .with_context(|| format!("removing the scratch worktree for {}", self.branch))?;
+        Ok(())
+    }
+
+    /// Fail-loud cleanup when a post-build step fails: abort any in-progress
+    /// `git am`, remove the worktree, delete the partial branch, and delete
+    /// `tag` if one was already created — so a half-materialized ref or tag is
+    /// never left behind (design §8). Best-effort: every step is attempted even
+    /// if an earlier one fails.
+    pub fn cleanup_failed(self, tag: Option<&str>) {
+        let _ = git(&self.path, &["am", "--abort"]);
+        if let Ok(p) = path_str(&self.path) {
+            let _ = git(&self.repo, &["worktree", "remove", "--force", p]);
+        }
+        let _ = git(&self.repo, &["branch", "-D", &self.branch]);
+        if let Some(tag) = tag {
+            let _ = git(&self.repo, &["tag", "-d", tag]);
+        }
+    }
+}
+
+/// Build the linear `release/<name>` branch in `repo` (design §8) and **return
+/// the live worktree** so the caller can append the signed `000-RELEASE/` bundle
+/// commit and the annotated tag before tearing it down (see [`crate::bundle`]).
+/// Creates an isolated working copy at `base_ref`, then `git am` each patch in
+/// `order`, amending a `Crt-Patch: sha256:<blob_hash>` trailer onto each
+/// resulting commit. There is **no** `Crt-Visibility` trailer — visibility is
+/// store-only, so the branch leaks no classification.
 ///
 /// Fail-loud (design §8): any apply failure aborts the in-progress `am`, tears
-/// down the temporary working copy, deletes the partial `branch`, and returns
-/// the error — a half-materialized ref is never left behind. On success the
-/// temporary working copy is removed and `branch` is left in `repo` at the last
-/// applied commit. Returns the commit hashes in apply order; the caller uses
-/// them only to report/inspect (the patch BOM is rebuilt from the trailers, not
-/// from carried-forward hashes).
+/// down the working copy, deletes the partial `branch`, and returns the error —
+/// a half-materialized ref is never left behind. On success the worktree is left
+/// in place at the last applied commit and the **caller owns its teardown**
+/// ([`Worktree::remove`] on success, [`Worktree::cleanup_failed`] on a later
+/// failure). Returns the worktree and the patch commit hashes in apply order;
+/// the hashes are for inspection only — the bundle BOM is rebuilt from the
+/// `Crt-Patch` trailers, not from these carried-forward hashes.
 ///
 /// Subprocess `git`, blocking — a caller under an async runtime must offload it
 /// (e.g. `tokio::task::spawn_blocking`). Content filters are disabled
@@ -100,11 +161,11 @@ pub fn materialize_branch(
     branch: &str,
     base_ref: &str,
     patches: &[PatchToApply],
-) -> Result<Vec<String>> {
+) -> Result<(Worktree, Vec<String>)> {
     // `git worktree add` requires its target path not to pre-exist, so create a
     // unique parent dir and join a child the parent does not create. The
     // `TempDir` is the cleanup backstop should a panic skip the explicit
-    // `git worktree remove` below.
+    // teardown the caller performs via the returned `Worktree`.
     let parent = tempfile::Builder::new()
         .prefix("crt-materialize-")
         .tempdir()
@@ -127,16 +188,18 @@ pub fn materialize_branch(
     )
     .with_context(|| format!("creating an isolated working copy for {branch} at {base_ref}"))?;
 
-    let result = apply_patches(&work, patches);
+    let wt = Worktree {
+        repo: repo.to_path_buf(),
+        branch: branch.to_owned(),
+        path: work,
+        _scratch: parent,
+    };
 
-    // Always tear down the temporary working copy; `branch` persists in `repo`.
-    let _ = git(repo, &["worktree", "remove", "--force", work_str]);
-
-    match result {
-        Ok(commits) => Ok(commits),
+    match apply_patches(&wt.path, patches) {
+        Ok(commits) => Ok((wt, commits)),
         Err(e) => {
             // Fail loud: leave no half-materialized ref behind.
-            let _ = git(repo, &["branch", "-D", branch]);
+            wt.cleanup_failed(None);
             Err(e)
         }
     }
@@ -211,6 +274,14 @@ fn apply_one(work: &Path, p: &PatchToApply) -> Result<()> {
     Ok(())
 }
 
+/// Whether a tag named `tag` already exists in `repo`. `git tag --list <tag>`
+/// prints the name when present and nothing otherwise (exit 0 either way), so a
+/// non-empty result means the tag exists. Release names carry no glob
+/// metacharacters, so the literal name is matched exactly.
+pub fn tag_exists(repo: &Path, tag: &str) -> Result<bool> {
+    Ok(!git(repo, &["tag", "--list", tag])?.trim().is_empty())
+}
+
 /// A path as `&str` for a `git` argument; errors on non-UTF-8 (these are
 /// program-constructed scratch paths, so this is effectively infallible).
 fn path_str(p: &Path) -> Result<&str> {
@@ -221,7 +292,6 @@ fn path_str(p: &Path) -> Result<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     /// Run git in `repo`, panicking on failure (test convenience).
     fn run(repo: &Path, args: &[&str]) -> String {
@@ -302,7 +372,7 @@ mod tests {
             },
         ];
 
-        let commits = materialize_branch(repo, "release/ces-v1", "main", &patches).unwrap();
+        let (wt, commits) = materialize_branch(repo, "release/ces-v1", "main", &patches).unwrap();
         assert_eq!(commits.len(), 2);
 
         // Linear: exactly the two applied commits sit on top of base.
@@ -321,11 +391,18 @@ mod tests {
                 "the branch must leak no visibility classification"
             );
         }
-        // The scratch working copy was torn down; only the main one remains.
+
+        // The worktree is now the caller's to tear down; once removed, only the
+        // main working copy remains and the branch persists in the repo.
+        wt.remove().unwrap();
         assert_eq!(
             run(repo, &["worktree", "list"]).lines().count(),
             1,
             "the scratch working copy was not removed"
+        );
+        assert!(
+            git(repo, &["rev-parse", "--verify", "release/ces-v1"]).is_ok(),
+            "the branch must persist after the worktree is removed"
         );
     }
 
