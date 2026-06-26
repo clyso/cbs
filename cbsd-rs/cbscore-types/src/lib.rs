@@ -21,6 +21,7 @@
 
 pub mod config;
 pub mod error;
+pub mod report;
 pub mod schema;
 pub mod secrets;
 pub mod store;
@@ -32,6 +33,9 @@ pub use config::{
     SigningConfig, StorageConfig, VaultAppRole, VaultConfig, VaultUserPass,
 };
 pub use error::Error;
+pub use report::{
+    BuildArtifactReport, ComponentReport, ContainerImageReport, ReleaseDescriptorReport,
+};
 pub use secrets::{GitSecret, RegistrySecret, Secrets, SigningSecret, StorageSecret};
 pub use version::{VersionComponent, VersionDescriptor, VersionImage, VersionSignedOffBy};
 pub use version_type::VersionType;
@@ -48,6 +52,9 @@ pub mod tracing_targets {
 
     /// Git command wrapper (`utils::git`).
     pub const GIT: &str = "cbscore::utils::git";
+
+    /// Podman command wrapper (`utils::podman`).
+    pub const PODMAN: &str = "cbscore::utils::podman";
 
     /// Host-side two-phase runner.
     pub const RUNNER: &str = "cbscore::runner";

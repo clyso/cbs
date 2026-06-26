@@ -17,5 +17,6 @@
 //! only primitives.
 
 pub mod git;
+pub mod podman;
 pub mod redact;
 pub mod subprocess;
