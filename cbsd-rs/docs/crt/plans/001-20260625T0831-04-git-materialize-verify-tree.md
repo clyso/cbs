@@ -282,6 +282,19 @@ the previously-`skipped` checks instead of reporting them skipped.
   `skipped` when no ref exists.
 - **Smell test:** one capability (close the verification model); reverts
   cleanly. **~500–650 LOC.**
+- **As built:** (a) `verify_release` gained `repo: Option<&Path>` and the CLI a
+  `--repo`; the ref legs are gated on the annotated tag existing. (b) The
+  extraction is a **detached worktree checkout** (`git::checkout_detached`,
+  `core.autocrlf=false`), never `git archive` (which re-applies `.gitattributes`
+  — §8/§14), so its bytes equal the materialize worktree's. (c) `verify_tree`'s
+  in-tree legs 0–2 were factored into a shared `verify_tree_legs`, reused by the
+  offline `verify --tree` and the ref-conditional path. (d) `VerifyVerdict`'s
+  variants now carry the `VerifyReport` and `LegState` gained `Failed` (F9);
+  exit codes unchanged. (e) `serde_json` pinned exact in `crt-core` (F2). Leg 2b
+  also checks the BOM **count + order** (not just the `(blob_hash, patch_id)`
+  set). Leg-2b-fail and leg-4-fail tamper tests are deferred (they need a
+  forged-but-signed record / committed bundle); the in-tree legs 0–2 tamper
+  coverage rides the shared `verify_tree` tests.
 
 ## Carry-forward invariants (do not regress)
 
@@ -319,9 +332,12 @@ as a standalone commit → **user runs the autosquash**. Commits: `crt:` prefix
 
 ## Progress
 
-| Commit | Subject                                               | Status                |
-| ------ | ----------------------------------------------------- | --------------------- |
-| 4.1    | materialize a sealed release into a linear git branch | ✅ done (`5dbeea3`)   |
-| 4.2    | hash the source tree and `verify --tree` offline      | ✅ done (`e359ecc`)   |
-| 4.3    | append the signed `000-RELEASE/` bundle + tag         | ✅ done (this commit) |
-| 4.4    | activate the ref-conditional verify legs (0–4)        | ☐ todo                |
+> SHAs are intentionally omitted: the M4-group review folds fixups and the
+> maintainer autosquashes, rewriting them. Subjects are the stable reference.
+
+| Commit | Subject                                               | Status  |
+| ------ | ----------------------------------------------------- | ------- |
+| 4.1    | materialize a sealed release into a linear git branch | ✅ done |
+| 4.2    | hash the source tree and `verify --tree` offline      | ✅ done |
+| 4.3    | append the signed `000-RELEASE/` bundle + tag         | ✅ done |
+| 4.4    | activate the ref-conditional verify legs (0–4)        | ✅ done |
