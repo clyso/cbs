@@ -19,19 +19,33 @@
 //! [`CmdOutput`] with the code, and each wrapper decides whether that is fatal.
 //! A spawn failure and a timeout/cancellation are distinct [`CommandError`]
 //! variants (the latter resolves the Python FIXME that conflated timeout with a
-//! non-zero exit). The async per-line `out_cb` lands with its first consumer
-//! (the runner's live streaming, M2); C1 collects the output.
+//! non-zero exit). An optional async per-line `out_cb` streams each line as it
+//! arrives **and** still collects it. This deliberately diverges from both
+//! Python (whose `read_stream` returns empty strings when a callback is set) and
+//! design 003: the port collects anyway so a non-zero exit keeps its stderr for
+//! the error message — Python loses it, a latent bug for streamed commands. Its
+//! first consumer is the in-container builder's toolchain install (M2/C2b).
 
+use std::future::Future;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::time::Duration;
 
 use camino::Utf8Path;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tracing::debug;
 
 use crate::types::tracing_targets;
 use crate::utils::redact::{CmdArg, sanitize_cmdline};
+
+/// The future an [`OutCb`] returns for a single output line.
+pub type OutLine = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// An async per-line output callback (design 003). Each line is awaited through
+/// it as the process emits it (the trailing newline stripped). Its first
+/// consumer is the in-container builder streaming its toolchain output.
+pub type OutCb<'a> = dyn Fn(String) -> OutLine + Send + Sync + 'a;
 
 /// Options for [`run_cmd`].
 #[derive(Default)]
@@ -43,6 +57,11 @@ pub struct RunOpts<'a> {
     pub timeout: Option<Duration>,
     /// Extra environment, merged **over** the inherited environment.
     pub extra_env: &'a [(String, String)],
+    /// A per-line output callback. When set, each line is streamed through it as
+    /// it arrives **and** still collected into the result. (Python and design 003
+    /// leave the strings empty when a callback is set; the port collects anyway
+    /// so a non-zero exit keeps its stderr for the error message.)
+    pub out_cb: Option<&'a OutCb<'a>>,
 }
 
 /// The captured result of a finished process. A non-zero `code` is a normal
@@ -93,17 +112,31 @@ pub async fn run_cmd(args: &[CmdArg], opts: RunOpts<'_>) -> Result<CmdOutput, Co
     let mut child_err = child.stderr.take().expect("stderr was piped");
 
     // Read both streams concurrently with the wait, so a process that fills a
-    // pipe buffer cannot deadlock against our wait.
+    // pipe buffer cannot deadlock against our wait. With an `out_cb` each line
+    // is streamed through it as it arrives and still collected (Python parity);
+    // without one the streams are collected wholesale.
     let collect = async {
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let (read_out, read_err, status) = tokio::join!(
-            child_out.read_to_string(&mut stdout),
-            child_err.read_to_string(&mut stderr),
-            child.wait(),
-        );
-        read_out.map_err(CommandError::Io)?;
-        read_err.map_err(CommandError::Io)?;
+        let (read_out, read_err, status) = match opts.out_cb {
+            None => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                let (ro, re, status) = tokio::join!(
+                    child_out.read_to_string(&mut stdout),
+                    child_err.read_to_string(&mut stderr),
+                    child.wait(),
+                );
+                (ro.map(|_| stdout), re.map(|_| stderr), status)
+            }
+            Some(cb) => {
+                tokio::join!(
+                    stream_and_collect(&mut child_out, cb),
+                    stream_and_collect(&mut child_err, cb),
+                    child.wait(),
+                )
+            }
+        };
+        let stdout = read_out.map_err(CommandError::Io)?;
+        let stderr = read_err.map_err(CommandError::Io)?;
         let status = status.map_err(CommandError::Io)?;
         Ok::<CmdOutput, CommandError>(CmdOutput {
             code: status.code().unwrap_or(-1),
@@ -128,6 +161,25 @@ pub async fn run_cmd(args: &[CmdArg], opts: RunOpts<'_>) -> Result<CmdOutput, Co
             }
         }
     }
+}
+
+/// Read a child stream line by line, awaiting `cb` for each line and collecting
+/// them (newline-terminated) into the returned string. `lines()` strips the
+/// terminator and normalises `\r\n`→`\n`, so the collected string is not
+/// byte-exact with the raw output — fine for the log/error use here; the
+/// no-callback path stays byte-exact via `read_to_string`.
+async fn stream_and_collect<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    cb: &OutCb<'_>,
+) -> std::io::Result<String> {
+    let mut lines = BufReader::new(reader).lines();
+    let mut collected = String::new();
+    while let Some(line) = lines.next_line().await? {
+        cb(line.clone()).await;
+        collected.push_str(&line);
+        collected.push('\n');
+    }
+    Ok(collected)
 }
 
 #[cfg(test)]
@@ -181,6 +233,36 @@ mod tests {
             run_cmd(&args, opts).await,
             Err(CommandError::Timeout)
         ));
+    }
+
+    #[tokio::test]
+    async fn out_cb_streams_each_line_and_still_collects() {
+        use std::sync::{Arc, Mutex};
+
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = seen.clone();
+        let cb = move |line: String| -> OutLine {
+            let sink = sink.clone();
+            Box::pin(async move { sink.lock().unwrap().push(line) })
+        };
+        let args = [CmdArg::from("printf"), CmdArg::from("one\ntwo\n")];
+        let out = run_cmd(
+            &args,
+            RunOpts {
+                out_cb: Some(&cb),
+                ..RunOpts::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        // Each line was streamed live...
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["one".to_string(), "two".to_string()]
+        );
+        // ...and the output is still collected (so errors keep their stderr).
+        assert!(out.stdout.contains("one") && out.stdout.contains("two"));
     }
 
     #[tokio::test]
