@@ -12,8 +12,9 @@
 > ref-conditional checks in legs 0–4, `crt verify --tree`). Part 04 of the
 > multi-part plan sharing seq `001` (M1 = 01, M2 = 02, M3 = 03). Commit
 > boundaries follow the `git-commits` skill (capability per commit, ~400–800 LOC
-> soft, lockfiles excluded). Breakdown **approved**; implementation proceeds at
-> 4.1.
+> soft, lockfiles excluded). **Implemented and reviewed** — all four commits
+> landed; see the Progress table below and the M4 review (GO/80,
+> [`../reviews/001-20260626T0919-impl-v2-mvp-v6.md`](../reviews/001-20260626T0919-impl-v2-mvp-v6.md)).
 
 ## Scope
 

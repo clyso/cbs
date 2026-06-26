@@ -2,7 +2,8 @@
 
 > Operational status snapshot for CRT v2 (the Ceph Release Tool). Not subject to
 > the `seq-docs-convention` naming (operational file). **Last updated:**
-> 2026-06-26 (M4 code-complete, 4.1–4.4), on branch `wip/release-tool-v2`.
+> 2026-06-26 (M4 done + reviewed — MVP complete), on branch
+> `wip/release-tool-v2`.
 
 ## What CRT v2 is
 
@@ -23,16 +24,19 @@ Three crates in the `cbsd-rs/` workspace (edition 2024, GPL-3.0-or-later):
 
 ## Authoritative documents
 
-| Doc                                                                | What                                 |
-| ------------------------------------------------------------------ | ------------------------------------ |
-| `docs/crt/000-concept.md`                                          | Concept / rationale                  |
-| `docs/crt/design/001-20260620T1318-v2-mvp.md`                      | **Authoritative design** (MVP)       |
-| `docs/crt/plans/001-20260621T0930-01-store-and-import.md`          | M1 plan                              |
-| `docs/crt/plans/001-20260621T2212-02-manifest-seal-sign-verify.md` | M2 plan (progress table + decisions) |
-| `docs/crt/plans/001-20260623T1717-03-sbom-notes-materialize.md`    | M3 plan (progress table + decisions) |
-| `docs/crt/reviews/001-*-impl-v2-mvp-v{1,2}.md`                     | M1 reviews                           |
-| `docs/crt/reviews/001-20260622T0515-impl-v2-mvp-v3.md`             | M2 commits 2.1–2.3 review            |
-| `docs/crt/reviews/001-20260622T2040-impl-v2-mvp-v4.md`             | M2 commits 2.4–2.6 review (GO/80)    |
+| Doc                                                                  | What                                 |
+| -------------------------------------------------------------------- | ------------------------------------ |
+| `docs/crt/000-concept.md`                                            | Concept / rationale                  |
+| `docs/crt/design/001-20260620T1318-v2-mvp.md`                        | **Authoritative design** (MVP)       |
+| `docs/crt/plans/001-20260621T0930-01-store-and-import.md`            | M1 plan                              |
+| `docs/crt/plans/001-20260621T2212-02-manifest-seal-sign-verify.md`   | M2 plan (progress table + decisions) |
+| `docs/crt/plans/001-20260623T1717-03-sbom-notes-materialize.md`      | M3 plan (progress table + decisions) |
+| `docs/crt/plans/001-20260625T0831-04-git-materialize-verify-tree.md` | M4 plan (progress table + decisions) |
+| `docs/crt/reviews/001-*-impl-v2-mvp-v{1,2}.md`                       | M1 reviews                           |
+| `docs/crt/reviews/001-20260622T0515-impl-v2-mvp-v3.md`               | M2 commits 2.1–2.3 review            |
+| `docs/crt/reviews/001-20260622T2040-impl-v2-mvp-v4.md`               | M2 commits 2.4–2.6 review (GO/80)    |
+| `docs/crt/reviews/001-20260625T0449-impl-v2-mvp-v5.md`               | M3 review                            |
+| `docs/crt/reviews/001-20260626T0919-impl-v2-mvp-v6.md`               | M4 review (GO/80)                    |
 
 If code and design disagree, **fix the code** — but several intentional
 deviations from the design are recorded in the M2 plan's per-commit "Decisions"
@@ -44,12 +48,12 @@ fetch). Treat those as authoritative-as-landed.
 
 ## Milestone status
 
-| Milestone | Scope                                                                 | Status                                           |
-| --------- | --------------------------------------------------------------------- | ------------------------------------------------ |
-| **M1**    | Patch ingestion into a content-addressed store                        | ✅ done                                          |
-| **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed                               |
-| **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done                                          |
-| **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | ✅ code-complete (4.1–4.4); group review pending |
+| Milestone | Scope                                                                 | Status                         |
+| --------- | --------------------------------------------------------------------- | ------------------------------ |
+| **M1**    | Patch ingestion into a content-addressed store                        | ✅ done                        |
+| **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed             |
+| **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done                        |
+| **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | ✅ done + reviewed (v6: GO/80) |
 
 ### M1 — done (`3a0cbe4e`, `f87ac939`, `30d09904`)
 
@@ -113,13 +117,16 @@ is byte-identical. Gate green: `cargo fmt --all --check`,
 `cargo clippy -p crt -p crt-core --all-targets`, `cargo test` (crt 44, crt-core
 26, crt-store 12), `cargo check --workspace`.
 
-## M4 — code-complete (4.1–4.4); group review pending
+## M4 — done + reviewed
 
 Git materialization and the portable signed bundle (design §8, §11 legs 0–4).
-All four commits have landed; the M4-group adversarial review + the maintainer's
-autosquash are the remaining close-out steps. See
+All four commits have landed, the M4-group adversarial review is complete
+(`docs/crt/reviews/001-20260626T0919-impl-v2-mvp-v6.md` — **GO, 80/100**, both
+findings addressed), and the fixups have been autosquashed. **This completes the
+MVP: nothing in the design (`design/001-20260620T1318-v2-mvp.md`) remains
+unbuilt.** See
 `docs/crt/plans/001-20260625T0831-04-git-materialize-verify-tree.md` for the
-full plan + per-commit progress table.
+full plan + per-commit progress table; the post-MVP backlog is below.
 
 - **4.1 done** — `crt release materialize` builds the linear `release/<name>`
   branch (`git am` per entry, each amended with a `Crt-Patch` trailer) in a
