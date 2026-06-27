@@ -251,6 +251,17 @@ enum PatchCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Show one patch's recorded metadata.
+    ///
+    /// `<blob_hash>` is a full 64-char hex address or a unique short prefix of
+    /// one; `--json` emits the `PatchMeta` as a JSON object.
+    Info {
+        /// Full hex blob hash, or a unique short prefix of one.
+        blob_hash: String,
+        /// Emit the patch as a JSON object instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Build the configured store backend. The S3 backend reads credentials from
@@ -337,6 +348,19 @@ async fn main() -> Result<()> {
                 } else {
                     print!("{}", patch::render_list(&patches));
                     eprintln!("{} patch(es)", patches.len());
+                }
+            }
+            PatchCmd::Info { blob_hash, json } => {
+                let store = open_store(&cfg.store, &cli.secrets)?;
+                let meta = patch::find(&store, &blob_hash).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&meta)?);
+                } else {
+                    let equivalent = store
+                        .get_patch_id(&meta.patch_id)
+                        .await?
+                        .filter(|h| *h != meta.blob_hash);
+                    print!("{}", patch::render_info(&meta, equivalent.as_ref()));
                 }
             }
         },

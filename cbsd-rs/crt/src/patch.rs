@@ -7,8 +7,8 @@
 //! CLI renders it either as text (the helpers here) or as JSON
 //! (`serde_json::to_string_pretty` in `main`).
 
-use anyhow::Result;
-use crt_core::PatchMeta;
+use anyhow::{Result, anyhow, bail};
+use crt_core::{PatchMeta, Provenance, Sha256};
 use crt_store::Store;
 
 /// All imported patches, sorted by `(subject, blob_hash)` for stable output.
@@ -39,10 +39,122 @@ pub fn render_list(patches: &[PatchMeta]) -> String {
     out
 }
 
+/// Resolve a patch by `arg` — a full 64-char hex `blob_hash`, or a unique short
+/// prefix (4–63 hex) of one — to its [`PatchMeta`].
+///
+/// `arg` is validated as lowercase hex first; the length must be `4..=64` (`<4`
+/// is too short, `>64` is too long). A full hash is looked up directly; a prefix
+/// is matched against `list_patches` — no match or an ambiguous prefix is an
+/// error.
+pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchMeta> {
+    if !arg.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        bail!("{arg:?} is not a lowercase-hex blob hash or prefix");
+    }
+    match arg.len() {
+        64 => {
+            let hash = Sha256::try_from(arg.to_owned())?;
+            store.get_meta(&hash).await.map_err(|e| {
+                if e.is_not_found() {
+                    anyhow!("no patch with blob hash {hash}")
+                } else {
+                    e.into()
+                }
+            })
+        }
+        4..=63 => {
+            let matches: Vec<Sha256> = store
+                .list_patches()
+                .await?
+                .into_iter()
+                .filter(|h| h.to_hex().starts_with(arg))
+                .collect();
+            match matches.as_slice() {
+                [] => bail!("no patch with blob hash prefix {arg:?}"),
+                [hash] => Ok(store.get_meta(hash).await?),
+                many => {
+                    let listed = many
+                        .iter()
+                        .map(Sha256::to_hex)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    bail!("blob hash prefix {arg:?} is ambiguous; matches: {listed}")
+                }
+            }
+        }
+        n => bail!(
+            "{arg:?} has {n} hex chars; expected a 64-char blob hash or a prefix \
+             of 4–63"
+        ),
+    }
+}
+
+/// Render a patch's metadata as a labeled text block. When `equivalent` is set
+/// it names a *different* blob that is the patch-id index's representative for
+/// this patch; the line is text-only (one-way — absent when inspecting that
+/// representative — and never part of the `--json` output).
+#[must_use]
+pub fn render_info(meta: &PatchMeta, equivalent: Option<&Sha256>) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "blob_hash:    {}", meta.blob_hash);
+    let _ = writeln!(out, "patch_id:     {}", meta.patch_id);
+    let _ = writeln!(out, "subject:      {}", meta.subject);
+    let _ = writeln!(
+        out,
+        "author:       {} <{}>",
+        meta.author.name, meta.author.email
+    );
+    let _ = writeln!(out, "authored:     {}", meta.authored);
+    let _ = writeln!(out, "source_repo:  {}", meta.source_repo);
+    match &meta.provenance {
+        Provenance::UpstreamPr {
+            prs,
+            commits,
+            state,
+        } => {
+            // `UpstreamPrState` is serde kebab-case; render that spelling.
+            let state = serde_json::to_string(state).unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "provenance:   upstream-pr [{}]",
+                state.trim_matches('"')
+            );
+            if !prs.is_empty() {
+                let _ = writeln!(out, "                prs:     {}", prs.join(", "));
+            }
+            if !commits.is_empty() {
+                let _ = writeln!(out, "                commits: {}", commits.join(", "));
+            }
+        }
+        Provenance::Other { description } => {
+            let _ = writeln!(out, "provenance:   other: {description}");
+        }
+    }
+    if !meta.cherry_picked_from.is_empty() {
+        let _ = writeln!(
+            out,
+            "cherry-picked-from: {}",
+            meta.cherry_picked_from.join(", ")
+        );
+    }
+    if let Some(other) = equivalent {
+        let _ = writeln!(
+            out,
+            "equivalent-to: {other} (the patch-id index representative)"
+        );
+    }
+    let _ = writeln!(out);
+    out.push_str(&meta.body);
+    if !meta.body.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crt_core::{Identity, Provenance, Sha256, blob_hash};
+    use crt_core::{Identity, blob_hash};
     use crt_store::ObjectBackedStore;
 
     /// Store a patch with the given subject under content address of `raw`.
@@ -117,5 +229,125 @@ mod tests {
         };
         let rendered = render_list(std::slice::from_ref(&meta));
         assert_eq!(rendered, format!("{}  the subject\n", store_hash));
+    }
+
+    #[tokio::test]
+    async fn find_resolves_a_full_hash() {
+        let store = ObjectBackedStore::in_memory();
+        let h = put_patch(&store, b"the patch", "a subject").await;
+        let meta = find(&store, &h.to_hex()).await.unwrap();
+        assert_eq!(meta.blob_hash, h);
+        assert_eq!(meta.subject, "a subject");
+    }
+
+    #[tokio::test]
+    async fn find_resolves_a_unique_prefix() {
+        let store = ObjectBackedStore::in_memory();
+        let h = put_patch(&store, b"the patch", "s").await;
+        assert_eq!(find(&store, &h.to_hex()[..12]).await.unwrap().blob_hash, h);
+    }
+
+    #[tokio::test]
+    async fn find_full_hash_not_found_errors() {
+        let store = ObjectBackedStore::in_memory();
+        let absent = blob_hash(b"never stored").to_hex();
+        let err = find(&store, &absent).await.unwrap_err().to_string();
+        assert!(err.contains("no patch with blob hash"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn find_no_match_prefix_errors() {
+        // Empty store: any valid prefix matches nothing.
+        let store = ObjectBackedStore::in_memory();
+        let err = find(&store, "abcd").await.unwrap_err().to_string();
+        assert!(err.contains("no patch with blob hash prefix"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn find_ambiguous_prefix_errors() {
+        use std::collections::HashMap;
+        let store = ObjectBackedStore::in_memory();
+        // Two distinct inputs whose blob hashes collide on a 4-hex prefix
+        // (birthday-cheap over 65536 buckets).
+        let mut by_prefix: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut collision: Option<(Vec<u8>, Vec<u8>, String)> = None;
+        for i in 0u32..200_000 {
+            let raw = i.to_le_bytes().to_vec();
+            let prefix = blob_hash(&raw).to_hex()[..4].to_owned();
+            if let Some(prev) = by_prefix.insert(prefix.clone(), raw.clone()) {
+                collision = Some((prev, raw, prefix));
+                break;
+            }
+        }
+        let (a, b, prefix) = collision.expect("a 4-hex prefix collision within 200k tries");
+        put_patch(&store, &a, "subject a").await;
+        put_patch(&store, &b, "subject b").await;
+        let err = find(&store, &prefix).await.unwrap_err().to_string();
+        assert!(err.contains("ambiguous"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn find_rejects_malformed_args() {
+        let store = ObjectBackedStore::in_memory();
+        let too_long = "a".repeat(65);
+        // uppercase, non-hex, too short, too long.
+        for bad in ["ABCD1234", "zzzz", "abc", too_long.as_str()] {
+            assert!(
+                find(&store, bad).await.is_err(),
+                "expected error for {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn render_info_contains_the_key_fields() {
+        let h = blob_hash(b"x");
+        let meta = PatchMeta {
+            blob_hash: h,
+            patch_id: "the-patch-id".to_owned(),
+            author: Identity {
+                name: "Ann".to_owned(),
+                email: "ann@example.com".to_owned(),
+            },
+            authored: "2026-06-21T00:00:00+00:00".to_owned(),
+            subject: "fix the thing".to_owned(),
+            body: "the body".to_owned(),
+            cherry_picked_from: vec![],
+            provenance: Provenance::Other {
+                description: "from somewhere".to_owned(),
+            },
+            source_repo: "ceph/ceph".to_owned(),
+        };
+        let out = render_info(&meta, None);
+        assert!(out.contains("the-patch-id"));
+        assert!(out.contains("fix the thing"));
+        assert!(out.contains("Ann <ann@example.com>"));
+        assert!(out.contains("the body"));
+        assert!(!out.contains("equivalent-to"));
+    }
+
+    #[test]
+    fn render_info_shows_equivalence_when_set() {
+        let h = blob_hash(b"x");
+        let other = blob_hash(b"y");
+        let meta = PatchMeta {
+            blob_hash: h,
+            patch_id: "p".to_owned(),
+            author: Identity {
+                name: "n".to_owned(),
+                email: "e@example.com".to_owned(),
+            },
+            authored: "2026-06-21T00:00:00+00:00".to_owned(),
+            subject: "s".to_owned(),
+            body: "b".to_owned(),
+            cherry_picked_from: vec![],
+            provenance: Provenance::Other {
+                description: "d".to_owned(),
+            },
+            source_repo: "r".to_owned(),
+        };
+        let out = render_info(&meta, Some(&other));
+        assert!(out.contains("equivalent-to"));
+        assert!(out.contains(&other.to_hex()));
     }
 }
