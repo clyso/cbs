@@ -167,14 +167,47 @@ s3:
 # one Vault secret can serve both tools.
 vault:
   addr: https://vault.example.com
+  # authenticate with exactly one of token / userpass / approle:
   token: s.exampletoken
   keys:
     gpg_signing_private: secret/data/crt/openpgp-signing-key
 ```
 
-The signing key is fetched at sign time and **never persisted by `crt`**. The
-configured Vault path may be written with or without the KV v2 `data` infix
-(`secret/data/crt/key` or `secret/crt/key`).
+**Vault authentication** mirrors cbscore's three methods — set **exactly one**
+under `vault:` (more than one, or none, is rejected):
+
+| Method     | Fields                          | Notes                       |
+| ---------- | ------------------------------- | --------------------------- |
+| `token`    | a pre-issued Vault token        | simplest; common in CI      |
+| `userpass` | `username`, `password`, `mount` | `mount` defaults `userpass` |
+| `approle`  | `role_id`, `secret_id`, `mount` | `mount` defaults `approle`  |
+
+```yaml
+# userpass instead of token:
+vault:
+  addr: https://vault.example.com
+  userpass:
+    username: my-user
+    password: my-password
+    # mount: userpass   # optional
+  keys:
+    gpg_signing_private: secret/data/crt/openpgp-signing-key
+
+# or AppRole:
+vault:
+  addr: https://vault.example.com
+  approle:
+    role_id: my-role-id
+    secret_id: my-secret-id
+    # mount: approle    # optional
+  keys:
+    gpg_signing_private: secret/data/crt/openpgp-signing-key
+```
+
+For `userpass`/`approle`, `crt` logs in at sign time and exchanges the
+credentials for a short-lived token. The signing key is fetched at sign time and
+**never persisted by `crt`**. The configured key path may be written with or
+without the KV v2 `data` infix (`secret/data/crt/key` or `secret/crt/key`).
 
 ## Commands
 
