@@ -32,7 +32,12 @@ const EXIT_SIGNATURE: i32 = 2;
 const EXIT_VERIFY: i32 = 3;
 
 #[derive(Parser)]
-#[command(name = "crt", version, about = "Ceph Release Tool")]
+#[command(
+    name = "crt",
+    version,
+    about = "Ceph Release Tool",
+    max_term_width = 100
+)]
 struct Cli {
     /// Path to the (git-ignored) config file.
     #[arg(
@@ -66,10 +71,11 @@ enum Command {
         #[command(subcommand)]
         cmd: ReleaseCmd,
     },
-    /// Offline / detached-tree verification of an extracted release tree (design
+    /// Verify an extracted release tree offline — no store, no git.
+    ///
+    /// The primary trust path for a tarball/ZIP/clone recipient (design
     /// §10/§11): verify `000-RELEASE/record.json.asc` with the public key, then
-    /// recompute `source_tree_digest` and every bundle digest. No store, no git
-    /// — the primary trust path for a tarball/ZIP/clone recipient.
+    /// recompute `source_tree_digest` and every bundle digest.
     Verify {
         /// Path to the extracted tree (the directory containing `000-RELEASE/`).
         #[arg(long)]
@@ -83,8 +89,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ReleaseCmd {
-    /// Create a new, empty draft release. The name resolves to a channel by
-    /// prefix (e.g. `ces-v18.2.0` → channel `ces`).
+    /// Create a new, empty draft release.
+    ///
+    /// The name resolves to a channel by prefix (e.g. `ces-v18.2.0` → channel
+    /// `ces`).
     New {
         /// Release name (resolves to a configured channel).
         name: String,
@@ -98,8 +106,9 @@ enum ReleaseCmd {
         #[arg(long)]
         author_email: Option<String>,
     },
-    /// Add one or more imported patch blobs to a draft as entries. The metadata
-    /// flags apply to every blob listed.
+    /// Add imported patches to a draft as entries.
+    ///
+    /// The metadata flags apply to every blob listed.
     Add {
         /// Release name.
         name: String,
@@ -141,9 +150,10 @@ enum ReleaseCmd {
         #[arg(long)]
         upgrade_notes: Option<String>,
     },
-    /// Seal a draft into a signed, write-once release. Fetches the signing key
-    /// from Vault, signs the canonical manifest, writes the release record, and
-    /// removes the draft.
+    /// Seal a draft into a signed, write-once release.
+    ///
+    /// Fetches the signing key from Vault, signs the canonical manifest, writes
+    /// the release record, and removes the draft.
     Seal {
         /// Release name.
         name: String,
@@ -155,19 +165,22 @@ enum ReleaseCmd {
         /// Release name.
         name: String,
     },
-    /// Re-render the release notes for a sealed release from its pinned
-    /// RenderSpec (design §7.2). Prints to stdout; no re-seal.
+    /// Re-render a sealed release's notes from its pinned RenderSpec.
+    ///
+    /// Prints to stdout; no re-seal (design §7.2).
     Notes {
         /// Release name.
         name: String,
     },
-    /// Materialize a sealed release (design §8): build the linear
-    /// `release/<name>` branch in the destination repo — `git am` each entry's
-    /// patch in order, each commit carrying a `Crt-Patch` trailer — then append
-    /// the signed `000-RELEASE/` verification bundle commit and an annotated tag
-    /// carrying the manifest digest. Signing the bundle's `record.json` needs the
-    /// Vault key (a `vault` section in the secrets file). With `--out`, also emit
-    /// the loose RELEASE-NOTES.md + sbom.cdx.json artifacts there.
+    /// Build a sealed release into a signed git branch, bundle, and tag.
+    ///
+    /// Builds the linear `release/<name>` branch in the destination repo (design
+    /// §8) — `git am` each entry's patch in order, each commit carrying a
+    /// `Crt-Patch` trailer — then appends the signed `000-RELEASE/` verification
+    /// bundle commit and an annotated tag carrying the manifest digest. Signing
+    /// the bundle's `record.json` needs the Vault key (a `vault` section in the
+    /// secrets file). With `--out`, also emit the loose RELEASE-NOTES.md +
+    /// sbom.cdx.json artifacts there.
     Materialize {
         /// Release name.
         name: String,
@@ -185,12 +198,14 @@ enum ReleaseCmd {
         #[arg(long)]
         push: bool,
     },
-    /// Verify a sealed release (design §11): the sealed manifest's signature,
-    /// schema, and cross-reference (legs 0–2) always run. With `--repo`, if the
-    /// release has been materialized (its tag exists), the ref-conditional legs
-    /// also run over the git artifact — the bundle signature, the in-tree
-    /// record's faithfulness, git anchoring (leg 3), and artifact faithfulness
-    /// (leg 4); otherwise legs 3–4 are reported skipped.
+    /// Verify a sealed release (and, with `--repo`, its git artifact).
+    ///
+    /// The sealed manifest's signature, schema, and cross-reference (legs 0–2,
+    /// design §11) always run. With `--repo`, if the release has been
+    /// materialized (its tag exists), the ref-conditional legs also run over the
+    /// git artifact — the bundle signature, the in-tree record's faithfulness,
+    /// git anchoring (leg 3), and artifact faithfulness (leg 4); otherwise legs
+    /// 3–4 are reported skipped.
     Verify {
         /// Release name.
         name: String,
@@ -207,8 +222,9 @@ enum ReleaseCmd {
 
 #[derive(Subcommand)]
 enum PatchCmd {
-    /// Import patches into the content-addressed store, from a local git range
-    /// (`--range`) or a GitHub PR (`--pr`).
+    /// Import patches into the content-addressed store.
+    ///
+    /// From a local git range (`--range`) or a GitHub PR (`--pr`).
     Import {
         /// Path to the local git repository (the PR's head/base are fetched
         /// into it; patch bytes always come from a local `git format-patch`).
