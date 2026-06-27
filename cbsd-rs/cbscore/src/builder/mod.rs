@@ -37,7 +37,7 @@ use crate::types::tracing_targets;
 use crate::utils::git::GitError;
 use crate::utils::redact::CmdArg;
 use crate::utils::secrets::{SecretsError, SecretsMgr};
-use crate::utils::subprocess::{CommandError, OutLine, RunOpts, run_cmd};
+use crate::utils::subprocess::{CommandError, RunOpts, run_cmd};
 
 pub mod prepare;
 pub mod rpmbuild;
@@ -290,9 +290,7 @@ impl<'a> Builder<'a> {
     /// step streams its output through the subprocess `out_cb` (here, to the
     /// builder's debug log, which the host captures from the container).
     pub async fn prepare_builder(&self) -> Result<(), BuilderError> {
-        let log_cb = |line: String| -> OutLine {
-            Box::pin(async move { debug!(target: tracing_targets::BUILDER, "{line}") })
-        };
+        let log_cb = rpmbuild::debug_log();
         for (args, context) in prepare_steps() {
             let cmd: Vec<CmdArg> = args.iter().map(|s| CmdArg::from(*s)).collect();
             let out = run_cmd(
@@ -320,20 +318,27 @@ impl<'a> Builder<'a> {
 
     /// Install cosign from the pinned release RPM, tolerating the
     /// already-installed case (`rpm -Uvh` exits 2 with "already installed"),
-    /// exactly as `prepare.py` does.
+    /// exactly as `prepare.py` does. Its output streams to the builder's debug
+    /// log, like the toolchain steps above.
     async fn install_cosign(&self) -> Result<(), BuilderError> {
         let cmd = [
             CmdArg::from("rpm"),
             CmdArg::from("-Uvh"),
             CmdArg::from(COSIGN_RPM_URL),
         ];
-        let out =
-            run_cmd(&cmd, RunOpts::default())
-                .await
-                .map_err(|source| BuilderError::Command {
-                    context: "installing cosign".to_string(),
-                    source,
-                })?;
+        let log_cb = rpmbuild::debug_log();
+        let out = run_cmd(
+            &cmd,
+            RunOpts {
+                out_cb: Some(&log_cb),
+                ..RunOpts::default()
+            },
+        )
+        .await
+        .map_err(|source| BuilderError::Command {
+            context: "installing cosign".to_string(),
+            source,
+        })?;
         if out.code == 2 && out.stderr.contains("already installed") {
             debug!(target: tracing_targets::BUILDER, "cosign already installed; skipping");
             return Ok(());
