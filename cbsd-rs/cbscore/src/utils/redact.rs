@@ -17,9 +17,10 @@
 //! credential-bearing flags that arrive as plain strings.
 //!
 //! C1 lands [`SecureArg`], [`CmdArg`], [`Password`], and the pattern backstop —
-//! enough to establish and test the compiler-enforced redaction invariant. The
-//! `PasswordArg` (credential flag) and `SecureUrl` (credentialed git URL) types
-//! land with their first consumers (C3/C4/C5).
+//! enough to establish and test the compiler-enforced redaction invariant.
+//! [`SecureUrl`] (the credentialed git URL) lands here with its first consumer,
+//! `git_url_for` (`utils::secrets::git`, C3); the `PasswordArg` (credential
+//! flag) type still waits for its own first consumer (C4/C5).
 
 use std::fmt;
 use std::sync::{Arc, LazyLock};
@@ -115,6 +116,111 @@ impl SecureArg for Password {
 
     fn redacted(&self) -> String {
         CENSORED.to_string()
+    }
+}
+
+/// A credentialed URL secret (design 003): a `{name}`-placeholder template like
+/// `https://{username}:{password}@{host}/{path}` whose secret arguments (the
+/// password or token) are [`Password`]s. [`SecureArg::redacted`] renders the URL
+/// with those censored, [`SecureArg::plaintext`] with the real values — so a git
+/// clone URL reads `<CENSORED>` in logs but is plaintext only when the process
+/// is spawned. Like [`Password`] it implements no formatting trait, so it cannot
+/// leak by being formatted (invariant 4). Built by `git_url_for`
+/// (`utils::secrets::git`), its first consumer.
+pub struct SecureUrl {
+    template: String,
+    args: Vec<(String, UrlArg)>,
+}
+
+/// One bound placeholder of a [`SecureUrl`]: a plain component or a secret.
+enum UrlArg {
+    Plain(String),
+    Secret(Password),
+}
+
+impl SecureUrl {
+    /// Start a URL from a `{name}`-placeholder template.
+    pub fn new(template: impl Into<String>) -> Self {
+        Self {
+            template: template.into(),
+            args: Vec::new(),
+        }
+    }
+
+    /// Bind a non-secret placeholder (host, path, username).
+    #[must_use]
+    pub fn arg(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.args
+            .push((name.to_string(), UrlArg::Plain(value.into())));
+        self
+    }
+
+    /// Bind a secret placeholder (a password or token) — censored in logs.
+    #[must_use]
+    pub fn secret(mut self, name: &str, value: Password) -> Self {
+        self.args.push((name.to_string(), UrlArg::Secret(value)));
+        self
+    }
+
+    /// Substitute every `{name}` placeholder with its value (real when `reveal`,
+    /// else censored). A **single pass** over the template — like Python's
+    /// `str.format` — so a substituted value cannot itself be re-scanned for a
+    /// later placeholder (e.g. a credential that literally contains `{path}`).
+    /// An unknown `{name}` is left verbatim.
+    fn render(&self, reveal: bool) -> String {
+        let value_of = |name: &str| -> Option<String> {
+            self.args
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, arg)| match arg {
+                    UrlArg::Plain(s) => s.clone(),
+                    UrlArg::Secret(p) => {
+                        if reveal {
+                            p.plaintext()
+                        } else {
+                            p.redacted()
+                        }
+                    }
+                })
+        };
+
+        let mut out = String::with_capacity(self.template.len());
+        let mut rest = self.template.as_str();
+        while let Some(open) = rest.find('{') {
+            out.push_str(&rest[..open]);
+            let after = &rest[open + 1..];
+            match after.find('}') {
+                Some(close) => {
+                    let name = &after[..close];
+                    match value_of(name) {
+                        Some(value) => out.push_str(&value),
+                        None => {
+                            out.push('{');
+                            out.push_str(name);
+                            out.push('}');
+                        }
+                    }
+                    rest = &after[close + 1..];
+                }
+                // An unterminated `{` is copied through verbatim.
+                None => {
+                    out.push_str(&rest[open..]);
+                    rest = "";
+                }
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+}
+
+impl SecureArg for SecureUrl {
+    fn plaintext(&self) -> String {
+        self.render(true)
+    }
+
+    fn redacted(&self) -> String {
+        self.render(false)
     }
 }
 
@@ -220,5 +326,42 @@ mod tests {
         let sanitized = sanitize_cmdline(&cmd);
         assert_eq!(sanitized[2], CENSORED);
         assert!(!sanitized.join(" ").contains("tok"));
+    }
+
+    #[test]
+    fn secure_url_reveals_only_via_plaintext() {
+        let url = SecureUrl::new("https://{username}:{password}@{host}/{path}")
+            .arg("username", "git")
+            .secret("password", Password::new("s3cr3t"))
+            .arg("host", "github.com")
+            .arg("path", "ceph/ceph");
+        assert_eq!(url.plaintext(), "https://git:s3cr3t@github.com/ceph/ceph");
+        assert_eq!(
+            url.redacted(),
+            format!("https://git:{CENSORED}@github.com/ceph/ceph")
+        );
+
+        // As a CmdArg it cannot leak the secret through any formatting.
+        let arg = CmdArg::Secure(Arc::new(url));
+        assert!(!format!("{arg}").contains("s3cr3t"));
+        assert!(!format!("{arg:?}").contains("s3cr3t"));
+        assert_eq!(arg.plaintext(), "https://git:s3cr3t@github.com/ceph/ceph");
+    }
+
+    #[test]
+    fn secure_url_substitution_is_single_pass() {
+        // A secret whose value contains a literal later-placeholder token must
+        // survive verbatim, and the real later placeholders must still resolve
+        // (Python's str.format does one simultaneous pass).
+        let url = SecureUrl::new("https://{username}:{password}@{host}/{path}")
+            .arg("username", "git")
+            .secret("password", Password::new("a{path}b"))
+            .arg("host", "h")
+            .arg("path", "ceph/ceph");
+        assert_eq!(url.plaintext(), "https://git:a{path}b@h/ceph/ceph");
+        assert_eq!(
+            url.redacted(),
+            format!("https://git:{CENSORED}@h/ceph/ceph")
+        );
     }
 }
