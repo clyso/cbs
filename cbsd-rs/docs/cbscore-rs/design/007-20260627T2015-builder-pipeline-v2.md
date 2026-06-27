@@ -2,16 +2,16 @@
 seq: "007"
 type: design
 title: builder-pipeline
-version: 1
+version: 2
 updated: 2026-06-27T20:15
-superseded-by: 2
 ---
 
-# 007 — Builder pipeline
+# 007 — Builder pipeline (v2)
 
-> **Superseded by v2** (`007-20260627T2015-builder-pipeline-v2.md`): v2 adds a
-> patch-traversal fidelity note. This snapshot (v1) is otherwise the original
-> and is retained unchanged.
+> **Version 2** — supersedes v1 (`007-20260621T2216-builder-pipeline.md`). v2
+> adds a single fidelity note (patch traversal tolerates stray files), recording
+> an as-built divergence surfaced by the C3 implementation review; the rest of
+> the design is unchanged from v1.
 
 This is the reference design for the builder pipeline of the `cbscore` library:
 the in-container build orchestrator (`Builder.run`), its four stages (prepare →
@@ -247,6 +247,17 @@ with context.
 - **Silent component drop** — a component with no `get_release_rpm.sh` is
   dropped from the release descriptor though its RPMs are uploaded (Python
   behavior, reproduced + flagged as a quirk; Stage 4).
+- **Patch traversal — stray files tolerated** (added in v2) — while walking
+  `patches/`, the port's `collect_patches` (`prepare.rs`) **skips** any
+  non-`.patch` plain file. Python's `_get_patches_by_prio` recurses into every
+  non-`.patch` entry, but its depth>0 version-name guard prunes entries whose
+  name isn't the exact/minor/major version — so common strays (`README`,
+  `series`) are harmlessly skipped by both. The one real divergence: a stray
+  non-`.patch` **file named exactly like a version selector** (e.g. a file
+  literally named `1.2.3`) makes Python call `iterdir()` on a non-directory and
+  raise `NotADirectoryError` (build failure), where the port skips it. A
+  malformed `NNNN-` patch name is warned + skipped in both. Surfaced by the C3
+  implementation review.
 - **Dead code omitted** — the port does not copy Python's unused blocks (e.g.
   the trailing `patches_lst` computation in `_apply_patches`, built and never
   read).
