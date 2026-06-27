@@ -21,6 +21,7 @@ mod bundle;
 mod config;
 mod git;
 mod import;
+mod patch;
 mod release;
 mod secrets;
 mod vault;
@@ -241,6 +242,15 @@ enum PatchCmd {
         #[arg(long, env = "GITHUB_TOKEN")]
         github_token: Option<String>,
     },
+    /// List the imported patches.
+    ///
+    /// Prints `<blob_hash>  <subject>` per patch; `--json` emits the full
+    /// records as a JSON array.
+    List {
+        /// Emit the patches as a JSON array instead of text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Build the configured store backend. The S3 backend reads credentials from
@@ -318,6 +328,16 @@ async fn main() -> Result<()> {
                     imported.len(),
                     cfg.component
                 );
+            }
+            PatchCmd::List { json } => {
+                let store = open_store(&cfg.store, &cli.secrets)?;
+                let patches = patch::list(&store).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&patches)?);
+                } else {
+                    print!("{}", patch::render_list(&patches));
+                    eprintln!("{} patch(es)", patches.len());
+                }
             }
         },
         Command::Release { cmd } => {

@@ -75,6 +75,8 @@ pub trait Store: Send + Sync {
     async fn get_patch_id(&self, patch_id: &str) -> Result<Option<Sha256>>;
     /// Record that `patch_id` maps to `hash` (the equivalence index).
     async fn put_patch_id(&self, patch_id: &str, hash: &Sha256) -> Result<()>;
+    /// List the content addresses of all imported patches.
+    async fn list_patches(&self) -> Result<Vec<Sha256>>;
 
     /// Write (or overwrite) a mutable draft (design §5). Drafts are **not**
     /// write-once — `seal` consumes one and any operator can pick it up.
@@ -114,6 +116,8 @@ fn patch_id_path(patch_id: &str) -> StorePath {
 
 const DRAFTS_PREFIX: &str = "drafts";
 const RELEASES_PREFIX: &str = "releases";
+/// Listing prefix for patch metadata objects (the dir `meta_path` writes into).
+const PATCH_META_PREFIX: &str = "patches/meta/sha256";
 
 /// Reject a key that would not round-trip through the store's path layout: each
 /// segment must be non-empty and free of `/`, otherwise the object could be
@@ -165,6 +169,17 @@ fn parse_release_key(loc: &StorePath, prefix: &str) -> Option<ReleaseKey> {
         channel: parts[2].clone(),
         name,
     })
+}
+
+/// Recover a blob hash from a `patches/meta/sha256/<hex>.json` path (the inverse
+/// of `meta_path`). Entries that do not conform are skipped (returns `None`).
+fn parse_meta_hash(loc: &StorePath) -> Option<Sha256> {
+    let parts: Vec<String> = loc.parts().map(|p| p.as_ref().to_owned()).collect();
+    if parts.len() != 4 || parts[0] != "patches" || parts[1] != "meta" || parts[2] != "sha256" {
+        return None;
+    }
+    let hex = parts[3].strip_suffix(".json")?;
+    Sha256::try_from(hex.to_owned()).ok()
 }
 
 /// A `Store` backed by any `object_store::ObjectStore`.
@@ -306,6 +321,18 @@ impl Store for ObjectBackedStore {
         Ok(())
     }
 
+    async fn list_patches(&self) -> Result<Vec<Sha256>> {
+        let metas: Vec<ObjectMeta> = self
+            .inner
+            .list(Some(&StorePath::from(PATCH_META_PREFIX)))
+            .try_collect()
+            .await?;
+        Ok(metas
+            .iter()
+            .filter_map(|m| parse_meta_hash(&m.location))
+            .collect())
+    }
+
     async fn put_draft(&self, key: &ReleaseKey, draft: &Draft) -> Result<()> {
         validate_key(key)?;
         let json = serde_json::to_vec_pretty(draft)?;
@@ -423,6 +450,24 @@ mod tests {
         assert!(store.get_patch_id("pid-123").await.unwrap().is_none());
         store.put_patch_id("pid-123", &h).await.unwrap();
         assert_eq!(store.get_patch_id("pid-123").await.unwrap(), Some(h));
+    }
+
+    #[tokio::test]
+    async fn list_patches_enumerates_stored_meta() {
+        let store = ObjectBackedStore::in_memory();
+        assert!(store.list_patches().await.unwrap().is_empty());
+
+        let h1 = blob_hash(b"patch one");
+        let h2 = blob_hash(b"patch two");
+        for h in [h1, h2] {
+            store.put_blob(&h, b"raw").await.unwrap();
+            store.put_meta(&h, &sample_meta(h)).await.unwrap();
+        }
+
+        let listed = store.list_patches().await.unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.contains(&h1));
+        assert!(listed.contains(&h2));
     }
 
     fn sample_key(name: &str) -> ReleaseKey {
