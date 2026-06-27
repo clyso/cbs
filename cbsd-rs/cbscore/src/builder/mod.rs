@@ -24,8 +24,15 @@ use cbscore_types::{BuildArtifactReport, Config, VersionDescriptor};
 use tracing::debug;
 
 use crate::types::tracing_targets;
+use crate::utils::git::GitError;
 use crate::utils::redact::CmdArg;
+use crate::utils::secrets::SecretsError;
 use crate::utils::subprocess::{CommandError, OutLine, RunOpts, run_cmd};
+
+pub mod prepare;
+
+#[cfg(test)]
+mod test_support;
 
 /// The filename the report is written under, on the scratch mount.
 pub const BUILD_REPORT_FILE: &str = "build-report.json";
@@ -69,6 +76,40 @@ pub enum BuilderError {
     },
     #[error("error serialising build report")]
     Serialize(#[source] serde_json::Error),
+    /// No `cbs.component.yaml` defines a component named in the version.
+    #[error("no core component definition for '{0}'")]
+    ComponentNotDefined(String),
+    /// A git operation failed while preparing a component.
+    #[error("git error preparing component '{component}'")]
+    Git {
+        component: String,
+        #[source]
+        source: GitError,
+    },
+    /// Resolving a component's git URL against the configured secrets failed.
+    #[error("error resolving the git url for component '{component}'")]
+    Secrets {
+        component: String,
+        #[source]
+        source: SecretsError,
+    },
+    /// A required component script is missing on disk.
+    #[error("missing '{script}' script for component '{component}' (expected at '{path}')")]
+    MissingScript {
+        component: String,
+        script: String,
+        path: Utf8PathBuf,
+    },
+    /// A filesystem operation around component preparation failed.
+    #[error("filesystem error ({context})")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A per-component preparation task could not be joined (panicked/aborted).
+    #[error("component preparation task failed: {0}")]
+    ComponentTaskFailed(String),
 }
 
 /// One `prepare_builder` toolchain step: the command argv and a context label
