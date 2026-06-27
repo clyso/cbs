@@ -289,6 +289,8 @@ where
                 protocol_version,
                 connection_id,
                 grace_period_secs,
+                // G6 reads `accepts_metrics` here to gate the push collector.
+                ..
             } => {
                 tracing::info!(
                     %connection_id,

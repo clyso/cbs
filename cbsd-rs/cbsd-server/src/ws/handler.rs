@@ -360,6 +360,9 @@ async fn handle_connection(
             protocol_version: 2,
             connection_id: connection_id.clone(),
             grace_period_secs,
+            // Metrics push is not yet advertised; G5 sets this from the
+            // server's metrics config so workers only push when wanted.
+            accepts_metrics: false,
         },
     )
     .await
@@ -701,6 +704,17 @@ async fn handle_worker_message(
                     registered_worker_id: registered_worker_id.to_string(),
                     worker_name: worker_name.to_string(),
                 },
+            );
+        }
+        WorkerMessage::Metrics { .. } => {
+            // The wire contract exists (cbsd-proto), but the server does not yet
+            // advertise `accepts_metrics`, so no compliant worker pushes this.
+            // Ingestion under a server-stamped `worker` label lands in G5;
+            // until then a stray sample is dropped rather than mis-attributed.
+            tracing::debug!(
+                connection_id = %connection_id,
+                worker_name = %worker_name,
+                "received worker metrics before ingestion is wired; dropping"
             );
         }
     }
@@ -1352,6 +1366,7 @@ fn message_type_name(msg: &WorkerMessage) -> &'static str {
         WorkerMessage::BuildRejected { .. } => "build_rejected",
         WorkerMessage::WorkerStatus { .. } => "worker_status",
         WorkerMessage::WorkerStopping { .. } => "worker_stopping",
+        WorkerMessage::Metrics { .. } => "metrics",
     }
 }
 

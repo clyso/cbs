@@ -57,6 +57,13 @@ pub enum ServerMessage {
         connection_id: String,
         /// Worker validates its backoff ceiling against this value.
         grace_period_secs: u64,
+        /// Whether the server wants this worker to push host/app metrics over
+        /// the connection. A worker that does not understand the field (older
+        /// build) defaults it to `false` and stays silent, so enabling metrics
+        /// never breaks a rolling upgrade. `#[serde(default)]` makes an absent
+        /// field decode to `false`; the server sets it from its metrics config.
+        #[serde(default)]
+        accepts_metrics: bool,
     },
 
     /// Connection or protocol error. Server closes the connection after this.
@@ -179,6 +186,84 @@ pub enum WorkerMessage {
     /// Worker is shutting down gracefully (protocol v2). The server identifies
     /// the worker from the connection map — `worker_id` is no longer sent.
     WorkerStopping { reason: String },
+
+    /// Periodic host + application metrics sample (design 021). Sent only when
+    /// the server advertised `accepts_metrics` in its `Welcome`. The server
+    /// re-exposes these under a `worker` label it stamps from the connection
+    /// identity, so the worker never asserts its own label — bounding
+    /// cardinality and preventing a worker from forging another's series.
+    Metrics {
+        /// Seconds since the worker process started — lets the server detect a
+        /// worker restart (counter reset) without a separate signal.
+        uptime_secs: u64,
+        host: HostMetrics,
+        app: AppMetrics,
+    },
+}
+
+/// Host resource sample taken by the worker (design 021). All gauges are
+/// point-in-time except the `*_total` fields, which are monotonic since-boot
+/// counters the server exposes as Prometheus counters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostMetrics {
+    /// Fraction of CPU time spent non-idle since the previous sample, `0.0`–`1.0`.
+    pub cpu_busy_ratio: f64,
+    /// 1-minute load average.
+    pub load1: f64,
+    pub mem_total_bytes: u64,
+    pub mem_used_bytes: u64,
+    pub mem_available_bytes: u64,
+    pub swap_total_bytes: u64,
+    pub swap_used_bytes: u64,
+    /// Per-filesystem usage for the mounts the worker cares about (build spool,
+    /// ccache). Bounded to a few entries to keep label cardinality small.
+    pub filesystems: Vec<FilesystemUsage>,
+    /// Monotonic since-boot disk byte counters across the host's block devices.
+    pub disk_read_bytes_total: u64,
+    pub disk_written_bytes_total: u64,
+}
+
+/// Usage of a single mounted filesystem.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilesystemUsage {
+    pub mount: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+}
+
+/// Application-level sample sourced from the worker's own state (design 021):
+/// ccache, build-subprocess outcomes, output-spool size, and dropped pushes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppMetrics {
+    /// ccache statistics, absent when ccache is unavailable or not yet probed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ccache: Option<CcacheMetrics>,
+    pub subprocess_exits: SubprocessExitCounts,
+    /// Current bytes held in the build output spool.
+    pub spool_bytes: u64,
+    /// Metrics samples the worker dropped rather than block the build path —
+    /// nonzero means the server is missing samples and the push path is the
+    /// bottleneck.
+    pub push_drops_total: u64,
+}
+
+/// ccache size and effectiveness (from `ccache -s`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CcacheMetrics {
+    pub size_bytes: u64,
+    pub max_bytes: u64,
+    /// Cache hit ratio `0.0`–`1.0` over ccache's own accounting window.
+    pub hit_ratio: f64,
+}
+
+/// Build-subprocess exit tally since the worker started, partitioned by
+/// outcome. `Copy` because it is a small fixed-size value passed by value
+/// through the worker's collector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubprocessExitCounts {
+    pub success: u64,
+    pub failure: u64,
+    pub revoked: u64,
 }
 
 /// State reported by a worker on reconnect.
@@ -256,6 +341,7 @@ mod tests {
             protocol_version: 1,
             connection_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
             grace_period_secs: 90,
+            accepts_metrics: false,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""grace_period_secs":90"#));
@@ -406,6 +492,109 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains(r#""build_id":42"#));
+    }
+
+    #[test]
+    fn welcome_missing_accepts_metrics_defaults_false() {
+        // Older server → newer worker: the field is absent on the wire and must
+        // decode to `false` so a worker never starts pushing unrequested.
+        let json =
+            r#"{"type":"welcome","protocol_version":2,"connection_id":"c","grace_period_secs":60}"#;
+        let parsed: ServerMessage = serde_json::from_str(json).unwrap();
+        match parsed {
+            ServerMessage::Welcome {
+                accepts_metrics, ..
+            } => assert!(!accepts_metrics, "absent accepts_metrics must be false"),
+            other => panic!("expected Welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn worker_message_metrics_round_trip() {
+        let msg = WorkerMessage::Metrics {
+            uptime_secs: 3600,
+            host: HostMetrics {
+                cpu_busy_ratio: 0.42,
+                load1: 1.5,
+                mem_total_bytes: 64 * 1024 * 1024 * 1024,
+                mem_used_bytes: 12 * 1024 * 1024 * 1024,
+                mem_available_bytes: 52 * 1024 * 1024 * 1024,
+                swap_total_bytes: 0,
+                swap_used_bytes: 0,
+                filesystems: vec![FilesystemUsage {
+                    mount: "/cbs/spool".to_string(),
+                    total_bytes: 500 * 1024 * 1024 * 1024,
+                    used_bytes: 120 * 1024 * 1024 * 1024,
+                }],
+                disk_read_bytes_total: 1_000_000,
+                disk_written_bytes_total: 2_000_000,
+            },
+            app: AppMetrics {
+                ccache: Some(CcacheMetrics {
+                    size_bytes: 8 * 1024 * 1024 * 1024,
+                    max_bytes: 20 * 1024 * 1024 * 1024,
+                    hit_ratio: 0.87,
+                }),
+                subprocess_exits: SubprocessExitCounts {
+                    success: 10,
+                    failure: 2,
+                    revoked: 1,
+                },
+                spool_bytes: 42,
+                push_drops_total: 0,
+            },
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains(r#""type":"metrics""#));
+        assert!(json.contains(r#""cpu_busy_ratio":0.42"#));
+        assert!(json.contains(r#""mount":"/cbs/spool""#));
+        let parsed: WorkerMessage = serde_json::from_str(&json).unwrap();
+        match parsed {
+            WorkerMessage::Metrics {
+                uptime_secs,
+                host,
+                app,
+            } => {
+                assert_eq!(uptime_secs, 3600);
+                assert_eq!(host.filesystems.len(), 1);
+                assert_eq!(app.subprocess_exits.failure, 2);
+                assert_eq!(app.ccache.unwrap().hit_ratio, 0.87);
+            }
+            other => panic!("expected Metrics, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn app_metrics_absent_ccache_omits_field() {
+        // ccache may be unavailable; absent ccache must skip-serialize so the
+        // wire shape stays minimal and an older reader sees no surprise field.
+        let app = AppMetrics {
+            ccache: None,
+            subprocess_exits: SubprocessExitCounts {
+                success: 0,
+                failure: 0,
+                revoked: 0,
+            },
+            spool_bytes: 0,
+            push_drops_total: 0,
+        };
+        let json = serde_json::to_string(&app).unwrap();
+        assert!(
+            !json.contains("ccache"),
+            "None ccache must be omitted: {json}"
+        );
+    }
+
+    #[test]
+    fn ccache_metrics_tolerates_unknown_field() {
+        // SI-18: `CcacheMetrics` must not gain `deny_unknown_fields` — a newer
+        // worker adding a stat here must still decode on an older server. The
+        // metrics-variant SI-18 case omits ccache (it is `None`), so this is the
+        // only coverage for that struct's forward compatibility.
+        let json = r#"{"size_bytes":1,"max_bytes":2,"hit_ratio":0.5,"future_field":"x"}"#;
+        let parsed: CcacheMetrics = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.size_bytes, 1);
+        assert_eq!(parsed.hit_ratio, 0.5);
     }
 
     #[test]
@@ -637,6 +826,7 @@ mod tests {
                 protocol_version: 2,
                 connection_id: String::new(),
                 grace_period_secs: 0,
+                accepts_metrics: false,
             },
             ServerMessageTag::Error => ServerMessage::Error {
                 reason: String::new(),
@@ -756,6 +946,271 @@ mod tests {
             // Confirm the deserialized variant matches its expected wire tag.
             let msg = result.unwrap();
             let witnessed = ServerMessageTag::from_message(&msg).as_wire();
+            assert_eq!(
+                wire, witnessed,
+                "case payload tagged `{wire}` deserialized to wire tag \
+                 `{witnessed}` — case-tag/payload-type drift",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SI-18 parity for `WorkerMessage`. The worker→server direction needs the
+    // same forward-compatibility guarantee: a newer worker that adds a field
+    // (e.g. to the metrics payload) must not break an older server. This
+    // mirrors the `ServerMessage` machinery so a new `WorkerMessage` variant is
+    // dragged through the same compile-time gates (witness, tag, sentinel)
+    // before it can land without a deserialization case.
+    // -----------------------------------------------------------------------
+
+    fn test_host_metrics() -> HostMetrics {
+        HostMetrics {
+            cpu_busy_ratio: 0.0,
+            load1: 0.0,
+            mem_total_bytes: 0,
+            mem_used_bytes: 0,
+            mem_available_bytes: 0,
+            swap_total_bytes: 0,
+            swap_used_bytes: 0,
+            filesystems: Vec::new(),
+            disk_read_bytes_total: 0,
+            disk_written_bytes_total: 0,
+        }
+    }
+
+    fn test_app_metrics() -> AppMetrics {
+        AppMetrics {
+            ccache: None,
+            subprocess_exits: SubprocessExitCounts {
+                success: 0,
+                failure: 0,
+                revoked: 0,
+            },
+            spool_bytes: 0,
+            push_drops_total: 0,
+        }
+    }
+
+    /// Companion enum mirroring `WorkerMessage`'s variants without their data.
+    #[derive(strum::EnumIter, Debug, Clone, Copy, PartialEq, Eq)]
+    enum WorkerMessageTag {
+        Hello,
+        WorkerStatus,
+        BuildAccepted,
+        BuildRejected,
+        BuildStarted,
+        BuildOutput,
+        BuildFinished,
+        WorkerStopping,
+        Metrics,
+    }
+
+    impl WorkerMessageTag {
+        /// Compile-time witness; exhaustive on `WorkerMessage`.
+        fn from_message(msg: &WorkerMessage) -> Self {
+            match msg {
+                WorkerMessage::Hello { .. } => Self::Hello,
+                WorkerMessage::WorkerStatus { .. } => Self::WorkerStatus,
+                WorkerMessage::BuildAccepted { .. } => Self::BuildAccepted,
+                WorkerMessage::BuildRejected { .. } => Self::BuildRejected,
+                WorkerMessage::BuildStarted { .. } => Self::BuildStarted,
+                WorkerMessage::BuildOutput { .. } => Self::BuildOutput,
+                WorkerMessage::BuildFinished { .. } => Self::BuildFinished,
+                WorkerMessage::WorkerStopping { .. } => Self::WorkerStopping,
+                WorkerMessage::Metrics { .. } => Self::Metrics,
+            }
+        }
+
+        /// Wire-format tag (the serde `"type"` discriminator).
+        fn as_wire(&self) -> &'static str {
+            match self {
+                Self::Hello => "hello",
+                Self::WorkerStatus => "worker_status",
+                Self::BuildAccepted => "build_accepted",
+                Self::BuildRejected => "build_rejected",
+                Self::BuildStarted => "build_started",
+                Self::BuildOutput => "build_output",
+                Self::BuildFinished => "build_finished",
+                Self::WorkerStopping => "worker_stopping",
+                Self::Metrics => "metrics",
+            }
+        }
+    }
+
+    /// Construct a sentinel `WorkerMessage` for a given tag; exhaustive on the
+    /// tag enum, so a new tag variant is compile-forced to add an arm.
+    fn sentinel_for_worker_tag(tag: WorkerMessageTag) -> WorkerMessage {
+        match tag {
+            WorkerMessageTag::Hello => WorkerMessage::Hello {
+                protocol_version: 2,
+                arch: Arch::X86_64,
+                cores_total: 0,
+                ram_total_mb: 0,
+                version: None,
+            },
+            WorkerMessageTag::WorkerStatus => WorkerMessage::WorkerStatus {
+                state: WorkerReportedState::Idle,
+                build_id: None,
+            },
+            WorkerMessageTag::BuildAccepted => WorkerMessage::BuildAccepted {
+                build_id: BuildId(0),
+            },
+            WorkerMessageTag::BuildRejected => WorkerMessage::BuildRejected {
+                build_id: BuildId(0),
+                reason: String::new(),
+            },
+            WorkerMessageTag::BuildStarted => WorkerMessage::BuildStarted {
+                build_id: BuildId(0),
+            },
+            WorkerMessageTag::BuildOutput => WorkerMessage::BuildOutput {
+                build_id: BuildId(0),
+                start_seq: 0,
+                lines: Vec::new(),
+            },
+            WorkerMessageTag::BuildFinished => WorkerMessage::BuildFinished {
+                build_id: BuildId(0),
+                status: BuildFinishedStatus::Success,
+                error: None,
+                build_report: None,
+            },
+            WorkerMessageTag::WorkerStopping => WorkerMessage::WorkerStopping {
+                reason: String::new(),
+            },
+            WorkerMessageTag::Metrics => WorkerMessage::Metrics {
+                uptime_secs: 0,
+                host: test_host_metrics(),
+                app: test_app_metrics(),
+            },
+        }
+    }
+
+    /// JSON payloads for the SI-18 check, keyed by wire tag; each carries an
+    /// injected `future_field` to exercise the unknown-field path.
+    fn worker_cases() -> Vec<(&'static str, Value)> {
+        vec![
+            (
+                "hello",
+                json!({
+                    "type": "hello",
+                    "protocol_version": 2,
+                    "arch": "x86_64",
+                    "cores_total": 8,
+                    "ram_total_mb": 32768,
+                    "future_field": "x",
+                }),
+            ),
+            (
+                "worker_status",
+                json!({
+                    "type": "worker_status",
+                    "state": "idle",
+                    "future_field": "x",
+                }),
+            ),
+            (
+                "build_accepted",
+                json!({"type": "build_accepted", "build_id": 1, "future_field": "x"}),
+            ),
+            (
+                "build_rejected",
+                json!({"type": "build_rejected", "build_id": 1, "reason": "no", "future_field": "x"}),
+            ),
+            (
+                "build_started",
+                json!({"type": "build_started", "build_id": 1, "future_field": "x"}),
+            ),
+            (
+                "build_output",
+                json!({
+                    "type": "build_output",
+                    "build_id": 1,
+                    "start_seq": 0,
+                    "lines": [],
+                    "future_field": "x",
+                }),
+            ),
+            (
+                "build_finished",
+                json!({
+                    "type": "build_finished",
+                    "build_id": 1,
+                    "status": "success",
+                    "future_field": "x",
+                }),
+            ),
+            (
+                "worker_stopping",
+                json!({"type": "worker_stopping", "reason": "bye", "future_field": "x"}),
+            ),
+            (
+                "metrics",
+                json!({
+                    "type": "metrics",
+                    "uptime_secs": 1,
+                    "host": {
+                        "cpu_busy_ratio": 0.0,
+                        "load1": 0.0,
+                        "mem_total_bytes": 0,
+                        "mem_used_bytes": 0,
+                        "mem_available_bytes": 0,
+                        "swap_total_bytes": 0,
+                        "swap_used_bytes": 0,
+                        "filesystems": [],
+                        "disk_read_bytes_total": 0,
+                        "disk_written_bytes_total": 0,
+                        "future_field": "x",
+                    },
+                    "app": {
+                        "subprocess_exits": {
+                            "success": 0,
+                            "failure": 0,
+                            "revoked": 0,
+                            "future_field": "x",
+                        },
+                        "spool_bytes": 0,
+                        "push_drops_total": 0,
+                        "future_field": "x",
+                    },
+                    "future_field": "x",
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn no_deny_unknown_fields_on_worker_message() {
+        let cases_map: std::collections::HashMap<&'static str, Value> =
+            worker_cases().into_iter().collect();
+
+        for tag in WorkerMessageTag::iter() {
+            let wire = tag.as_wire();
+            let sentinel = sentinel_for_worker_tag(tag);
+            let witnessed = WorkerMessageTag::from_message(&sentinel);
+            assert_eq!(
+                tag, witnessed,
+                "sentinel/witness drift for tag `{wire}`: from_message returned \
+                 a different WorkerMessageTag",
+            );
+            assert!(
+                cases_map.contains_key(wire),
+                "WorkerMessageTag::{tag:?} (wire `{wire}`) has no entry in \
+                 worker_cases() — SI-18 is not enforced for this variant. Add a \
+                 case to worker_cases() in cbsd-proto/src/ws.rs.",
+            );
+        }
+
+        for (wire, payload) in cases_map {
+            let result: Result<WorkerMessage, _> = serde_json::from_value(payload);
+            assert!(
+                result.is_ok(),
+                "WorkerMessage `{wire}` rejected an unknown field — likely \
+                 `#[serde(deny_unknown_fields)]` was added to the WorkerMessage \
+                 enum or to a nested payload struct; that violates SI-18 and \
+                 breaks rolling upgrades. Error: {:?}",
+                result.err(),
+            );
+            let msg = result.unwrap();
+            let witnessed = WorkerMessageTag::from_message(&msg).as_wire();
             assert_eq!(
                 wire, witnessed,
                 "case payload tagged `{wire}` deserialized to wire tag \
