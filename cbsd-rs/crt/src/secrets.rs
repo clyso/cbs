@@ -44,10 +44,32 @@ pub struct VaultSecrets {
     /// AppRole auth (role-id / secret-id).
     #[serde(default)]
     pub approle: Option<VaultAppRole>,
-    /// Logical key name → vault path, e.g.
-    /// `gpg_signing_private: secret/data/crt/openpgp-signing-key`.
+    /// Named signing-key secrets. `crt.config.yaml`'s `gpg_private_key` selects
+    /// one by name; see [`VaultKeyEntry`].
     #[serde(default)]
-    pub keys: BTreeMap<String, String>,
+    pub keys: BTreeMap<String, VaultKeyEntry>,
+}
+
+/// A named signing-key secret: the KV v2 path, plus which fields inside that
+/// secret hold the armored private key and (optionally) its passphrase. The
+/// field names default to `private-key` / `passphrase` but can name any fields
+/// (e.g. a secret shaped `{ "key": "…", "passphrase": "…" }` sets
+/// `private_key_field: key`).
+#[derive(Debug, Deserialize)]
+pub struct VaultKeyEntry {
+    pub path: String,
+    #[serde(default = "default_private_key_field")]
+    pub private_key_field: String,
+    #[serde(default = "default_passphrase_field")]
+    pub passphrase_field: String,
+}
+
+fn default_private_key_field() -> String {
+    "private-key".to_owned()
+}
+
+fn default_passphrase_field() -> String {
+    "passphrase".to_owned()
 }
 
 /// Username/password auth against a Vault `userpass` mount.
@@ -256,5 +278,29 @@ mod tests {
             "vault:\n  addr: https://v\n  userpass:\n    username: u\n    password: \"\"\n",
         );
         assert!(v.auth().is_err(), "a blank password must error");
+    }
+
+    #[test]
+    fn a_key_entry_uses_custom_field_names() {
+        let v = vault_from(
+            "vault:\n  addr: https://v\n  token: t\n  keys:\n    \
+             release-signing:\n      path: ces-kv/gpg/pvt\n      \
+             private_key_field: key\n      passphrase_field: pass\n",
+        );
+        let entry = &v.keys["release-signing"];
+        assert_eq!(entry.path, "ces-kv/gpg/pvt");
+        assert_eq!(entry.private_key_field, "key");
+        assert_eq!(entry.passphrase_field, "pass");
+    }
+
+    #[test]
+    fn a_key_entry_defaults_the_field_names() {
+        let v = vault_from(
+            "vault:\n  addr: https://v\n  token: t\n  keys:\n    \
+             k:\n      path: secret/data/crt/key\n",
+        );
+        let entry = &v.keys["k"];
+        assert_eq!(entry.private_key_field, "private-key");
+        assert_eq!(entry.passphrase_field, "passphrase");
     }
 }

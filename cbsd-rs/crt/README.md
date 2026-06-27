@@ -161,17 +161,26 @@ s3:
   secret_access_key: example-secret-key
 
 # Required for `release seal` and `release materialize`, which sign with the
-# OpenPGP key kept in HashiCorp Vault (KV v2). The secret at the path below must
-# carry the armored private key in a `private-key` field, with an optional
-# `passphrase` field — matching cbscore's GPGVaultPrivateKeySecret convention so
-# one Vault secret can serve both tools.
+# OpenPGP key kept in HashiCorp Vault (KV v2).
 vault:
   addr: https://vault.example.com
   # authenticate with exactly one of token / userpass / approle:
   token: s.exampletoken
+  # named signing-key secrets; crt.config.yaml's `gpg_private_key` picks one:
   keys:
-    gpg_signing_private: secret/data/crt/openpgp-signing-key
+    release-signing:
+      path: ces-kv/gpg/pvt # KV v2 path; the mount is the first segment
+      private_key_field: key # armored-key field (default private-key)
+      passphrase_field: passphrase # optional (default passphrase)
 ```
+
+**Which key to sign with.** `crt.config.yaml`'s `gpg_private_key` names the
+`vault.keys` entry to use (default `gpg_signing_private`). Each entry gives the
+KV v2 `path` plus which fields inside that secret hold the key and passphrase:
+`private_key_field` / `passphrase_field` default to `private-key` /
+`passphrase`, so a secret shaped `{ "key": "…", "passphrase": "…" }` sets
+`private_key_field: key`. The mount is the path's first segment (`ces-kv/…`);
+the `data` infix is optional (`ces-kv/data/…` or `ces-kv/…`).
 
 **Vault authentication** mirrors cbscore's three methods — set **exactly one**
 under `vault:` (more than one, or none, is rejected):
@@ -183,15 +192,13 @@ under `vault:` (more than one, or none, is rejected):
 | `approle`  | `role_id`, `secret_id`, `mount` | `mount` defaults `approle`  |
 
 ```yaml
-# userpass instead of token:
+# userpass instead of token (the `keys:` block is the same):
 vault:
   addr: https://vault.example.com
   userpass:
     username: my-user
     password: my-password
     # mount: userpass   # optional
-  keys:
-    gpg_signing_private: secret/data/crt/openpgp-signing-key
 
 # or AppRole:
 vault:
@@ -200,14 +207,11 @@ vault:
     role_id: my-role-id
     secret_id: my-secret-id
     # mount: approle    # optional
-  keys:
-    gpg_signing_private: secret/data/crt/openpgp-signing-key
 ```
 
 For `userpass`/`approle`, `crt` logs in at sign time and exchanges the
 credentials for a short-lived token. The signing key is fetched at sign time and
-**never persisted by `crt`**. The configured key path may be written with or
-without the KV v2 `data` infix (`secret/data/crt/key` or `secret/crt/key`).
+**never persisted by `crt`**.
 
 ## Commands
 

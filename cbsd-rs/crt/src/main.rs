@@ -404,7 +404,8 @@ async fn main() -> Result<()> {
                             cli.secrets.display()
                         )
                     })?;
-                    let signing = vault::fetch_signing_key(&vault).await?;
+                    let signing =
+                        vault::fetch_signing_key(&vault, cfg.gpg_private_key_name()).await?;
                     let sealed = release::seal_release(
                         &store,
                         &cfg,
@@ -451,7 +452,8 @@ async fn main() -> Result<()> {
                             cli.secrets.display()
                         )
                     })?;
-                    let signing = vault::fetch_signing_key(&vault).await?;
+                    let signing =
+                        vault::fetch_signing_key(&vault, cfg.gpg_private_key_name()).await?;
                     let created = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, false);
                     let summary = release::materialize(
                         &store,

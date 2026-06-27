@@ -38,7 +38,14 @@ pub struct Config {
     /// URL; the `--public-key` flag overrides it.
     #[serde(default)]
     pub public_key_url: Option<String>,
+    /// Which `vault.keys` entry to sign with (`seal` / `materialize`). Names a
+    /// key in the secrets file; defaults to [`DEFAULT_GPG_KEY_NAME`] when unset.
+    #[serde(default)]
+    pub gpg_private_key: Option<String>,
 }
+
+/// Default `vault.keys` entry name when `gpg_private_key` is unset.
+pub const DEFAULT_GPG_KEY_NAME: &str = "gpg_signing_private";
 
 /// A configured namespace: a set of named channels (design §9).
 #[derive(Debug, Deserialize)]
@@ -129,6 +136,14 @@ impl Config {
             self.risk_components
         )
     }
+
+    /// The `vault.keys` entry name to sign with — the configured
+    /// `gpg_private_key`, or [`DEFAULT_GPG_KEY_NAME`] when unset.
+    pub fn gpg_private_key_name(&self) -> &str {
+        self.gpg_private_key
+            .as_deref()
+            .unwrap_or(DEFAULT_GPG_KEY_NAME)
+    }
 }
 
 /// Load and parse the config file at `path`.
@@ -201,6 +216,7 @@ store:
             risk_components: vec![],
             namespaces: ns_map,
             public_key_url: None,
+            gpg_private_key: None,
         }
     }
 
@@ -256,5 +272,13 @@ store:
         cfg.risk_components = vec!["rgw".to_owned(), "dashboard".to_owned()];
         assert!(cfg.validate_risk_component("rgw").is_ok());
         assert!(cfg.validate_risk_component("mds").is_err());
+    }
+
+    #[test]
+    fn gpg_private_key_name_defaults_then_overrides() {
+        let mut cfg = config_with(&[("clyso-enterprise", &["ces"])]);
+        assert_eq!(cfg.gpg_private_key_name(), DEFAULT_GPG_KEY_NAME);
+        cfg.gpg_private_key = Some("release-signing".to_owned());
+        assert_eq!(cfg.gpg_private_key_name(), "release-signing");
     }
 }

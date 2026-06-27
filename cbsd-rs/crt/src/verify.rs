@@ -822,6 +822,7 @@ mod tests {
             risk_components: vec![],
             namespaces,
             public_key_url: None,
+            gpg_private_key: None,
         }
     }
 

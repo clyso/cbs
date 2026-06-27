@@ -9,27 +9,16 @@
 //!
 //! Authentication mirrors cbscore's three methods — a pre-issued token,
 //! username/password (userpass), or AppRole — selected by [`VaultSecrets::auth`].
-//! The vault secret holds the armored private key under a `private-key` field
-//! (plus an optional `passphrase`), matching cbscore's `GPGVaultPrivateKeySecret`
-//! convention so a single Vault secret can serve both tools.
+//! The signing key is one of the named `vault.keys` entries (chosen by
+//! `crt.config.yaml`'s `gpg_private_key`); the entry names which fields inside
+//! the KV v2 secret hold the armored key and passphrase (defaults `private-key`
+//! / `passphrase`), matching cbscore's `GPGVaultPrivateKeySecret` convention.
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde_json::{Map, Value};
 use vaultrs::client::{Client, VaultClient, VaultClientSettingsBuilder};
 
-use crate::secrets::{VaultAuth, VaultSecrets};
-
-/// The logical name (in `secrets.vault.keys`) of the release signing key.
-pub const SIGNING_KEY_NAME: &str = "gpg_signing_private";
-
-/// A KV v2 secret carrying an armored OpenPGP private key.
-#[derive(Debug, Deserialize)]
-struct SigningKeySecret {
-    #[serde(rename = "private-key")]
-    private_key: String,
-    #[serde(default)]
-    passphrase: Option<String>,
-}
+use crate::secrets::{VaultAuth, VaultKeyEntry, VaultSecrets};
 
 /// The fetched signing material handed to `crt-core::sign_manifest`.
 pub struct SigningKey {
@@ -37,17 +26,46 @@ pub struct SigningKey {
     pub passphrase: Option<String>,
 }
 
-/// Fetch the release signing key named [`SIGNING_KEY_NAME`] from Vault. The
-/// vault path comes from `secrets.vault.keys`; the secret must expose a
-/// `private-key` field (and optionally `passphrase`). The client authenticates
-/// with whichever method [`VaultSecrets::auth`] resolves (token / userpass /
-/// AppRole).
-pub async fn fetch_signing_key(vault: &VaultSecrets) -> Result<SigningKey> {
-    let full_path = vault
+/// Pull the armored key (and optional passphrase) out of a KV v2 secret's data
+/// dict, using the field names configured on `entry`. An absent passphrase
+/// field is `None`. Pure (no IO) so the field mapping is unit-testable.
+fn extract_signing_key(data: &Map<String, Value>, entry: &VaultKeyEntry) -> Result<SigningKey> {
+    let armored = data
+        .get(&entry.private_key_field)
+        .and_then(|v| v.as_str())
+        .with_context(|| {
+            format!(
+                "field {:?} is missing or not a string",
+                entry.private_key_field
+            )
+        })?;
+    // A present-but-non-string passphrase is a misconfiguration, not "no
+    // passphrase" — surface it like the key field rather than silently dropping.
+    let passphrase = match data.get(&entry.passphrase_field) {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_str()
+                .with_context(|| format!("field {:?} is not a string", entry.passphrase_field))?
+                .to_owned(),
+        ),
+    };
+    Ok(SigningKey {
+        armored_private_key: armored.to_owned(),
+        passphrase,
+    })
+}
+
+/// Fetch the signing key named `key_name` (a `vault.keys` entry) from Vault. The
+/// entry's `path` locates the KV v2 secret and its `private_key_field` /
+/// `passphrase_field` name the fields to read. The client authenticates with
+/// whichever method [`VaultSecrets::auth`] resolves (token / userpass / AppRole).
+pub async fn fetch_signing_key(vault: &VaultSecrets, key_name: &str) -> Result<SigningKey> {
+    let entry = vault
         .keys
-        .get(SIGNING_KEY_NAME)
-        .with_context(|| format!("secrets `vault.keys` has no {SIGNING_KEY_NAME:?} entry"))?;
-    let (mount, secret_path) = split_kv2_path(full_path)?;
+        .get(key_name)
+        .with_context(|| format!("secrets `vault.keys` has no {key_name:?} entry"))?;
+    let (mount, secret_path) = split_kv2_path(&entry.path)?;
 
     let auth = vault.auth()?;
 
@@ -83,14 +101,12 @@ pub async fn fetch_signing_key(vault: &VaultSecrets) -> Result<SigningKey> {
         }
     }
 
-    let secret: SigningKeySecret = vaultrs::kv2::read(&client, &mount, &secret_path)
+    let data: Map<String, Value> = vaultrs::kv2::read(&client, &mount, &secret_path)
         .await
-        .with_context(|| format!("reading the signing key from Vault at {full_path:?}"))?;
+        .with_context(|| format!("reading the Vault secret at {:?}", entry.path))?;
 
-    Ok(SigningKey {
-        armored_private_key: secret.private_key,
-        passphrase: secret.passphrase,
-    })
+    extract_signing_key(&data, entry)
+        .with_context(|| format!("in the Vault secret at {:?}", entry.path))
 }
 
 /// Split a KV v2 path into `(mount, path)`. The configured path may be written
@@ -139,14 +155,24 @@ mod tests {
         assert!(split_kv2_path("secret/data").is_err());
     }
 
-    /// A `VaultSecrets` pointing the signing key at `CRT_TEST_VAULT_PATH` on the
-    /// `CRT_TEST_VAULT_ADDR` server, with no auth method set (the caller fills
-    /// one in). Shared by the live tests below.
+    /// The `vault.keys` entry name the live tests register and fetch.
+    const TEST_KEY_NAME: &str = "signing";
+
+    /// A `VaultSecrets` whose `signing` key points at `CRT_TEST_VAULT_PATH` on
+    /// the `CRT_TEST_VAULT_ADDR` server, with no auth method set (the caller
+    /// fills one in). The KV field names default to `private-key` / `passphrase`
+    /// but honor `CRT_TEST_VAULT_KEY_FIELD` / `CRT_TEST_VAULT_PASS_FIELD`.
     fn live_vault_base() -> VaultSecrets {
         let mut keys = BTreeMap::new();
         keys.insert(
-            SIGNING_KEY_NAME.to_owned(),
-            std::env::var("CRT_TEST_VAULT_PATH").expect("CRT_TEST_VAULT_PATH"),
+            TEST_KEY_NAME.to_owned(),
+            VaultKeyEntry {
+                path: std::env::var("CRT_TEST_VAULT_PATH").expect("CRT_TEST_VAULT_PATH"),
+                private_key_field: std::env::var("CRT_TEST_VAULT_KEY_FIELD")
+                    .unwrap_or_else(|_| "private-key".to_owned()),
+                passphrase_field: std::env::var("CRT_TEST_VAULT_PASS_FIELD")
+                    .unwrap_or_else(|_| "passphrase".to_owned()),
+            },
         );
         VaultSecrets {
             addr: std::env::var("CRT_TEST_VAULT_ADDR").expect("CRT_TEST_VAULT_ADDR"),
@@ -171,7 +197,7 @@ mod tests {
             token: Some(std::env::var("CRT_TEST_VAULT_TOKEN").expect("CRT_TEST_VAULT_TOKEN")),
             ..live_vault_base()
         };
-        assert_is_private_key(&fetch_signing_key(&vault).await.unwrap());
+        assert_is_private_key(&fetch_signing_key(&vault, TEST_KEY_NAME).await.unwrap());
     }
 
     /// Live userpass-auth fetch. Adds `CRT_TEST_VAULT_USERNAME` /
@@ -189,7 +215,7 @@ mod tests {
             userpass: Some(userpass),
             ..live_vault_base()
         };
-        assert_is_private_key(&fetch_signing_key(&vault).await.unwrap());
+        assert_is_private_key(&fetch_signing_key(&vault, TEST_KEY_NAME).await.unwrap());
     }
 
     /// Live AppRole-auth fetch. Adds `CRT_TEST_VAULT_ROLE_ID` /
@@ -207,6 +233,55 @@ mod tests {
             approle: Some(approle),
             ..live_vault_base()
         };
-        assert_is_private_key(&fetch_signing_key(&vault).await.unwrap());
+        assert_is_private_key(&fetch_signing_key(&vault, TEST_KEY_NAME).await.unwrap());
+    }
+
+    /// A `VaultKeyEntry` naming the given fields (the path is irrelevant to
+    /// `extract_signing_key`).
+    fn entry_with(private_key_field: &str, passphrase_field: &str) -> VaultKeyEntry {
+        VaultKeyEntry {
+            path: "ces-kv/gpg/pvt".to_owned(),
+            private_key_field: private_key_field.to_owned(),
+            passphrase_field: passphrase_field.to_owned(),
+        }
+    }
+
+    #[test]
+    fn extract_reads_the_configured_fields() {
+        let data: Map<String, Value> =
+            serde_json::from_str(r#"{"key":"ARMORED","passphrase":"pw"}"#).unwrap();
+        let sk = extract_signing_key(&data, &entry_with("key", "passphrase")).unwrap();
+        assert_eq!(sk.armored_private_key, "ARMORED");
+        assert_eq!(sk.passphrase.as_deref(), Some("pw"));
+    }
+
+    #[test]
+    fn extract_treats_an_absent_passphrase_as_none() {
+        let data: Map<String, Value> = serde_json::from_str(r#"{"key":"ARMORED"}"#).unwrap();
+        let sk = extract_signing_key(&data, &entry_with("key", "passphrase")).unwrap();
+        assert_eq!(sk.armored_private_key, "ARMORED");
+        assert!(sk.passphrase.is_none());
+    }
+
+    #[test]
+    fn extract_errors_when_the_key_field_is_missing() {
+        // The secret stores `private-key`, but the entry looks for `key`.
+        let data: Map<String, Value> =
+            serde_json::from_str(r#"{"private-key":"ARMORED"}"#).unwrap();
+        assert!(extract_signing_key(&data, &entry_with("key", "passphrase")).is_err());
+    }
+
+    #[test]
+    fn extract_errors_when_the_key_value_is_not_a_string() {
+        let data: Map<String, Value> = serde_json::from_str(r#"{"key":123}"#).unwrap();
+        assert!(extract_signing_key(&data, &entry_with("key", "passphrase")).is_err());
+    }
+
+    #[test]
+    fn extract_errors_when_the_passphrase_value_is_not_a_string() {
+        // Present but not a string is a misconfig, not "no passphrase".
+        let data: Map<String, Value> =
+            serde_json::from_str(r#"{"key":"ARMORED","passphrase":123}"#).unwrap();
+        assert!(extract_signing_key(&data, &entry_with("key", "passphrase")).is_err());
     }
 }

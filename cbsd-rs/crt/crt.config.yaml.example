@@ -21,6 +21,10 @@ risk_components: [rgw, rgw-multisite, dashboard, build, docs, other]
 # overrides it.
 public_key_url: https://download.clyso.com/crt/crt-pubkey.asc
 
+# Which `vault.keys` entry (defined in crt.secrets.yaml) to sign with, used by
+# `release seal` / `release materialize`. Defaults to `gpg_signing_private`.
+gpg_private_key: release-signing
+
 # Namespaces → channels. A release name resolves to a channel by prefix
 # (e.g. `ces-v18.2.0` → channel `ces`); the most specific channel wins.
 # `branding` is snapshotted into the manifest at seal time and shown by
