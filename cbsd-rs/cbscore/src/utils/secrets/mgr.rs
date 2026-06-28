@@ -12,46 +12,67 @@
 
 //! The secrets manager (design 004). Source: `cbscore/utils/secrets/mgr.py`.
 //!
-//! [`SecretsMgr`] wraps the merged [`Secrets`] and exposes resolution. C3 covers
-//! [`SecretsMgr::git_url_for`] (plain/no-match); storage/signing/registry
-//! resolution and the Vault client land in C4.
+//! [`SecretsMgr`] wraps the merged [`Secrets`] plus an optional [`Vault`] client
+//! and exposes resolution. [`SecretsMgr::git_url_for`] resolves plain, no-match,
+//! and (with a Vault configured) vault-backed git secrets; the
+//! storage/signing/registry resolvers land with their consumers.
 
 use camino::Utf8PathBuf;
 
 use crate::types::Secrets;
 use crate::utils::secrets::SecretsError;
 use crate::utils::secrets::git::{GitUrl, git_url_for};
+use crate::utils::vault::Vault;
 
-/// Resolves secrets for a build. Wraps the merged [`Secrets`] (and, from C4, the
-/// Vault client). The SSH directory — where `git_url_for` materialises a
-/// plain-SSH key — defaults to `$HOME/.ssh` (Python's `Path.home()/.ssh`) and is
-/// injectable so tests can point it at a tempdir without mutating the
-/// environment.
+/// Resolves secrets for a build. Wraps the merged [`Secrets`] and an optional
+/// [`Vault`] client (present when the config declares a vault). The SSH
+/// directory — where `git_url_for` materialises a plain/vault SSH key — defaults
+/// to `$HOME/.ssh` (Python's `Path.home()/.ssh`) and is injectable so tests can
+/// point it at a tempdir without mutating the environment.
 pub struct SecretsMgr {
     secrets: Secrets,
     ssh_dir: Utf8PathBuf,
+    vault: Option<Vault>,
 }
 
 impl SecretsMgr {
-    /// Wrap `secrets`, materialising any plain-SSH key under `$HOME/.ssh`.
+    /// Wrap `secrets` with no Vault, materialising any plain-SSH key under
+    /// `$HOME/.ssh`. Vault-backed secrets error until a Vault is supplied.
     pub fn new(secrets: Secrets) -> Self {
         Self {
             secrets,
             ssh_dir: default_ssh_dir(),
+            vault: None,
         }
     }
 
-    /// Wrap `secrets` with an explicit SSH directory (used by tests).
+    /// Wrap `secrets` with an explicit SSH directory and no Vault (used by
+    /// tests).
     pub fn with_ssh_dir(secrets: Secrets, ssh_dir: Utf8PathBuf) -> Self {
-        Self { secrets, ssh_dir }
+        Self {
+            secrets,
+            ssh_dir,
+            vault: None,
+        }
     }
 
-    /// Resolve a git clone URL against the configured git secrets (plain and
-    /// no-match only; vault-backed git secrets error until C4a). Keep the
-    /// returned [`GitUrl`] alive until the clone completes — for an SSH secret
-    /// it owns the temporary key's cleanup guard.
+    /// Wrap `secrets` with a [`Vault`] client for vault-backed resolution
+    /// (`mgr.py`: the manager carries the vault). The caller verifies the
+    /// connection (via [`Vault::check_connection`]) before constructing.
+    pub fn with_vault(secrets: Secrets, vault: Option<Vault>) -> Self {
+        Self {
+            secrets,
+            ssh_dir: default_ssh_dir(),
+            vault,
+        }
+    }
+
+    /// Resolve a git clone URL against the configured git secrets — plain,
+    /// no-match, or (with a Vault configured) vault-backed. Keep the returned
+    /// [`GitUrl`] alive until the clone completes — for an SSH secret it owns the
+    /// temporary key's cleanup guard.
     pub async fn git_url_for(&self, url: &str) -> Result<GitUrl, SecretsError> {
-        git_url_for(url, &self.secrets.git, &self.ssh_dir).await
+        git_url_for(url, &self.secrets.git, &self.ssh_dir, self.vault.as_ref()).await
     }
 }
 

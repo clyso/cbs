@@ -22,3 +22,4 @@ pub mod redact;
 pub mod secrets;
 pub mod subprocess;
 pub mod uris;
+pub mod vault;

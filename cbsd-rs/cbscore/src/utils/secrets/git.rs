@@ -13,11 +13,12 @@
 //! Resolving a git URL against a configured git secret (design 004). Source:
 //! `cbscore/utils/secrets/git.py`.
 //!
-//! **Scope (C3):** the plain and no-match cases. `plain-https`/`plain-token`
-//! fold the credentials into a redacted [`SecureUrl`]; `plain-ssh` materialises
-//! a temporary `~/.ssh` key + alias whose [`Drop`] removes the key; no match
-//! yields the URL unchanged. Vault-backed git secrets return
-//! [`SecretsError::VaultUnimplemented`] until the Vault client lands in C4a.
+//! `plain-https`/`plain-token` fold the credentials into a redacted
+//! [`SecureUrl`]; `plain-ssh` materialises a temporary `~/.ssh` key + alias whose
+//! [`Drop`] removes the key; no match yields the URL unchanged. Vault-backed git
+//! secrets (`vault-ssh`/`vault-https`) read the credential fields from their
+//! `ces-kv` `key` through the [`Vault`] client (C4a), then reuse the same plain
+//! materialisation.
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt as _;
@@ -31,6 +32,7 @@ use crate::utils::redact::{CmdArg, Password, SecureUrl};
 use crate::utils::secrets::SecretsError;
 use crate::utils::secrets::utils::find_best_secret_candidate;
 use crate::utils::subprocess::{RunOpts, run_cmd};
+use crate::utils::vault::Vault;
 
 /// A git URL validator/extractor: `file://`, `git://`, or `http(s)`/`ssh`,
 /// optionally credentialed and ported (`git.py:42-66`). Only the `http_*`
@@ -121,12 +123,14 @@ impl Drop for SshKeyGuard {
 }
 
 /// Resolve `url` against the configured git secrets, choosing the secret whose
-/// key is the closest prefix of `url` (`git.py:233-263`). Plain and no-match
-/// only; vault-backed secrets error until C4a.
+/// key is the closest prefix of `url` (`git.py:233-263`). A `vault-*` secret
+/// reads its credential fields from `vault` (its `key` in `ces-kv`); a matched
+/// `vault-*` secret with no `vault` configured errors.
 pub async fn git_url_for(
     url: &str,
     secrets: &BTreeMap<String, GitSecret>,
     ssh_dir: &Utf8Path,
+    vault: Option<&Vault>,
 ) -> Result<GitUrl, SecretsError> {
     if !git_url_is_valid(url) {
         return Err(SecretsError::InvalidUrl(url.to_string()));
@@ -143,24 +147,82 @@ pub async fn git_url_for(
 
     match &secrets[key] {
         GitSecret::PlainSsh { ssh_key, username } => {
-            let (alias, guard) = materialize_ssh(url, ssh_dir, username, ssh_key).await?;
-            Ok(GitUrl {
-                arg: CmdArg::Plain(alias),
-                _ssh: Some(guard),
-            })
+            ssh_git_url(url, ssh_dir, username, ssh_key).await
         }
-        GitSecret::PlainHttps { username, password } => Ok(GitUrl {
-            arg: CmdArg::Secure(Arc::new(build_https_url(url, username, password)?)),
-            _ssh: None,
-        }),
+        GitSecret::PlainHttps { username, password } => https_git_url(url, username, password),
         GitSecret::PlainToken { token, username } => Ok(GitUrl {
             arg: CmdArg::Secure(Arc::new(build_token_url(url, username, token)?)),
             _ssh: None,
         }),
-        GitSecret::VaultSsh { .. } | GitSecret::VaultHttps { .. } => {
-            Err(SecretsError::VaultUnimplemented)
+        // Vault variants: `ssh_key`/`username`/`password` are field *names* in
+        // the `ces-kv` secret at `key` (`git.py:120-201`); read them, then reuse
+        // the plain materialisation.
+        GitSecret::VaultSsh {
+            key,
+            ssh_key,
+            username,
+        } => {
+            let secret = read_vault_secret(vault, key).await?;
+            let ssh_key = vault_field(&secret, ssh_key)?;
+            let username = vault_field(&secret, username)?;
+            ssh_git_url(url, ssh_dir, &username, &ssh_key).await
+        }
+        GitSecret::VaultHttps {
+            key,
+            username,
+            password,
+        } => {
+            let secret = read_vault_secret(vault, key).await?;
+            let username = vault_field(&secret, username)?;
+            let password = vault_field(&secret, password)?;
+            https_git_url(url, &username, &password)
         }
     }
+}
+
+/// Read the `ces-kv` secret at `path`, erroring if no Vault is configured for a
+/// matched `vault-*` secret (`git.py:127`; the `SecretsMgr` carries the client).
+async fn read_vault_secret(
+    vault: Option<&Vault>,
+    path: &str,
+) -> Result<BTreeMap<String, String>, SecretsError> {
+    let vault = vault.ok_or(SecretsError::VaultRequired)?;
+    Ok(vault.read_secret(path).await?)
+}
+
+/// Pull `field` from a vault secret, trailing-whitespace-trimmed (`.rstrip()`,
+/// `git.py:134-135`/`196-197`); a missing field is an error.
+fn vault_field(secret: &BTreeMap<String, String>, field: &str) -> Result<String, SecretsError> {
+    secret
+        .get(field)
+        .map(|v| v.trim_end().to_string())
+        .ok_or_else(|| SecretsError::MissingVaultField {
+            field: field.to_string(),
+        })
+}
+
+/// Materialise an SSH key/alias for `username`+`ssh_key` and wrap it as a
+/// [`GitUrl`] (shared by `plain-ssh` and `vault-ssh`).
+async fn ssh_git_url(
+    url: &str,
+    ssh_dir: &Utf8Path,
+    username: &str,
+    ssh_key: &str,
+) -> Result<GitUrl, SecretsError> {
+    let (alias, guard) = materialize_ssh(url, ssh_dir, username, ssh_key).await?;
+    Ok(GitUrl {
+        arg: CmdArg::Plain(alias),
+        _ssh: Some(guard),
+    })
+}
+
+/// Fold `username`+`password` into a redacted HTTPS [`GitUrl`] (shared by
+/// `plain-https` and `vault-https`).
+fn https_git_url(url: &str, username: &str, password: &str) -> Result<GitUrl, SecretsError> {
+    Ok(GitUrl {
+        arg: CmdArg::Secure(Arc::new(build_https_url(url, username, password)?)),
+        _ssh: None,
+    })
 }
 
 /// Build `https://{user}:{password}@{host[:port]}/{path}` as a redacted
@@ -379,7 +441,7 @@ mod tests {
         let ssh_dir = Utf8Path::from_path(ssh.path()).unwrap();
         let url = "https://github.com/ceph/ceph";
 
-        let resolved = git_url_for(url, &secrets, ssh_dir).await.unwrap();
+        let resolved = git_url_for(url, &secrets, ssh_dir, None).await.unwrap();
         assert_eq!(resolved.arg().plaintext(), url);
         assert!(resolved._ssh.is_none());
     }
@@ -389,7 +451,7 @@ mod tests {
         let secrets = BTreeMap::new();
         let ssh = tempfile::tempdir().unwrap();
         let ssh_dir = Utf8Path::from_path(ssh.path()).unwrap();
-        let err = git_url_for("ftp://nope/x", &secrets, ssh_dir)
+        let err = git_url_for("ftp://nope/x", &secrets, ssh_dir, None)
             .await
             .unwrap_err();
         assert!(matches!(err, SecretsError::InvalidUrl(_)), "{err}");
@@ -408,7 +470,7 @@ mod tests {
                 password: "s3cr3t".to_string(),
             },
         )]);
-        let resolved = git_url_for(url, &https, ssh_dir).await.unwrap();
+        let resolved = git_url_for(url, &https, ssh_dir, None).await.unwrap();
         assert_eq!(
             resolved.arg().plaintext(),
             "https://git:s3cr3t@github.com/ceph/ceph"
@@ -422,7 +484,7 @@ mod tests {
                 username: "git".to_string(),
             },
         )]);
-        let resolved = git_url_for(url, &token, ssh_dir).await.unwrap();
+        let resolved = git_url_for(url, &token, ssh_dir, None).await.unwrap();
         assert_eq!(
             resolved.arg().plaintext(),
             "https://git:ghp_tok@github.com/ceph/ceph"
@@ -431,21 +493,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vault_git_secrets_are_not_yet_supported() {
+    async fn vault_git_secret_without_a_vault_is_an_error() {
+        // A matched vault-backed secret needs a Vault client; with `None` it
+        // errors rather than silently cloning the bare URL.
         let ssh = tempfile::tempdir().unwrap();
         let ssh_dir = Utf8Path::from_path(ssh.path()).unwrap();
         let secrets = map(&[(
             "github.com",
             GitSecret::VaultHttps {
-                key: "kv/data/git".to_string(),
-                username: "u".to_string(),
-                password: "p".to_string(),
+                key: "git/ceph".to_string(),
+                username: "username".to_string(),
+                password: "password".to_string(),
             },
         )]);
-        let err = git_url_for("https://github.com/ceph/ceph", &secrets, ssh_dir)
+        let err = git_url_for("https://github.com/ceph/ceph", &secrets, ssh_dir, None)
             .await
             .unwrap_err();
-        assert!(matches!(err, SecretsError::VaultUnimplemented), "{err}");
+        assert!(matches!(err, SecretsError::VaultRequired), "{err}");
+    }
+
+    /// End-to-end `vault-https` resolution against a live Vault. Seeds a
+    /// `ces-kv` secret whose `username`/`password` fields are the values folded
+    /// into the URL, then resolves through a Vault-backed `git_url_for`. Ignored
+    /// — needs a running dev server (same setup as the `vault.rs` read test):
+    ///
+    /// ```text
+    /// vault server -dev -dev-root-token-id=root
+    /// export VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=root
+    /// vault secrets enable -path=ces-kv kv-v2      # one-time
+    /// cargo test -p cbscore --lib -- --ignored vault_https_secret_resolves
+    /// ```
+    #[tokio::test]
+    #[ignore = "requires a live Vault dev server with a ces-kv kv-v2 mount"]
+    async fn vault_https_secret_resolves_credentials_from_vault() {
+        use cbscore_types::VaultConfig;
+        use vaultrs::client::{VaultClient, VaultClientSettingsBuilder};
+
+        let addr = std::env::var("VAULT_ADDR").expect("VAULT_ADDR set for the dev server");
+        let token = std::env::var("VAULT_TOKEN").expect("VAULT_TOKEN set to the dev root token");
+
+        // Seed the secret: the field *values* are the creds folded into the URL.
+        let settings = VaultClientSettingsBuilder::default()
+            .address(&addr)
+            .token(&token)
+            .build()
+            .expect("seed settings");
+        let seed = VaultClient::new(settings).expect("seed client");
+        let data = BTreeMap::from([
+            ("username".to_string(), "git".to_string()),
+            ("password".to_string(), "s3cr3t".to_string()),
+        ]);
+        vaultrs::kv2::set(&seed, "ces-kv", "git/ceph", &data)
+            .await
+            .expect("seed ces-kv/git/ceph");
+
+        // `username`/`password` here are field *names* in that secret.
+        let secrets = map(&[(
+            "github.com",
+            GitSecret::VaultHttps {
+                key: "git/ceph".to_string(),
+                username: "username".to_string(),
+                password: "password".to_string(),
+            },
+        )]);
+        let vault = Vault::from_config(&VaultConfig {
+            schema_version: 1,
+            vault_addr: addr,
+            auth_user: None,
+            auth_approle: None,
+            auth_token: Some(token),
+        })
+        .expect("vault from config");
+
+        let ssh = tempfile::tempdir().unwrap();
+        let ssh_dir = Utf8Path::from_path(ssh.path()).unwrap();
+        let resolved = git_url_for(
+            "https://github.com/ceph/ceph",
+            &secrets,
+            ssh_dir,
+            Some(&vault),
+        )
+        .await
+        .expect("vault-https resolution");
+
+        assert_eq!(
+            resolved.arg().plaintext(),
+            "https://git:s3cr3t@github.com/ceph/ceph"
+        );
+        assert!(!resolved.arg().redacted().contains("s3cr3t"));
     }
 
     #[test]
@@ -516,7 +651,7 @@ mod tests {
             },
         )]);
 
-        let resolved = git_url_for("https://github.com/ceph/ceph", &secrets, ssh_dir)
+        let resolved = git_url_for("https://github.com/ceph/ceph", &secrets, ssh_dir, None)
             .await
             .expect("plain-ssh resolution");
 

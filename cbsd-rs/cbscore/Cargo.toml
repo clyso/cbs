@@ -28,4 +28,8 @@ tokio = { version = "1", features = [
 ] }
 tokio-util = "0.7"
 tracing = "0.1"
+url = "2"
 uuid = { version = "1", features = ["v7"] }
+# Vault client (design 004). `rustls` only — the musl-clean ring-backed reqwest
+# stack the C0 musl-probe proved links static (no openssl-sys, no aws-lc-rs).
+vaultrs = { version = "0.7", default-features = false, features = ["rustls"] }

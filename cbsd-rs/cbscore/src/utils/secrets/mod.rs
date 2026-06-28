@@ -16,13 +16,13 @@
 //! with credentials folded in.
 //!
 //! [`SecretsMgr`] wraps the merged [`Secrets`](cbscore_types::Secrets) and
-//! resolves a git URL via [`SecretsMgr::git_url_for`]. **This slice resolves the
-//! plain and no-match cases only** — `plain-ssh`/`plain-https`/`plain-token` and
-//! "no configured secret". Vault-backed git secrets (`vault-ssh`/`vault-https`)
-//! return [`SecretsError::VaultUnimplemented`] and complete in C4a, when the
-//! Vault client lands. The storage/signing/registry families resolve later too.
+//! resolves a git URL via [`SecretsMgr::git_url_for`]. Plain, no-match, and
+//! Vault-backed git secrets (`vault-ssh`/`vault-https`) all resolve — the latter
+//! by reading their `ces-kv` `key` through the [`Vault`](crate::utils::vault)
+//! client (C4a). The storage/signing/registry families resolve later too.
 
 use crate::utils::subprocess::CommandError;
+use crate::utils::vault::VaultError;
 
 pub mod git;
 pub mod mgr;
@@ -37,10 +37,15 @@ pub enum SecretsError {
     /// The git URL did not parse as a supported git URL.
     #[error("invalid git url '{0}'")]
     InvalidUrl(String),
-    /// A vault-backed git secret matched, but the Vault client is not yet
-    /// implemented (lands in C4a).
-    #[error("vault-backed git secret resolution is not yet implemented (C4a)")]
-    VaultUnimplemented,
+    /// A vault-backed git secret matched, but no Vault client is configured.
+    #[error("git secret requires vault, but no vault is configured")]
+    VaultRequired,
+    /// Reading the vault-backed git secret failed.
+    #[error("error reading git secret from vault")]
+    Vault(#[from] VaultError),
+    /// The vault secret did not contain the referenced field.
+    #[error("vault secret is missing the '{field}' field")]
+    MissingVaultField { field: String },
     /// `ssh-keyscan` could not be spawned (or timed out).
     #[error("error running ssh-keyscan for host '{host}'")]
     Keyscan {

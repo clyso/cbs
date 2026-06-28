@@ -32,12 +32,13 @@ use tracing::{debug, info};
 use crate::builder::prepare::{BuildComponentInfo, prepare_components};
 use crate::builder::rpmbuild::build_rpms;
 use crate::components::load_components;
-use crate::config::get_secrets;
+use crate::config::{get_secrets, get_vault_config};
 use crate::types::tracing_targets;
 use crate::utils::git::GitError;
 use crate::utils::redact::CmdArg;
 use crate::utils::secrets::{SecretsError, SecretsMgr};
 use crate::utils::subprocess::{CommandError, RunOpts, run_cmd};
+use crate::utils::vault::{Vault, VaultError};
 
 pub mod prepare;
 pub mod rpmbuild;
@@ -124,6 +125,9 @@ pub enum BuilderError {
     /// The build's secrets could not be assembled from the config.
     #[error("error setting up secrets")]
     SecretsSetup(#[source] crate::config::ConfigError),
+    /// The configured Vault could not be built or reached.
+    #[error("error setting up vault")]
+    VaultSetup(#[source] VaultError),
     /// The component definitions could not be loaded.
     #[error("error loading component definitions")]
     LoadComponents(#[source] crate::components::ComponentError),
@@ -154,6 +158,10 @@ fn prepare_steps() -> Vec<(Vec<&'static str>, &'static str)> {
                 "-y",
                 "git",
                 "wget",
+                // ca-certificates is a port addition (absent from prepare.py:84-
+                // 100): the static-musl `cbsbuild` resolves S3/Vault TLS against
+                // the system trust store, which this package populates (004/012).
+                "ca-certificates",
                 "rpm-build",
                 "rpmdevtools",
                 "gcc-c++",
@@ -205,11 +213,26 @@ impl<'a> Builder<'a> {
     /// both the success and the failure path, mirroring Python's
     /// `prepare_components` context manager.
     async fn build(&self) -> Result<BuildArtifactReport, BuilderError> {
-        let secrets = Arc::new(SecretsMgr::new(
-            get_secrets(self.config)
-                .await
-                .map_err(BuilderError::SecretsSetup)?,
-        ));
+        let secrets_data = get_secrets(self.config)
+            .await
+            .map_err(BuilderError::SecretsSetup)?;
+        // Build the Vault client when the config declares one, verifying the
+        // connection up front (design 004; mirrors Python's SecretsMgr).
+        let vault = match get_vault_config(self.config)
+            .await
+            .map_err(BuilderError::SecretsSetup)?
+        {
+            Some(vault_config) => {
+                let vault = Vault::from_config(&vault_config).map_err(BuilderError::VaultSetup)?;
+                vault
+                    .check_connection()
+                    .await
+                    .map_err(BuilderError::VaultSetup)?;
+                Some(vault)
+            }
+            None => None,
+        };
+        let secrets = Arc::new(SecretsMgr::with_vault(secrets_data, vault));
         let components_loc = Arc::new(
             load_components(&self.config.paths.components)
                 .await
@@ -488,6 +511,8 @@ mod tests {
             "buildah",
             "skopeo",
             "ccache",
+            // Port addition for the rustls system-trust source (004/012).
+            "ca-certificates",
         ] {
             assert!(toolchain.contains(&pkg), "missing package {pkg}");
         }
