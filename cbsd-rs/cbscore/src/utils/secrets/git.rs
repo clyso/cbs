@@ -29,8 +29,8 @@ use regex::Regex;
 
 use crate::types::GitSecret;
 use crate::utils::redact::{CmdArg, Password, SecureUrl};
-use crate::utils::secrets::SecretsError;
 use crate::utils::secrets::utils::find_best_secret_candidate;
+use crate::utils::secrets::{SecretsError, read_vault_secret, vault_field};
 use crate::utils::subprocess::{RunOpts, run_cmd};
 use crate::utils::vault::Vault;
 
@@ -178,27 +178,6 @@ pub async fn git_url_for(
             https_git_url(url, &username, &password)
         }
     }
-}
-
-/// Read the `ces-kv` secret at `path`, erroring if no Vault is configured for a
-/// matched `vault-*` secret (`git.py:127`; the `SecretsMgr` carries the client).
-async fn read_vault_secret(
-    vault: Option<&Vault>,
-    path: &str,
-) -> Result<BTreeMap<String, String>, SecretsError> {
-    let vault = vault.ok_or(SecretsError::VaultRequired)?;
-    Ok(vault.read_secret(path).await?)
-}
-
-/// Pull `field` from a vault secret, trailing-whitespace-trimmed (`.rstrip()`,
-/// `git.py:134-135`/`196-197`); a missing field is an error.
-fn vault_field(secret: &BTreeMap<String, String>, field: &str) -> Result<String, SecretsError> {
-    secret
-        .get(field)
-        .map(|v| v.trim_end().to_string())
-        .ok_or_else(|| SecretsError::MissingVaultField {
-            field: field.to_string(),
-        })
 }
 
 /// Materialise an SSH key/alias for `username`+`ssh_key` and wrap it as a

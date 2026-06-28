@@ -20,8 +20,8 @@
 use camino::Utf8PathBuf;
 
 use crate::types::Secrets;
-use crate::utils::secrets::SecretsError;
 use crate::utils::secrets::git::{GitUrl, git_url_for};
+use crate::utils::secrets::{SecretsError, storage};
 use crate::utils::vault::Vault;
 
 /// Resolves secrets for a build. Wraps the merged [`Secrets`] and an optional
@@ -73,6 +73,13 @@ impl SecretsMgr {
     /// temporary key's cleanup guard.
     pub async fn git_url_for(&self, url: &str) -> Result<GitUrl, SecretsError> {
         git_url_for(url, &self.secrets.git, &self.ssh_dir, self.vault.as_ref()).await
+    }
+
+    /// Resolve `(hostname, access_id, secret_id)` for the S3 endpoint keyed
+    /// exactly by `url` (plain or vault-backed). Consumed by the S3 client
+    /// ([`crate::utils::s3`]).
+    pub async fn s3_creds(&self, url: &str) -> Result<(String, String, String), SecretsError> {
+        storage::s3_creds(&self.secrets.storage, self.vault.as_ref(), url).await
     }
 }
 

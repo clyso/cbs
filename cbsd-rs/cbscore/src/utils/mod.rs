@@ -19,6 +19,7 @@
 pub mod git;
 pub mod podman;
 pub mod redact;
+pub mod s3;
 pub mod secrets;
 pub mod subprocess;
 pub mod uris;

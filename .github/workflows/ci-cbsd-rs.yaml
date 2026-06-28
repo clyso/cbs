@@ -87,25 +87,72 @@ jobs:
             docker run --rm -v "$PWD:/work" -w /work "$img" "/work/$BIN"
           done
 
-  workspace-no-heavy-deps:
-    name: shipped graph excludes the heavy deps
+  shipped-binary-static-musl:
+    name: shipped cbsbuild links static-musl (rustls+ring)
     runs-on: ubuntu-latest
+    # From C4a the heavy deps (aws-sdk-s3, vaultrs) are real `cbscore` edges, so
+    # the standalone probe alone is no longer sufficient: a feature-flag slip in
+    # the workspace (e.g. another crate enabling `default-https-client` →
+    # aws-lc-rs, or a native-tls edge) would pass the probe yet break the
+    # shipped binary. This job asserts the REAL `cbsbuild` still links fully
+    # static-musl with rustls+ring — no openssl-sys, no aws-lc-rs — and that the
+    # heavy edges are genuinely present (design 004 C4a / 012).
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@aad518f59d88bae90133242f9ddac7f8bbc5dddf # v1.94.1
-
-      - name: Assert aws-sdk-s3 and vaultrs are absent from the shipped graph
-        working-directory: cbsd-rs
-        env:
-          SQLX_OFFLINE: "true"
+      - name: Build cbsbuild static-musl in Alpine and assert linkage
         run: |
-          for crate in aws-sdk-s3 vaultrs; do
-            if cargo tree -i "$crate" >/dev/null 2>&1; then
-              echo "FAIL: $crate is in the shipped workspace graph (C0 ships no such edge)"
-              exit 1
-            fi
-            echo "OK: $crate absent from the shipped graph"
+          docker run --rm -v "$PWD:/work" -w /work/cbsd-rs \
+            docker.io/library/alpine:3.21 sh -euc '
+              set -o pipefail
+              apk add --no-cache musl-dev gcc curl file binutils
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                | sh -s -- -y --default-toolchain 1.94.1 --profile minimal
+              . "$HOME/.cargo/env"
+              export SQLX_OFFLINE=true
+              cargo build --release --locked -p cbsbuild
+              BIN=target/release/cbsbuild
+              echo "--- file ---"
+              file "$BIN"
+              echo "--- readelf program headers (INTERP must be absent) ---"
+              if readelf -l "$BIN" | grep -qi INTERP; then
+                echo "FAIL: cbsbuild has a dynamic interpreter (not fully static)"
+                exit 1
+              fi
+              echo "OK: no INTERP segment"
+              if ! file "$BIN" | grep -qiE "static-pie linked|statically linked"; then
+                echo "FAIL: file does not report a static binary"
+                exit 1
+              fi
+              echo "OK: fully static (musl)"
+              if cargo tree -i openssl-sys >/dev/null 2>&1; then
+                echo "FAIL: openssl-sys present in the cbsbuild graph"
+                exit 1
+              fi
+              echo "OK: no openssl-sys"
+              if cargo tree -i aws-lc-rs >/dev/null 2>&1; then
+                echo "FAIL: aws-lc-rs present (the gate requires rustls+ring)"
+                exit 1
+              fi
+              echo "OK: no aws-lc-rs (rustls+ring)"
+              # The heavy edges must be real now (the inverse of the pre-C4 gate).
+              for crate in aws-sdk-s3 vaultrs; do
+                if ! cargo tree -i "$crate" >/dev/null 2>&1; then
+                  echo "FAIL: $crate missing from the cbsbuild graph (C4a ships it)"
+                  exit 1
+                fi
+                echo "OK: $crate present in the cbsbuild graph"
+              done
+            '
+
+      - name: Smoke-run the static cbsbuild on glibc EL (el9 + el10)
+        run: |
+          BIN=cbsd-rs/target/release/cbsbuild
+          test -x "$BIN" || { echo "cbsbuild binary missing after build"; exit 1; }
+          # The static binary must execute on a glibc EL builder (no musl loader,
+          # design 012); --version is a no-IO clap path that proves linkage.
+          for img in docker.io/library/rockylinux:9 docker.io/library/almalinux:10; do
+            echo "== $img =="
+            docker run --rm -v "$PWD:/work" -w /work "$img" "/work/$BIN" --version
           done
