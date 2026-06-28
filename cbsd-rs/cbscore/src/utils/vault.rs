@@ -39,6 +39,10 @@ pub enum VaultError {
     /// The vault config sets no authentication method (`vault.py:184`).
     #[error("no authentication method configured for vault")]
     NoAuthMethod,
+    /// A configured authentication method has an empty credential field
+    /// (`vault.py:93-96`/`125-128`/`154-156`).
+    #[error("missing vault credential '{0}'")]
+    MissingCredential(&'static str),
     /// The vault address is missing or not an `http(s)` URL (`vault.py:48`).
     #[error("invalid vault address '{0}' (expected an http(s) URL)")]
     InvalidAddr(String),
@@ -87,16 +91,16 @@ impl Vault {
 
         let auth = if let Some(approle) = &config.auth_approle {
             VaultAuth::AppRole {
-                role_id: approle.role_id.clone(),
-                secret_id: approle.secret_id.clone(),
+                role_id: require(&approle.role_id, "role-id")?,
+                secret_id: require(&approle.secret_id, "secret-id")?,
             }
         } else if let Some(user) = &config.auth_user {
             VaultAuth::UserPass {
-                username: user.username.clone(),
-                password: user.password.clone(),
+                username: require(&user.username, "username")?,
+                password: require(&user.password, "password")?,
             }
         } else if let Some(token) = &config.auth_token {
-            VaultAuth::Token(token.clone())
+            VaultAuth::Token(require(token, "auth-token")?)
         } else {
             return Err(VaultError::NoAuthMethod);
         };
@@ -154,6 +158,17 @@ impl Vault {
         }
 
         Ok(client)
+    }
+}
+
+/// Return `value` (owned) if non-empty, else a [`VaultError::MissingCredential`]
+/// — validated at construction, as Python's backend `__init__`s do
+/// (`vault.py:93-96`/`125-128`/`154-156`), not deferred to a login failure.
+fn require(value: &str, field: &'static str) -> Result<String, VaultError> {
+    if value.is_empty() {
+        Err(VaultError::MissingCredential(field))
+    } else {
+        Ok(value.to_string())
     }
 }
 
@@ -240,6 +255,32 @@ mod tests {
         assert!(matches!(
             Vault::from_config(&cfg),
             Err(VaultError::NoAuthMethod)
+        ));
+    }
+
+    #[test]
+    fn an_empty_credential_field_is_rejected_at_construction() {
+        // An empty secret-id (or any credential) errors up front, not at a later
+        // login (vault.py validates in the backend __init__).
+        let cfg = config(
+            "https://vault.example:8200",
+            Some(VaultAppRole {
+                role_id: "rid".to_string(),
+                secret_id: String::new(),
+            }),
+            None,
+            None,
+        );
+        assert!(matches!(
+            Vault::from_config(&cfg),
+            Err(VaultError::MissingCredential("secret-id"))
+        ));
+
+        // An empty token is likewise rejected.
+        let cfg = config("https://vault.example:8200", None, None, Some(""));
+        assert!(matches!(
+            Vault::from_config(&cfg),
+            Err(VaultError::MissingCredential("auth-token"))
         ));
     }
 
