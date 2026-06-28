@@ -15,14 +15,17 @@ remote or NAT'd workers need no inbound port. Host OS metrics come from a
 ```yaml
 metrics:
   enabled: true
-  bind: "0.0.0.0:9090" # dedicated port; omit to serve /metrics on listen-addr
+  bind: "0.0.0.0:9090" # dedicated listener (default); null → main listen-addr
   stale-after-secs: 45 # prune a silent worker's gauges after this
   gauge-refresh-secs: 5 # server-owned gauge resync interval
 ```
 
-`bind` must differ from `listen-addr`. Use a dedicated bind so `/metrics` stays
-off the public API listener (see Security below). `gauge-refresh-secs` must be
-less than `stale-after-secs`.
+`bind` defaults to `0.0.0.0:9090` (an omitted line resolves to the same), a
+dedicated listener that keeps `/metrics` off the public API listener (see
+Security below); it must differ from `listen-addr`. Set `bind: null` explicitly
+to instead expose a top-level `/metrics` route on the main `listen-addr` (it is
+served at `/metrics`, not under `/api`). `gauge-refresh-secs` must be less than
+`stale-after-secs`.
 
 **Worker** (`worker.yaml`):
 

@@ -159,7 +159,8 @@ metrics:
 
   # Address for the Prometheus endpoint. Use a dedicated bind so the metrics
   # surface stays off the public listener; it must differ from listen-addr.
-  # Omit to serve `/metrics` on the main listener instead.
+  # This is the default (an omitted bind still resolves to 0.0.0.0:9090). Set
+  # `bind: null` to expose a top-level `/metrics` on the main listener instead.
   bind: "0.0.0.0:9090"
 
   # Seconds of silence after which a worker's pushed host gauges are pruned.
