@@ -117,6 +117,24 @@ pub fn fetch_github_ref(
         .with_context(|| format!("fetching {refspec} for {owner}/{name}"))
 }
 
+/// Ensure `refname` resolves in `repo`, fetching it from `origin` (authenticated
+/// with `token`) when absent. Auto-fetch-if-absent: a no-op when the ref is
+/// already present locally — the common case, since a destination clone already
+/// has its base tags.
+///
+/// The fetch uses `git fetch origin tag <refname>`, which both downloads the tag
+/// and creates the local `refs/tags/<refname>` so the name resolves afterward (a
+/// plain `git fetch origin <refname>` only populates `FETCH_HEAD`). crt's base
+/// refs and release tags are git tags; an absent ref that is not a tag on
+/// `origin` is left for the operator to fetch (the `origin`-only follow-up).
+pub fn ensure_ref(repo: &Path, refname: &str, token: Option<&str>) -> Result<()> {
+    if git(repo, &["rev-parse", "--verify", "--quiet", refname]).is_ok() {
+        return Ok(());
+    }
+    run_github_git(repo, &["fetch", "--quiet", "origin", "tag", refname], token)
+        .with_context(|| format!("fetching tag {refname} from origin"))
+}
+
 /// The `http.extraHeader` value carrying `token` as HTTP Basic credentials —
 /// identical to what embedding `https://x-access-token:<token>@github.com/…` in
 /// the URL would send. GitHub ignores the username and authenticates on the

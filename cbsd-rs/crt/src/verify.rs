@@ -139,6 +139,7 @@ pub async fn verify_release(
     name: &str,
     public_key_armored: &str,
     repo: Option<&Path>,
+    token: Option<&str>,
 ) -> Result<VerifyVerdict> {
     let key = cfg.resolve_release_key(name)?;
     let record = store
@@ -272,10 +273,12 @@ pub async fn verify_release(
     let repo_path = repo_path.to_path_buf();
     let tag = name.to_owned();
     let public_key = public_key_armored.to_owned();
+    // Own the token for the 'static blocking task.
+    let token = token.map(str::to_owned);
 
     // Subprocess git + a tree checkout + a tree walk are blocking; offload them.
     let (ref_legs, kind) = tokio::task::spawn_blocking(move || {
-        verify_ref_legs(&repo_path, &tag, &public_key, &sealed)
+        verify_ref_legs(&repo_path, &tag, &public_key, &sealed, token.as_deref())
     })
     .await
     .context("the ref-verification task panicked")??;
@@ -298,7 +301,17 @@ fn verify_ref_legs(
     tag: &str,
     public_key: &str,
     sealed: &SealedRefInputs,
+    token: Option<&str>,
 ) -> Result<(Vec<LegStatus>, VerdictKind)> {
+    // With a token, pull the tag from origin if it is not local yet, so a fresh
+    // clone can run legs 3-4 instead of skipping them. Best-effort: a release
+    // that is not materialized/published should still skip (below), not fail, so
+    // a fetch failure only warns. Without a token, stay offline.
+    if token.is_some()
+        && let Err(e) = crate::git::ensure_ref(repo, tag, token)
+    {
+        eprintln!("warning: could not fetch tag {tag} from origin: {e:#}");
+    }
     if !crate::git::tag_exists(repo, tag)? {
         return Ok((
             vec![
@@ -978,7 +991,7 @@ mod tests {
         );
         store.put_release(&key(), &record).await.unwrap();
 
-        let verdict = verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+        let verdict = verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
             .await
             .unwrap();
         let report = match verdict {
@@ -1011,7 +1024,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::SignatureFailed(_)
@@ -1036,7 +1049,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -1057,7 +1070,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -1079,7 +1092,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -1097,7 +1110,7 @@ mod tests {
         store.put_release(&key(), &record).await.unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::VerifyFailed(_)
@@ -1160,7 +1173,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            verify_release(&store, &cfg, "ces-v18.2.0", &public, None)
+            verify_release(&store, &cfg, "ces-v18.2.0", &public, None, None)
                 .await
                 .unwrap(),
             VerifyVerdict::Pass(_)
