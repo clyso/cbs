@@ -222,6 +222,11 @@ enum ReleaseCmd {
         /// release is materialized, runs the ref-conditional legs 3–4.
         #[arg(long)]
         repo: Option<PathBuf>,
+        /// GitHub token (or `GITHUB_TOKEN`). With `--repo`, fetches the release
+        /// tag from `origin` if missing locally so legs 3–4 run on a fresh
+        /// clone; without it, an absent tag simply skips those legs.
+        #[arg(long, env = "GITHUB_TOKEN")]
+        github_token: Option<String>,
     },
 }
 
@@ -549,13 +554,21 @@ async fn main() -> Result<()> {
                     name,
                     public_key,
                     repo,
+                    github_token,
                 } => {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(
                         "no public key: pass --public-key or set public_key_url in the config",
                     )?;
                     let pubkey = verify::load_public_key(&source).await?;
-                    match verify::verify_release(&store, &cfg, &name, &pubkey, repo.as_deref())
-                        .await?
+                    match verify::verify_release(
+                        &store,
+                        &cfg,
+                        &name,
+                        &pubkey,
+                        repo.as_deref(),
+                        github_token.as_deref(),
+                    )
+                    .await?
                     {
                         verify::VerifyVerdict::Pass(report) => {
                             println!("verify {name}: OK");

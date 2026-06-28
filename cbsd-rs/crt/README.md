@@ -304,7 +304,8 @@ Builds the linear `release/ces-v18.2.0` branch in the destination repo: `git am`
 each entry's patch in order (every commit carrying a `Crt-Patch` trailer), then
 append the signed `000-RELEASE/` verification bundle commit and an annotated tag
 carrying the manifest digest. Signing the bundle needs the Vault key, so this
-command also reads the `vault` section.
+command also reads the `vault` section. If your local clone lacks `base_ref`, it
+is auto-fetched from `origin` first (authenticated with `--github-token`).
 
 - `--repo <path>` is the local working copy to build in; it overrides
   `destination_repo` from the config.
@@ -344,7 +345,9 @@ crt release verify ces-v18.2.0 --repo /path/to/local/ceph.git
 ```
 
 With `--repo`, if the release's tag exists, the ref-conditional legs run over
-the git artifact; otherwise legs 3–4 are reported _skipped_.
+the git artifact; otherwise legs 3–4 are reported _skipped_. Pass
+`--github-token` (or `GITHUB_TOKEN`, needing `Contents: Read`) to fetch the tag
+from `origin` first, so a fresh clone runs legs 3–4 instead of skipping.
 
 ### Exit codes
 

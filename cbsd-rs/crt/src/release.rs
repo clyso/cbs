@@ -664,6 +664,10 @@ pub async fn materialize(
                         inputs.tag
                     );
                 }
+                // The branch starts at `base_ref`; auto-fetch it from origin if a
+                // fresh clone is missing it. Fail-loud — materialize cannot build
+                // without it.
+                crate::git::ensure_ref(&repo_path, &base_ref, token.as_deref())?;
                 let (wt, commits) =
                     crate::git::materialize_branch(&repo_path, &branch, &base_ref, &patches)?;
                 let result = crate::bundle::write_bundle(
@@ -2114,10 +2118,16 @@ mod tests {
         .await
         .unwrap();
 
-        let verdict =
-            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
-                .await
-                .unwrap();
+        let verdict = crate::verify::verify_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &public,
+            Some(repo.path()),
+            None,
+        )
+        .await
+        .unwrap();
         let report = match verdict {
             crate::verify::VerifyVerdict::Pass(r) => r,
             other => panic!("expected Pass, got: {}", render_verdict(&other)),
@@ -2267,9 +2277,10 @@ mod tests {
         );
 
         // Leg 3 anchors despite the offset.
-        let verdict = crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(p))
-            .await
-            .unwrap();
+        let verdict =
+            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(p), None)
+                .await
+                .unwrap();
         let report = match verdict {
             crate::verify::VerifyVerdict::Pass(r) => r,
             other => panic!("expected Pass, got: {}", render_verdict(&other)),
@@ -2337,10 +2348,16 @@ mod tests {
         .await
         .unwrap();
 
-        let verdict =
-            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
-                .await
-                .unwrap();
+        let verdict = crate::verify::verify_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &public,
+            Some(repo.path()),
+            None,
+        )
+        .await
+        .unwrap();
         let report = match verdict {
             crate::verify::VerifyVerdict::VerifyFailed(r) => r,
             other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
@@ -2491,10 +2508,16 @@ mod tests {
             serde_json::to_vec_pretty(&record).unwrap()
         });
 
-        let verdict =
-            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
-                .await
-                .unwrap();
+        let verdict = crate::verify::verify_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &public,
+            Some(repo.path()),
+            None,
+        )
+        .await
+        .unwrap();
         let report = match verdict {
             crate::verify::VerifyVerdict::VerifyFailed(r) => r,
             other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
@@ -2524,10 +2547,16 @@ mod tests {
             serde_json::to_vec_pretty(&record).unwrap()
         });
 
-        let verdict =
-            crate::verify::verify_release(&store, &cfg, "ces-v18.2.0", &public, Some(repo.path()))
-                .await
-                .unwrap();
+        let verdict = crate::verify::verify_release(
+            &store,
+            &cfg,
+            "ces-v18.2.0",
+            &public,
+            Some(repo.path()),
+            None,
+        )
+        .await
+        .unwrap();
         let report = match verdict {
             crate::verify::VerifyVerdict::VerifyFailed(r) => r,
             other => panic!("expected VerifyFailed, got: {}", render_verdict(&other)),
