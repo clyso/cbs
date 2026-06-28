@@ -229,11 +229,14 @@ crt patch import --repo /path/to/ceph.git \
     --pr https://github.com/ceph/ceph/pull/12345
 ```
 
-Pass `--github-token` (or set `GITHUB_TOKEN`) to raise GitHub API rate limits.
-The git fetch is anonymous, so private-repo PRs are not supported. Each line of
-output reports the patch's `blob_hash` and subject and whether it was newly
-imported or already present; a warning is printed if a patch is byte-different
-but _equivalent_ (same `patch_id`) to one already stored.
+Pass `--github-token` (or set `GITHUB_TOKEN`) to raise GitHub API rate limits
+and to import PRs from **private** repositories — the token authenticates both
+the API calls and the PR-head `git fetch` (sent as an `http.extraHeader`, never
+written to the repo's config), so it needs `Contents: Read` on the repository,
+not just metadata access. Each line of output reports the patch's `blob_hash`
+and subject and whether it was newly imported or already present; a warning is
+printed if a patch is byte-different but _equivalent_ (same `patch_id`) to one
+already stored.
 
 ### `release new` — open a draft
 

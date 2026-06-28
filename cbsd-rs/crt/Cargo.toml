@@ -31,6 +31,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 vaultrs = { version = "0.8", default-features = false, features = ["rustls-no-provider"] }
 # Public-key fetch for `release verify`; rustls, reuses octocrab's reqwest 0.12.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Encode the GitHub token as an HTTP Basic `http.extraHeader` for authenticated
+# PR-head fetches (off-argv, never persisted to .git/config).
+base64 = "0.22"
 
 [dev-dependencies]
 # Generate a throwaway signing keypair for the seal-pipeline tests.
