@@ -237,8 +237,8 @@ enum PatchCmd {
         /// GitHub PR URL, e.g. `https://github.com/ceph/ceph/pull/12345`.
         #[arg(long)]
         pr: Option<String>,
-        /// GitHub token for the API (raises rate limits). The git fetch is
-        /// anonymous, so private-repo PRs are unsupported.
+        /// GitHub token (or `GITHUB_TOKEN`) authenticating both the API and
+        /// the git fetch of the PR head, so private-repo PRs are supported.
         #[arg(long, env = "GITHUB_TOKEN")]
         github_token: Option<String>,
     },

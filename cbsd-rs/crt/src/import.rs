@@ -59,9 +59,10 @@ const PR_COMMIT_LIST_CAP: usize = 250;
 /// `git format-patch` after fetching the PR head into `repo` (never GitHub's
 /// `.patch` endpoint, design §4).
 ///
-/// `token` authenticates the GitHub **API** calls — it raises anonymous rate
-/// limits and reaches private PR metadata. The local `git fetch` is anonymous,
-/// so PRs on **private** repositories are not supported in M1.
+/// `token` authenticates both the GitHub **API** calls (via `octocrab`) and the
+/// local `git fetch` of the PR head (via `git::fetch_github_ref`), so PRs on
+/// **private** repositories are supported. The token needs `Contents: Read` on
+/// the repository for the fetch, not just metadata/PR read.
 pub async fn import_pr(
     store: &dyn Store,
     repo: &Path,
@@ -131,18 +132,11 @@ pub async fn import_pr(
         bail!("{owner}/{name}#{number} has no non-merge commits to import");
     }
 
-    // Fetch the PR head so the enumerated commits are available locally.
-    let repo_url = format!("https://github.com/{owner}/{name}.git");
-    git::git(
-        repo,
-        &[
-            "fetch",
-            "--quiet",
-            &repo_url,
-            &format!("pull/{number}/head"),
-        ],
-    )
-    .with_context(|| format!("fetching pull/{number}/head from {repo_url}"))?;
+    // Fetch the PR head so the enumerated commits are available locally. The
+    // token authenticates this `git` fetch too (off-argv, see
+    // `git::fetch_github_ref`), so PR heads on private repositories work.
+    git::fetch_github_ref(repo, &owner, &name, &format!("pull/{number}/head"), token)
+        .with_context(|| format!("fetching pull/{number}/head for {owner}/{name}"))?;
 
     let provenance = Provenance::UpstreamPr {
         prs: vec![html_url],

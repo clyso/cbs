@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
+use base64::prelude::*;
 use tempfile::TempDir;
 
 /// Run `git <args>` in `repo`; return stdout as a UTF-8 string.
@@ -65,6 +66,58 @@ pub fn git_with_stdin(repo: &Path, args: &[&str], input: &[u8]) -> Result<String
         );
     }
     String::from_utf8(out.stdout).with_context(|| format!("git {args:?}: output not UTF-8"))
+}
+
+/// Fetch `refspec` from `https://github.com/<owner>/<name>.git` into `repo`.
+///
+/// When `token` is `Some`, it authenticates via an `http.extraHeader`
+/// Authorization header injected through `GIT_CONFIG_*` environment variables,
+/// so the secret never reaches `argv`, the repo's `.git/config`, on-disk config,
+/// or git's error output — it lives only in this child process's environment.
+/// This is how a private repository's PR head is fetched; the GitHub API token
+/// passed to `octocrab` also needs `Contents: Read` on the repo. Either way
+/// `GIT_TERMINAL_PROMPT=0` makes a missing or rejected credential fail fast
+/// rather than hang on an interactive `/dev/tty` prompt.
+pub fn fetch_github_ref(
+    repo: &Path,
+    owner: &str,
+    name: &str,
+    refspec: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let url = format!("https://github.com/{owner}/{name}.git");
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["fetch", "--quiet", &url, refspec]);
+    if let Some(token) = token {
+        // Scope the header to github.com so it is never replayed if git follows
+        // a redirect to another host.
+        cmd.env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraHeader")
+            .env("GIT_CONFIG_VALUE_0", extra_header_value(token));
+    }
+    let out = cmd
+        .output()
+        .with_context(|| format!("spawning git fetch {url} {refspec}"))?;
+    if !out.status.success() {
+        // The URL carries no credential and git does not echo `extraHeader`, so
+        // its stderr is safe to surface verbatim.
+        bail!(
+            "git fetch {url} {refspec} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// The `http.extraHeader` value carrying `token` as HTTP Basic credentials —
+/// identical to what embedding `https://x-access-token:<token>@github.com/…` in
+/// the URL would send. GitHub ignores the username and authenticates on the
+/// token, so the `x-access-token` label is conventional, not significant.
+fn extra_header_value(token: &str) -> String {
+    let basic = BASE64_STANDARD.encode(format!("x-access-token:{token}"));
+    format!("Authorization: Basic {basic}")
 }
 
 /// A patch to apply when materializing a release branch: its apply `order`, the
@@ -333,6 +386,17 @@ mod tests {
     /// Run git in `repo`, panicking on failure (test convenience).
     fn run(repo: &Path, args: &[&str]) -> String {
         git(repo, args).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+    }
+
+    #[test]
+    fn extra_header_carries_the_token_as_basic_auth() {
+        let header = extra_header_value("ghp_secret123");
+        let b64 = header
+            .strip_prefix("Authorization: Basic ")
+            .expect("the header must use HTTP Basic auth");
+        let decoded = String::from_utf8(BASE64_STANDARD.decode(b64).unwrap()).unwrap();
+        // Equivalent to embedding `https://x-access-token:<token>@github.com/…`.
+        assert_eq!(decoded, "x-access-token:ghp_secret123");
     }
 
     /// A fresh repo with a configured identity and one base commit on `main`.
