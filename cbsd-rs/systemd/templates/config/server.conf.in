@@ -12,6 +12,18 @@
 ## Default: "8080"
 # SERVER_BIND_PORT="8080"
 
+## Expose the server's /metrics endpoint on the host. It is unauthenticated,
+## so keep it on loopback or a private interface. Default: "false".
+# WITH_METRICS="false"
+
+## Host address for the metrics endpoint (only when WITH_METRICS=true).
+## Default: "127.0.0.1"
+# METRICS_BIND_ADDR="127.0.0.1"
+
+## Host port for the metrics endpoint (only when WITH_METRICS=true).
+## Must match the metrics.bind port in server.yaml. Default: "9090"
+# METRICS_BIND_PORT="9090"
+
 ## Allow the containers to communicate with a host's wireguard interface.
 ## Allowed values: "true" or "false"; default: "false".
 # WITH_WIREGUARD="false"

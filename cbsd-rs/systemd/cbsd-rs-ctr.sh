@@ -149,6 +149,9 @@ server_start() {
 
   SERVER_BIND_ADDR="127.0.0.1"
   SERVER_BIND_PORT="8080"
+  METRICS_BIND_ADDR="127.0.0.1"
+  METRICS_BIND_PORT="9090"
+  WITH_METRICS="false"
   CBSD_LOG="info"
   IMAGE="harbor.clyso.com/cbs/cbsd-rs-server:latest"
   WITH_WIREGUARD="false"
@@ -205,10 +208,29 @@ server_start() {
     network_opts=("--network" "slirp4netns:mtu=1420,allow_host_loopback=true")
   }
 
+  # Metrics port: mapped only when WITH_METRICS=true. The server's /metrics
+  # listener is optional (metrics.enabled, and metrics.bind may be null), so the
+  # host-port mapping is opt-in; an unused or already-bound host port would
+  # otherwise needlessly occupy the port or fail the run. The container-side port
+  # 9090 must match metrics.bind in server.yaml.
+  metrics_port_opts=()
+  [[ "${WITH_METRICS}" == "true" ]] && {
+    [[ -z "${METRICS_BIND_ADDR}" ]] && {
+      echo "error: empty METRICS_BIND_ADDR in config" >&2
+      exit 1
+    }
+    [[ -z "${METRICS_BIND_PORT}" ]] && {
+      echo "error: empty METRICS_BIND_PORT in config" >&2
+      exit 1
+    }
+    metrics_port_opts=("-p" "${METRICS_BIND_ADDR}:${METRICS_BIND_PORT}:9090")
+  }
+
   # shellcheck disable=SC2068
   podman run \
     --replace \
     -p "${SERVER_BIND_ADDR}":"${SERVER_BIND_PORT}":8080 \
+    ${metrics_port_opts[@]} \
     -v "${server_config_dir}":/cbs/config:ro \
     -v "${server_data_dir}":/cbs/data:Z \
     -v "${server_logs_dir}":/cbs/logs:Z \
