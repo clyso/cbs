@@ -85,6 +85,10 @@ enum Command {
         /// `public_key_url` from config.
         #[arg(long)]
         public_key: Option<String>,
+        /// GitHub token (or `GITHUB_TOKEN`), sent only when the public key URL
+        /// is on a GitHub host — for a key published in a private repository.
+        #[arg(long, env = "GITHUB_TOKEN")]
+        github_token: Option<String>,
     },
 }
 
@@ -559,7 +563,7 @@ async fn main() -> Result<()> {
                     let source = public_key.or_else(|| cfg.public_key_url.clone()).context(
                         "no public key: pass --public-key or set public_key_url in the config",
                     )?;
-                    let pubkey = verify::load_public_key(&source).await?;
+                    let pubkey = verify::load_public_key(&source, github_token.as_deref()).await?;
                     match verify::verify_release(
                         &store,
                         &cfg,
@@ -588,11 +592,15 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Verify { tree, public_key } => {
+        Command::Verify {
+            tree,
+            public_key,
+            github_token,
+        } => {
             let source = public_key
                 .or_else(|| cfg.public_key_url.clone())
                 .context("no public key: pass --public-key or set public_key_url in the config")?;
-            let pubkey = verify::load_public_key(&source).await?;
+            let pubkey = verify::load_public_key(&source, github_token.as_deref()).await?;
             let tree_display = tree.display().to_string();
             // The tree walk is blocking; offload it off the async executor.
             let verdict = tokio::task::spawn_blocking(move || verify::verify_tree(&tree, &pubkey))

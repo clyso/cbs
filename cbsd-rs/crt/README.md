@@ -131,7 +131,9 @@ destination_repo: clyso/ceph
 risk_components: [rgw, rgw-multisite, dashboard, build, docs, other]
 
 # Where the OpenPGP public key is published, used by `verify`. An http(s) URL
-# or a local path; the --public-key flag overrides it. Optional.
+# or a local path; the --public-key flag overrides it. Optional. A key hosted on
+# a private GitHub repo is reachable by passing --github-token (or GITHUB_TOKEN)
+# to `verify`; the token is sent only when the URL is on a GitHub host.
 public_key_url: https://download.clyso.com/crt/crt-pubkey.asc
 
 # Namespaces → channels. A release name resolves to a channel by prefix, and

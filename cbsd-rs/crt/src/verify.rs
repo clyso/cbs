@@ -512,7 +512,14 @@ pub fn render_report(report: &VerifyReport) -> String {
 /// operators who pin the key locally). Plaintext `http://` is **refused**: the
 /// public key is the root of trust and fingerprint pinning is design-deferred,
 /// so an unauthenticated transport is the one protection we still have.
-pub async fn load_public_key(source: &str) -> Result<String> {
+///
+/// When `token` is set and `source` is on a GitHub host, it is sent as a Bearer
+/// `Authorization` header so a key published in a private repository can be
+/// fetched. The header is **host-gated** (see [`is_github_host`]) — never
+/// attached to a non-GitHub URL — so the token cannot leak to an arbitrary host.
+/// Auth only enables private hosting; the fetched key is still verified against
+/// the signature regardless.
+pub async fn load_public_key(source: &str, token: Option<&str>) -> Result<String> {
     if source.starts_with("http://") {
         bail!(
             "refusing to fetch the public key over plaintext http:// ({source:?}); \
@@ -520,7 +527,14 @@ pub async fn load_public_key(source: &str) -> Result<String> {
         );
     }
     if source.starts_with("https://") {
-        let resp = reqwest::get(source)
+        let mut req = reqwest::Client::new().get(source);
+        if let Some(token) = token
+            && is_github_host(source)
+        {
+            req = req.bearer_auth(token);
+        }
+        let resp = req
+            .send()
             .await
             .with_context(|| format!("fetching public key from {source}"))?
             .error_for_status()
@@ -531,6 +545,24 @@ pub async fn load_public_key(source: &str) -> Result<String> {
     } else {
         std::fs::read_to_string(source).with_context(|| format!("reading public key file {source}"))
     }
+}
+
+/// Whether `url` is an `https://` URL whose host is GitHub's — the gate for
+/// attaching the token. Subdomain matches are anchored to a leading dot, so
+/// `evilgithub.com` and `github.com.evil.com` do **not** match.
+fn is_github_host(url: &str) -> bool {
+    let Some(after) = url.strip_prefix("https://") else {
+        return false;
+    };
+    // Authority is up to the first '/', minus any `user@` prefix and `:port`.
+    let authority = after.split('/').next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host);
+    host == "github.com"
+        || host == "raw.githubusercontent.com"
+        || host == "api.github.com"
+        || host.ends_with(".github.com")
+        || host.ends_with(".githubusercontent.com")
 }
 
 /// The outcome of the offline in-tree legs: the validated record, or which leg
@@ -1185,7 +1217,7 @@ mod tests {
         // The root-of-trust key must never be fetched over an unauthenticated
         // transport; only https:// or a local path are accepted.
         assert!(
-            load_public_key("http://example.com/crt-pubkey.asc")
+            load_public_key("http://example.com/crt-pubkey.asc", None)
                 .await
                 .is_err()
         );
@@ -1197,8 +1229,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("crt-pubkey.asc");
         std::fs::write(&path, &public).unwrap();
-        let loaded = load_public_key(path.to_str().unwrap()).await.unwrap();
+        let loaded = load_public_key(path.to_str().unwrap(), None).await.unwrap();
         assert_eq!(loaded, public);
+    }
+
+    #[test]
+    fn github_host_gating() {
+        // GitHub hosts — the token may be attached.
+        assert!(is_github_host("https://github.com/o/r/k.asc"));
+        assert!(is_github_host(
+            "https://raw.githubusercontent.com/o/r/main/k.asc"
+        ));
+        assert!(is_github_host(
+            "https://api.github.com/repos/o/r/contents/k"
+        ));
+        assert!(is_github_host("https://objects.githubusercontent.com/x"));
+        // Look-alikes and other hosts — the token must never be attached.
+        assert!(!is_github_host("https://evilgithub.com/k.asc"));
+        assert!(!is_github_host("https://github.com.evil.com/k.asc"));
+        assert!(!is_github_host("https://example.com/k.asc"));
+        assert!(!is_github_host("http://github.com/k.asc")); // not https
+        assert!(!is_github_host("/local/path/k.asc"));
     }
 
     /// Live URL fetch. Opt-in: set `CRT_TEST_PUBKEY_URL` and run with
@@ -1208,7 +1259,7 @@ mod tests {
     #[ignore = "requires network; set CRT_TEST_PUBKEY_URL and run --ignored"]
     async fn load_public_key_fetches_a_url() {
         let url = std::env::var("CRT_TEST_PUBKEY_URL").expect("CRT_TEST_PUBKEY_URL");
-        let key = load_public_key(&url).await.unwrap();
+        let key = load_public_key(&url, None).await.unwrap();
         assert!(key.contains("BEGIN PGP PUBLIC KEY"));
     }
 
