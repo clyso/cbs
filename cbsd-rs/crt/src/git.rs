@@ -68,16 +68,43 @@ pub fn git_with_stdin(repo: &Path, args: &[&str], input: &[u8]) -> Result<String
     String::from_utf8(out.stdout).with_context(|| format!("git {args:?}: output not UTF-8"))
 }
 
-/// Fetch `refspec` from `https://github.com/<owner>/<name>.git` into `repo`.
+/// Run `git <args>` in `dir` with `GIT_TERMINAL_PROMPT=0`, and — when `token` is
+/// `Some` — a github-scoped `http.extraHeader` carrying it, injected off-argv via
+/// `GIT_CONFIG_*`. Every networked git operation against github.com goes through
+/// here: fetch by URL or by remote name, and push.
 ///
-/// When `token` is `Some`, it authenticates via an `http.extraHeader`
-/// Authorization header injected through `GIT_CONFIG_*` environment variables,
-/// so the secret never reaches `argv`, the repo's `.git/config`, on-disk config,
-/// or git's error output — it lives only in this child process's environment.
-/// This is how a private repository's PR head is fetched; the GitHub API token
-/// passed to `octocrab` also needs `Contents: Read` on the repo. Either way
-/// `GIT_TERMINAL_PROMPT=0` makes a missing or rejected credential fail fast
-/// rather than hang on an interactive `/dev/tty` prompt.
+/// The header applies to any `https://github.com/` request the command makes; it
+/// is silently unused for an SSH remote or a non-github host. Errors are safe to
+/// surface verbatim — the token never reaches `argv`, the repo's `.git/config`,
+/// on-disk config, or git's output, only this child process's environment — and
+/// `GIT_TERMINAL_PROMPT=0` turns a missing or rejected credential into a fast
+/// error instead of an interactive `/dev/tty` prompt.
+pub fn run_github_git(dir: &Path, args: &[&str], token: Option<&str>) -> Result<()> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(args);
+    if let Some(token) = token {
+        cmd.env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraHeader")
+            .env("GIT_CONFIG_VALUE_0", extra_header_value(token));
+    }
+    let out = cmd
+        .output()
+        .with_context(|| format!("spawning git {args:?}"))?;
+    if !out.status.success() {
+        bail!(
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+/// Fetch `refspec` from `https://github.com/<owner>/<name>.git` into `repo`,
+/// authenticating with `token` (see [`run_github_git`]). This is how a private
+/// repository's PR head is fetched; the GitHub API token passed to `octocrab`
+/// also needs `Contents: Read` on the repo.
 pub fn fetch_github_ref(
     repo: &Path,
     owner: &str,
@@ -86,29 +113,8 @@ pub fn fetch_github_ref(
     token: Option<&str>,
 ) -> Result<()> {
     let url = format!("https://github.com/{owner}/{name}.git");
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(["fetch", "--quiet", &url, refspec]);
-    if let Some(token) = token {
-        // Scope the header to github.com so it is never replayed if git follows
-        // a redirect to another host.
-        cmd.env("GIT_CONFIG_COUNT", "1")
-            .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraHeader")
-            .env("GIT_CONFIG_VALUE_0", extra_header_value(token));
-    }
-    let out = cmd
-        .output()
-        .with_context(|| format!("spawning git fetch {url} {refspec}"))?;
-    if !out.status.success() {
-        // The URL carries no credential and git does not echo `extraHeader`, so
-        // its stderr is safe to surface verbatim.
-        bail!(
-            "git fetch {url} {refspec} failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
+    run_github_git(repo, &["fetch", "--quiet", &url, refspec], token)
+        .with_context(|| format!("fetching {refspec} for {owner}/{name}"))
 }
 
 /// The `http.extraHeader` value carrying `token` as HTTP Basic credentials —

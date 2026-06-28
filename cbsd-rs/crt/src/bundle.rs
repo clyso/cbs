@@ -74,8 +74,9 @@ pub fn write_bundle(
     wt: Worktree,
     inputs: BundleInputs,
     push: Option<&str>,
+    token: Option<&str>,
 ) -> Result<BundleResult> {
-    match write_bundle_inner(&wt, &inputs, push) {
+    match write_bundle_inner(&wt, &inputs, push, token) {
         Ok(result) => {
             // The release is fully materialized (branch, signed bundle, tag,
             // and any push all landed). A failure to remove the *scratch*
@@ -101,6 +102,7 @@ fn write_bundle_inner(
     wt: &Worktree,
     inputs: &BundleInputs,
     push: Option<&str>,
+    token: Option<&str>,
 ) -> Result<BundleResult> {
     // 1. Hash the patched source before `000-RELEASE/` is written. (The digest
     //    excludes `000-RELEASE/` regardless, but a recipient excludes it too, so
@@ -181,13 +183,12 @@ fn write_bundle_inner(
     // 7. Optional publish (opt-in, network). `--atomic` so the branch and tag
     //    land together or not at all — no partial remote state.
     if let Some(remote) = push {
-        wt.git(&[
-            "push",
-            "--atomic",
-            remote,
-            wt.branch(),
-            &format!("refs/tags/{}", inputs.tag),
-        ])
+        let tag_ref = format!("refs/tags/{}", inputs.tag);
+        crate::git::run_github_git(
+            wt.path(),
+            &["push", "--atomic", remote, wt.branch(), &tag_ref],
+            token,
+        )
         .with_context(|| format!("pushing {} + tag {} to {remote}", wt.branch(), inputs.tag))?;
     }
 

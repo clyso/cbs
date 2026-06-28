@@ -312,7 +312,10 @@ command also reads the `vault` section.
   `sbom.cdx.json` artifacts there. The in-tree bundle is authoritative; this is
   an optional convenience emit.
 - `--push` publishes the branch and tag to `origin` (atomically) after building
-  them locally. Opt-in; requires push access to the destination remote.
+  them locally. Opt-in; requires push access. Pass `--github-token` (or
+  `GITHUB_TOKEN`) to authenticate it to a **private** `origin` over HTTPS — the
+  token needs `Contents: Write` and rides in an `http.extraHeader`, not written
+  to git config; unused for an SSH `origin`.
 
 ### Verifying a release
 

@@ -565,6 +565,7 @@ pub async fn materialize(
     passphrase: Option<&str>,
     created: String,
     push: bool,
+    token: Option<&str>,
 ) -> Result<MaterializeSummary> {
     // Project the sealed release once; both the loose `--out` copy and the
     // bundle consume these exact bytes (no drift).
@@ -647,6 +648,8 @@ pub async fn materialize(
         } else {
             None
         };
+        // Own the token for the 'static blocking task.
+        let token = token.map(str::to_owned);
         tokio::task::spawn_blocking(
             move || -> Result<(Vec<String>, crate::bundle::BundleResult)> {
                 // Refuse up front if the tag already exists, before building
@@ -663,7 +666,12 @@ pub async fn materialize(
                 }
                 let (wt, commits) =
                     crate::git::materialize_branch(&repo_path, &branch, &base_ref, &patches)?;
-                let result = crate::bundle::write_bundle(wt, inputs, push_remote.as_deref())?;
+                let result = crate::bundle::write_bundle(
+                    wt,
+                    inputs,
+                    push_remote.as_deref(),
+                    token.as_deref(),
+                )?;
                 Ok((commits, result))
             },
         )
@@ -1764,6 +1772,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -1909,6 +1918,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             true, // push
+            None,
         )
         .await
         .unwrap();
@@ -1986,6 +1996,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap_err();
@@ -2098,6 +2109,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2224,6 +2236,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2319,6 +2332,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap();
@@ -2398,6 +2412,7 @@ mod tests {
             None,
             "2026-06-25T12:00:00+00:00".to_owned(),
             false,
+            None,
         )
         .await
         .unwrap();

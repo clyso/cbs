@@ -198,6 +198,10 @@ enum ReleaseCmd {
         /// (opt-in; requires push access to the destination remote).
         #[arg(long)]
         push: bool,
+        /// GitHub token (or `GITHUB_TOKEN`) to authenticate `--push` to a
+        /// private `origin` over HTTPS. Unused for an SSH remote.
+        #[arg(long, env = "GITHUB_TOKEN")]
+        github_token: Option<String>,
     },
     /// Verify a sealed release (and, with `--repo`, its git artifact).
     ///
@@ -501,6 +505,7 @@ async fn main() -> Result<()> {
                     repo,
                     out,
                     push,
+                    github_token,
                 } => {
                     // Materialize signs the `000-RELEASE/` bundle, so it needs
                     // the Vault key — same edge shim as `seal`.
@@ -525,6 +530,7 @@ async fn main() -> Result<()> {
                         signing.passphrase.as_deref(),
                         created,
                         push,
+                        github_token.as_deref(),
                     )
                     .await?;
                     println!(
