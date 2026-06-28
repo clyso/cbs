@@ -108,12 +108,6 @@ cargo clippy --workspace  # 2. lint (fix all warnings)
 cargo check --workspace   # 3. compile check (SQLX_OFFLINE=true if no DB)
 ```
 
-Pre-commit hooks are configured via Lefthook (`.lefthook.yaml`):
-
-- Python: `ruff check`, `ruff format --check`, `basedpyright .`
-- Markdown: `markdownlint-cli2`, `prettier` (via yarn)
-- Shell: `shfmt` (via Go)
-
 ## Workspace Structure
 
 ### Python workspace
