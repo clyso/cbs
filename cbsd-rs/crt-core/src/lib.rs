@@ -9,12 +9,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256 as Sha256Hasher};
 use thiserror::Error;
 
+pub mod annotations;
 pub mod manifest;
 pub mod materialize;
 pub mod meta;
 pub mod notes;
 pub mod sbom;
 pub mod seal;
+
+pub use annotations::{
+    ANNOTATIONS_SCHEMA_VERSION, Applicability, PatchAnnotations, VersionQuery, VersionSpec,
+    applies_to_matches, parse_version_query, parse_version_spec,
+};
 
 pub use manifest::{
     ArmoredSignature, Band, Blast, Branding, Conflict, Coverage, DataStructureChange, Draft,
@@ -37,6 +43,11 @@ pub enum CrtCoreError {
     /// A string was not a valid lowercase-hex SHA-256.
     #[error("invalid sha256: {0:?}")]
     InvalidSha256(String),
+    /// A `--ceph-version` value was not a valid ceph version or line
+    /// (design §5/§7): non-numeric, too few components, or a pre-release tag
+    /// on a `major.minor` line.
+    #[error("invalid ceph version: {0:?}")]
+    InvalidVersion(String),
     /// RFC 8785 canonical-JSON serialization failed (design §6).
     #[error("canonical json: {0}")]
     Canonical(String),
