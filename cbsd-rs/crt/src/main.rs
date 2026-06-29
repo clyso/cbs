@@ -258,11 +258,16 @@ enum PatchCmd {
     /// List the imported patches.
     ///
     /// Prints `<blob_hash>  <subject>` per patch; `--json` emits the full
-    /// records as a JSON array.
+    /// records as a JSON array. `--group-by` buckets the output by PR or
+    /// source repo — text prints a header per group; `--json` emits an array
+    /// of `{group, patches}` objects.
     List {
-        /// Emit the patches as a JSON array instead of text.
+        /// Emit the patches as JSON instead of text.
         #[arg(long)]
         json: bool,
+        /// Bucket the listing by PR or source repo.
+        #[arg(long, value_enum)]
+        group_by: Option<patch::GroupBy>,
     },
     /// Show one patch's recorded metadata.
     ///
@@ -353,14 +358,29 @@ async fn main() -> Result<()> {
                     cfg.component
                 );
             }
-            PatchCmd::List { json } => {
+            PatchCmd::List { json, group_by } => {
                 let store = open_store(&cfg.store, &cli.secrets)?;
                 let patches = patch::list(&store).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&patches)?);
-                } else {
-                    print!("{}", patch::render_list(&patches));
-                    eprintln!("{} patch(es)", patches.len());
+                match group_by {
+                    Some(by) => {
+                        let groups = patch::group(&patches, by);
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&groups)?);
+                        } else {
+                            print!("{}", patch::render_groups(&groups));
+                            for g in &groups {
+                                eprintln!("{}: {} patch(es)", g.group, g.patches.len());
+                            }
+                        }
+                    }
+                    None => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&patches)?);
+                        } else {
+                            print!("{}", patch::render_list(&patches));
+                            eprintln!("{} patch(es)", patches.len());
+                        }
+                    }
                 }
             }
             PatchCmd::Info { blob_hash, json } => {

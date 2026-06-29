@@ -7,9 +7,12 @@
 //! CLI renders it either as text (the helpers here) or as JSON
 //! (`serde_json::to_string_pretty` in `main`).
 
+use std::collections::BTreeMap;
+
 use anyhow::{Result, anyhow, bail};
 use crt_core::{PatchMeta, Provenance, Sha256};
 use crt_store::Store;
+use serde::Serialize;
 
 /// All imported patches, sorted by `(subject, blob_hash)` for stable output.
 ///
@@ -35,6 +38,81 @@ pub fn render_list(patches: &[PatchMeta]) -> String {
     let mut out = String::new();
     for p in patches {
         out.push_str(&format!("{}  {}\n", p.blob_hash, p.subject));
+    }
+    out
+}
+
+/// How `crt patch list --group-by` buckets patches (design §6). Extended with
+/// annotation-derived keys (ceph-version, tag) once annotations exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum GroupBy {
+    /// One group per upstream PR URL set; local-range imports bucket together
+    /// by their range description.
+    Pr,
+    /// One group per source repository (`source_repo`).
+    SourceRepo,
+}
+
+/// A named bucket of patches produced by [`group`]. Serializes to
+/// `{ "group": <string>, "patches": [<PatchMeta>, …] }` (design §6); the
+/// per-element annotations wrapper lands in a later commit.
+#[derive(Serialize)]
+pub struct PatchGroup<'a> {
+    pub group: String,
+    pub patches: Vec<&'a PatchMeta>,
+}
+
+/// Bucket `patches` for `--group-by`. Groups are ordered by key; within a
+/// group, patches keep the seq-002 `(subject, blob_hash)` order.
+#[must_use]
+pub fn group(patches: &[PatchMeta], by: GroupBy) -> Vec<PatchGroup<'_>> {
+    let mut buckets: BTreeMap<String, Vec<&PatchMeta>> = BTreeMap::new();
+    for p in patches {
+        buckets.entry(group_key(p, by)).or_default().push(p);
+    }
+    buckets
+        .into_iter()
+        .map(|(group, mut patches)| {
+            patches.sort_by(|a, b| {
+                (&a.subject, a.blob_hash.to_hex()).cmp(&(&b.subject, b.blob_hash.to_hex()))
+            });
+            PatchGroup { group, patches }
+        })
+        .collect()
+}
+
+/// The bucket key for one patch under `by`.
+fn group_key(p: &PatchMeta, by: GroupBy) -> String {
+    match by {
+        GroupBy::Pr => match &p.provenance {
+            Provenance::UpstreamPr { prs, state, .. } => {
+                // `UpstreamPrState` renders in its serde kebab-case spelling.
+                let state = serde_json::to_string(state).unwrap_or_default();
+                let state = state.trim_matches('"');
+                if prs.is_empty() {
+                    format!("(pr) [{state}]")
+                } else {
+                    format!("{} [{state}]", prs.join(", "))
+                }
+            }
+            Provenance::Other { description } => format!("(local range) {description}"),
+        },
+        GroupBy::SourceRepo => p.source_repo.clone(),
+    }
+}
+
+/// Render grouped patches: a header line per group, then indented
+/// `<blob_hash>  <subject>` lines. The per-group count summary is the caller's
+/// (it goes to stderr).
+#[must_use]
+pub fn render_groups(groups: &[PatchGroup<'_>]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for g in groups {
+        let _ = writeln!(out, "{}", g.group);
+        for p in &g.patches {
+            let _ = writeln!(out, "  {}  {}", p.blob_hash, p.subject);
+        }
     }
     out
 }
@@ -154,8 +232,122 @@ pub fn render_info(meta: &PatchMeta, equivalent: Option<&Sha256>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crt_core::{Identity, blob_hash};
+    use crt_core::{Identity, UpstreamPrState, blob_hash};
     use crt_store::ObjectBackedStore;
+
+    /// Build a `PatchMeta` with a chosen provenance and source repo (grouping
+    /// is a pure function of those, so the tests need no store).
+    fn meta_with(
+        raw: &[u8],
+        subject: &str,
+        provenance: Provenance,
+        source_repo: &str,
+    ) -> PatchMeta {
+        PatchMeta {
+            blob_hash: blob_hash(raw),
+            patch_id: format!("pid-{subject}"),
+            author: Identity {
+                name: "n".to_owned(),
+                email: "e@example.com".to_owned(),
+            },
+            authored: "2026-06-21T00:00:00+00:00".to_owned(),
+            subject: subject.to_owned(),
+            body: "b".to_owned(),
+            cherry_picked_from: vec![],
+            provenance,
+            source_repo: source_repo.to_owned(),
+        }
+    }
+
+    fn pr_provenance(url: &str, state: UpstreamPrState) -> Provenance {
+        Provenance::UpstreamPr {
+            prs: vec![url.to_owned()],
+            commits: vec!["abcdef".to_owned()],
+            state,
+        }
+    }
+
+    #[test]
+    fn group_by_pr_buckets_same_pr_together_and_locals_apart() {
+        let pr = pr_provenance(
+            "https://github.com/ceph/ceph/pull/1",
+            UpstreamPrState::MergedMain,
+        );
+        let local = Provenance::Other {
+            description: "ceph 1..2".to_owned(),
+        };
+        let patches = vec![
+            meta_with(b"a", "aaa", pr.clone(), "ceph/ceph"),
+            meta_with(b"b", "bbb", pr.clone(), "ceph/ceph"),
+            meta_with(b"c", "ccc", local, "/tmp/ceph"),
+        ];
+        let groups = group(&patches, GroupBy::Pr);
+        assert_eq!(groups.len(), 2);
+        let pr_group = groups
+            .iter()
+            .find(|g| g.group.contains("pull/1"))
+            .expect("a PR group");
+        assert_eq!(pr_group.patches.len(), 2);
+        // The PR group header carries the upstream state.
+        assert!(
+            pr_group.group.contains("merged-main"),
+            "got: {}",
+            pr_group.group
+        );
+        let local_group = groups
+            .iter()
+            .find(|g| g.group.contains("local range"))
+            .expect("a local-range group");
+        assert_eq!(local_group.patches.len(), 1);
+    }
+
+    #[test]
+    fn group_by_source_repo_buckets_by_repo_in_key_order() {
+        let p = Provenance::Other {
+            description: "d".to_owned(),
+        };
+        let patches = vec![
+            meta_with(b"a", "a", p.clone(), "ceph/ceph"),
+            meta_with(b"b", "b", p.clone(), "clyso/ceph"),
+            meta_with(b"c", "c", p, "ceph/ceph"),
+        ];
+        let groups = group(&patches, GroupBy::SourceRepo);
+        // Groups are ordered by key; "ceph/ceph" sorts before "clyso/ceph".
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].group, "ceph/ceph");
+        assert_eq!(groups[0].patches.len(), 2);
+        assert_eq!(groups[1].group, "clyso/ceph");
+        assert_eq!(groups[1].patches.len(), 1);
+    }
+
+    #[test]
+    fn render_groups_is_header_then_indented_patches() {
+        let p = Provenance::Other {
+            description: "d".to_owned(),
+        };
+        let patches = vec![meta_with(b"a", "the subject", p, "ceph/ceph")];
+        let groups = group(&patches, GroupBy::SourceRepo);
+        let out = render_groups(&groups);
+        assert!(out.starts_with("ceph/ceph\n"), "header first: {out:?}");
+        assert!(out.contains("\n  "), "patches are indented: {out:?}");
+        assert!(out.contains("the subject"));
+    }
+
+    #[test]
+    fn grouped_json_has_group_and_patches_fields() {
+        let p = Provenance::Other {
+            description: "d".to_owned(),
+        };
+        let patches = vec![meta_with(b"a", "s", p, "ceph/ceph")];
+        let groups = group(&patches, GroupBy::SourceRepo);
+        let json = serde_json::to_value(&groups).unwrap();
+        assert!(json.is_array());
+        assert_eq!(json[0]["group"], "ceph/ceph");
+        assert!(json[0]["patches"].is_array());
+        // Commit 1's grouped element is the bare PatchMeta (the annotations
+        // wrapper lands in commit 2c).
+        assert_eq!(json[0]["patches"][0]["subject"], "s");
+    }
 
     /// Store a patch with the given subject under content address of `raw`.
     async fn put_patch(store: &dyn Store, raw: &[u8], subject: &str) -> Sha256 {
