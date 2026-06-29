@@ -270,17 +270,27 @@ enum PatchCmd {
     },
     /// List the imported patches.
     ///
-    /// Prints `<blob_hash>  <subject>` per patch; `--json` emits the full
-    /// records as a JSON array. `--group-by` buckets the output by PR or
-    /// source repo — text prints a header per group; `--json` emits an array
-    /// of `{group, patches}` objects.
+    /// Prints `<blob_hash>  <subject>  [applicability | tags]` per patch;
+    /// `--json` emits an array of `{meta, annotations}`. `--group-by` buckets
+    /// the output (by PR, source repo, ceph version, or tag). The filters keep
+    /// only matching patches and compose with each other and `--group-by`.
     List {
         /// Emit the patches as JSON instead of text.
         #[arg(long)]
         json: bool,
-        /// Bucket the listing by PR or source repo.
+        /// Bucket the listing by PR, source repo, ceph version, or tag.
         #[arg(long, value_enum)]
         group_by: Option<patch::GroupBy>,
+        /// Keep only patches applicable to this ceph version (generic patches
+        /// always match; `18.2` or `v18.2.1`).
+        #[arg(long)]
+        ceph_version: Option<String>,
+        /// Keep only patches carrying this tag.
+        #[arg(long = "tag")]
+        tag: Option<String>,
+        /// Keep only unassessed patches (no applicability set) — for triage.
+        #[arg(long)]
+        unassessed: bool,
     },
     /// Show one patch's recorded metadata.
     ///
@@ -431,9 +441,21 @@ async fn main() -> Result<()> {
                     eprintln!("annotated {} patch(es)", hashes.len());
                 }
             }
-            PatchCmd::List { json, group_by } => {
+            PatchCmd::List {
+                json,
+                group_by,
+                ceph_version,
+                tag,
+                unassessed,
+            } => {
+                // Parse filter flags first, so a bad --ceph-version fails fast.
+                let filter = patch::Filter::from_flags(ceph_version.as_deref(), tag, unassessed)?;
                 let store = open_store(&cfg.store, &cli.secrets)?;
-                let patches = patch::list(&store).await?;
+                let patches: Vec<_> = patch::list(&store)
+                    .await?
+                    .into_iter()
+                    .filter(|p| patch::matches_filter(p, &filter))
+                    .collect();
                 match group_by {
                     Some(by) => {
                         let groups = patch::group(&patches, by);

@@ -10,9 +10,68 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
-use crt_core::{Applicability, PatchAnnotations, PatchMeta, Provenance, Sha256, VersionSpec};
+use crt_core::{
+    Applicability, PatchAnnotations, PatchMeta, Provenance, Sha256, VersionQuery, VersionSpec,
+    parse_version_query,
+};
 use crt_store::Store;
 use serde::Serialize;
+
+/// A `patch list` filter (design §6). Empty fields are inert; set fields
+/// compose with **and** semantics.
+pub struct Filter {
+    /// Keep patches applicable to this ceph version (`Generic` ∪ matching).
+    pub ceph_version: Option<VersionQuery>,
+    /// Keep patches whose tags contain this tag.
+    pub tag: Option<String>,
+    /// Keep patches with `applies_to = None` (unassessed; includes patches
+    /// with no annotations record at all).
+    pub unassessed: bool,
+}
+
+impl Filter {
+    /// Build from `list` flags, parsing `--ceph-version` into a query (§7).
+    pub fn from_flags(
+        ceph_version: Option<&str>,
+        tag: Option<String>,
+        unassessed: bool,
+    ) -> Result<Self> {
+        let ceph_version = ceph_version.map(parse_version_query).transpose()?;
+        Ok(Self {
+            ceph_version,
+            tag,
+            unassessed,
+        })
+    }
+}
+
+/// Whether `view` passes `filter` (design §6). A patch with no annotations
+/// record reads as unassessed: it matches `--unassessed` but neither the
+/// version nor the tag filter (§7 — `None` is never assumed generic).
+#[must_use]
+pub fn matches_filter(view: &PatchView, filter: &Filter) -> bool {
+    let applies = view
+        .annotations
+        .as_ref()
+        .and_then(|a| a.applies_to.as_ref());
+    if let Some(q) = &filter.ceph_version
+        && !applies.is_some_and(|a| a.matches(q))
+    {
+        return false;
+    }
+    if let Some(tag) = &filter.tag
+        && !view
+            .annotations
+            .as_ref()
+            .is_some_and(|a| a.tags.contains(tag))
+    {
+        return false;
+    }
+    if filter.unassessed && applies.is_some() {
+        return false;
+    }
+    true
+}
 
 /// A patch's git-derived metadata plus its operator-authored annotations, if
 /// any (design §6). The element of `patch list --json` and the `patch info`
@@ -45,19 +104,52 @@ pub async fn list(store: &dyn Store) -> Result<Vec<PatchView>> {
     Ok(patches)
 }
 
-/// Render the patch list as `<blob_hash>  <subject>` lines (one per patch).
-/// The annotations-aware column lands in a later commit (design §8 commit 4).
+/// A one-line annotations summary for the list column, e.g. `[18.2 | rgw]`
+/// (design §6) — `None` when the blob has no (meaningful) annotations record,
+/// so un-annotated patches render as a bare `<hash>  <subject>` line.
+fn annotation_summary(view: &PatchView) -> Option<String> {
+    let ann = view.annotations.as_ref()?;
+    if ann.is_empty() {
+        return None;
+    }
+    let applies = match &ann.applies_to {
+        None => "unassessed".to_owned(),
+        Some(Applicability::Generic) => "generic".to_owned(),
+        Some(Applicability::Versions(specs)) => {
+            specs.iter().map(render_spec).collect::<Vec<_>>().join(",")
+        }
+    };
+    if ann.tags.is_empty() {
+        Some(format!("[{applies}]"))
+    } else {
+        let tags = ann.tags.iter().cloned().collect::<Vec<_>>().join(",");
+        Some(format!("[{applies} | {tags}]"))
+    }
+}
+
+/// One list line: `<blob_hash>  <subject>` plus, when present, the annotations
+/// summary column.
+fn patch_line(view: &PatchView) -> String {
+    match annotation_summary(view) {
+        Some(summary) => format!("{}  {}  {summary}", view.meta.blob_hash, view.meta.subject),
+        None => format!("{}  {}", view.meta.blob_hash, view.meta.subject),
+    }
+}
+
+/// Render the patch list, one [`patch_line`] per patch.
 #[must_use]
 pub fn render_list(patches: &[PatchView]) -> String {
     let mut out = String::new();
     for p in patches {
-        out.push_str(&format!("{}  {}\n", p.meta.blob_hash, p.meta.subject));
+        out.push_str(&patch_line(p));
+        out.push('\n');
     }
     out
 }
 
-/// How `crt patch list --group-by` buckets patches (design §6). Extended with
-/// annotation-derived keys (ceph-version, tag) once annotations exist.
+/// How `crt patch list --group-by` buckets patches (design §6). The
+/// annotation-derived keys (`CephVersion`, `Tag`) put a patch in **every**
+/// matching group (multi-membership).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum GroupBy {
     /// One group per upstream PR URL set; local-range imports bucket together
@@ -65,6 +157,11 @@ pub enum GroupBy {
     Pr,
     /// One group per source repository (`source_repo`).
     SourceRepo,
+    /// One group per applicability spec (`18.2`, `v18.2.0`); `Generic` patches
+    /// form a `(generic)` group and unassessed ones an `(unassessed)` group.
+    CephVersion,
+    /// One group per tag; patches with no tags form an `(untagged)` group.
+    Tag,
 }
 
 /// A named bucket of patches produced by [`group`]. Serializes to
@@ -77,12 +174,15 @@ pub struct PatchGroup<'a> {
 }
 
 /// Bucket `patches` for `--group-by`. Groups are ordered by key; within a
-/// group, patches keep the seq-002 `(subject, blob_hash)` order.
+/// group, patches keep the seq-002 `(subject, blob_hash)` order. A patch may
+/// land in several groups under the annotation-derived keys (§6).
 #[must_use]
 pub fn group(patches: &[PatchView], by: GroupBy) -> Vec<PatchGroup<'_>> {
     let mut buckets: BTreeMap<String, Vec<&PatchView>> = BTreeMap::new();
     for p in patches {
-        buckets.entry(group_key(&p.meta, by)).or_default().push(p);
+        for key in group_keys(p, by) {
+            buckets.entry(key).or_default().push(p);
+        }
     }
     buckets
         .into_iter()
@@ -96,14 +196,15 @@ pub fn group(patches: &[PatchView], by: GroupBy) -> Vec<PatchGroup<'_>> {
         .collect()
 }
 
-/// The bucket key for one patch under `by`.
-fn group_key(p: &PatchMeta, by: GroupBy) -> String {
+/// The bucket key(s) for one patch under `by`. `Pr`/`SourceRepo` yield exactly
+/// one; `CephVersion`/`Tag` yield one per matching value (multi-membership).
+fn group_keys(view: &PatchView, by: GroupBy) -> Vec<String> {
     match by {
-        GroupBy::Pr => match &p.provenance {
+        GroupBy::Pr => vec![match &view.meta.provenance {
             Provenance::UpstreamPr { prs, state, .. } => {
                 // `UpstreamPrState` renders in its serde kebab-case spelling.
                 let state = serde_json::to_string(state).unwrap_or_default();
-                let state = state.trim_matches('"');
+                let state = state.trim_matches('"').to_owned();
                 if prs.is_empty() {
                     format!("(pr) [{state}]")
                 } else {
@@ -111,8 +212,29 @@ fn group_key(p: &PatchMeta, by: GroupBy) -> String {
                 }
             }
             Provenance::Other { description } => format!("(local range) {description}"),
+        }],
+        GroupBy::SourceRepo => vec![view.meta.source_repo.clone()],
+        GroupBy::CephVersion => {
+            match view
+                .annotations
+                .as_ref()
+                .and_then(|a| a.applies_to.as_ref())
+            {
+                None => vec!["(unassessed)".to_owned()],
+                Some(Applicability::Generic) => vec!["(generic)".to_owned()],
+                // An empty set never persists (§5), but stay defensive.
+                Some(Applicability::Versions(specs)) if specs.is_empty() => {
+                    vec!["(unassessed)".to_owned()]
+                }
+                Some(Applicability::Versions(specs)) => {
+                    specs.iter().map(|s| render_spec(s).to_owned()).collect()
+                }
+            }
+        }
+        GroupBy::Tag => match view.annotations.as_ref() {
+            Some(ann) if !ann.tags.is_empty() => ann.tags.iter().cloned().collect(),
+            _ => vec!["(untagged)".to_owned()],
         },
-        GroupBy::SourceRepo => p.source_repo.clone(),
     }
 }
 
@@ -126,7 +248,7 @@ pub fn render_groups(groups: &[PatchGroup<'_>]) -> String {
     for g in groups {
         let _ = writeln!(out, "{}", g.group);
         for p in &g.patches {
-            let _ = writeln!(out, "  {}  {}", p.meta.blob_hash, p.meta.subject);
+            let _ = writeln!(out, "  {}", patch_line(p));
         }
     }
     out
@@ -718,5 +840,188 @@ mod tests {
         let out = render_info(&meta, None, Some(&other));
         assert!(out.contains("equivalent-to"));
         assert!(out.contains(&other.to_hex()));
+    }
+
+    fn versions(specs: &[VersionSpec]) -> Applicability {
+        Applicability::Versions(specs.iter().cloned().collect())
+    }
+
+    /// A `PatchView` carrying an annotations record (applicability + tags).
+    fn view_annotated(
+        raw: &[u8],
+        subject: &str,
+        applies: Option<Applicability>,
+        tags: &[&str],
+    ) -> PatchView {
+        let mut annotations = PatchAnnotations {
+            applies_to: applies,
+            ..Default::default()
+        };
+        annotations.tags = tags.iter().map(|t| (*t).to_owned()).collect();
+        PatchView {
+            meta: meta_with(
+                raw,
+                subject,
+                Provenance::Other {
+                    description: "d".to_owned(),
+                },
+                "r",
+            ),
+            annotations: Some(annotations),
+        }
+    }
+
+    #[test]
+    fn filter_by_ceph_version_includes_generic_and_matching() {
+        let patches = [
+            view_annotated(
+                b"a",
+                "a",
+                Some(versions(&[VersionSpec::Line("18.2".to_owned())])),
+                &[],
+            ),
+            view_annotated(b"b", "b", Some(Applicability::Generic), &[]),
+            view_annotated(
+                b"c",
+                "c",
+                Some(versions(&[VersionSpec::Line("19.2".to_owned())])),
+                &[],
+            ),
+            view_with(
+                b"d",
+                "d",
+                Provenance::Other {
+                    description: "x".to_owned(),
+                },
+                "r",
+            ), // no record
+        ];
+        let f = Filter::from_flags(Some("v18.2.1"), None, false).unwrap();
+        let kept: Vec<&str> = patches
+            .iter()
+            .filter(|p| matches_filter(p, &f))
+            .map(|p| p.meta.subject.as_str())
+            .collect();
+        // The 18.2 line matches; Generic always matches; 19.2 and the
+        // unassessed (no-record) patch do not.
+        assert_eq!(kept, ["a", "b"]);
+    }
+
+    #[test]
+    fn filter_by_tag_and_unassessed() {
+        let patches = [
+            view_annotated(b"a", "a", Some(Applicability::Generic), &["rgw"]),
+            view_annotated(
+                b"b",
+                "b",
+                Some(versions(&[VersionSpec::Line("18.2".to_owned())])),
+                &["osd"],
+            ),
+            view_with(
+                b"c",
+                "c",
+                Provenance::Other {
+                    description: "x".to_owned(),
+                },
+                "r",
+            ), // no record
+        ];
+        let by_tag = Filter::from_flags(None, Some("rgw".to_owned()), false).unwrap();
+        let tagged: Vec<&str> = patches
+            .iter()
+            .filter(|p| matches_filter(p, &by_tag))
+            .map(|p| p.meta.subject.as_str())
+            .collect();
+        assert_eq!(tagged, ["a"]);
+
+        let by_unassessed = Filter::from_flags(None, None, true).unwrap();
+        let unassessed: Vec<&str> = patches
+            .iter()
+            .filter(|p| matches_filter(p, &by_unassessed))
+            .map(|p| p.meta.subject.as_str())
+            .collect();
+        // Only the no-record patch is unassessed (the other two have applies_to).
+        assert_eq!(unassessed, ["c"]);
+    }
+
+    #[test]
+    fn group_by_ceph_version_is_multi_membership() {
+        let patches = vec![
+            view_annotated(
+                b"a",
+                "a",
+                Some(versions(&[
+                    VersionSpec::Line("18.2".to_owned()),
+                    VersionSpec::Exact("v19.2.0".to_owned()),
+                ])),
+                &[],
+            ),
+            view_annotated(b"b", "b", Some(Applicability::Generic), &[]),
+            view_with(
+                b"c",
+                "c",
+                Provenance::Other {
+                    description: "x".to_owned(),
+                },
+                "r",
+            ),
+        ];
+        let groups = group(&patches, GroupBy::CephVersion);
+        let keys: Vec<&str> = groups.iter().map(|g| g.group.as_str()).collect();
+        // "a" lands under both its specs; Generic and the no-record patch get
+        // their own buckets. BTreeMap orders keys.
+        assert_eq!(keys, ["(generic)", "(unassessed)", "18.2", "v19.2.0"]);
+        let v182 = groups.iter().find(|g| g.group == "18.2").unwrap();
+        assert_eq!(v182.patches.len(), 1);
+        assert_eq!(v182.patches[0].meta.subject, "a");
+    }
+
+    #[test]
+    fn group_by_tag_buckets_each_tag_and_untagged() {
+        let patches = vec![
+            view_annotated(b"a", "a", None, &["rgw", "osd"]),
+            view_annotated(b"b", "b", None, &["rgw"]),
+            view_with(
+                b"c",
+                "c",
+                Provenance::Other {
+                    description: "x".to_owned(),
+                },
+                "r",
+            ),
+        ];
+        let groups = group(&patches, GroupBy::Tag);
+        let keys: Vec<&str> = groups.iter().map(|g| g.group.as_str()).collect();
+        assert_eq!(keys, ["(untagged)", "osd", "rgw"]);
+        let rgw = groups.iter().find(|g| g.group == "rgw").unwrap();
+        assert_eq!(rgw.patches.len(), 2);
+    }
+
+    #[test]
+    fn render_list_shows_the_annotation_column() {
+        let patches = vec![
+            view_annotated(
+                b"a",
+                "annotated",
+                Some(versions(&[VersionSpec::Line("18.2".to_owned())])),
+                &["rgw"],
+            ),
+            view_with(
+                b"b",
+                "bare",
+                Provenance::Other {
+                    description: "x".to_owned(),
+                },
+                "r",
+            ),
+        ];
+        let out = render_list(&patches);
+        assert!(out.contains("annotated  [18.2 | rgw]"), "got: {out}");
+        // The un-annotated patch keeps the bare two-column line.
+        let bare_line = out.lines().find(|l| l.contains("bare")).unwrap();
+        assert!(
+            !bare_line.contains('['),
+            "bare line has no column: {bare_line}"
+        );
     }
 }
