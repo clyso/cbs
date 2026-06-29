@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use crt_core::{CrtCoreError, Draft, PatchMeta, ReleaseKey, ReleaseRecord, Sha256};
+use crt_core::{
+    CrtCoreError, Draft, PatchAnnotations, PatchMeta, ReleaseKey, ReleaseRecord, Sha256,
+};
 use futures::TryStreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as StorePath;
@@ -71,6 +73,14 @@ pub trait Store: Send + Sync {
     async fn put_meta(&self, hash: &Sha256, meta: &PatchMeta) -> Result<()>;
     /// Read patch metadata.
     async fn get_meta(&self, hash: &Sha256) -> Result<PatchMeta>;
+    /// Write the operator-authored annotations record for a blob (design §5).
+    /// A whole-record write — merge (read → merge → write) is the caller's job.
+    async fn put_annotations(&self, hash: &Sha256, ann: &PatchAnnotations) -> Result<()>;
+    /// Read a blob's annotations, or `None` if it has no record yet (the
+    /// unassessed default). Returns `Option` — unlike `get_meta`, whose absence
+    /// is an error — because a blob always has meta but need not have
+    /// annotations (mirrors `get_patch_id`).
+    async fn get_annotations(&self, hash: &Sha256) -> Result<Option<PatchAnnotations>>;
     /// Look up the blob hash recorded for a `patch_id`, if any (design §4).
     async fn get_patch_id(&self, patch_id: &str) -> Result<Option<Sha256>>;
     /// Record that `patch_id` maps to `hash` (the equivalence index).
@@ -108,6 +118,10 @@ fn blob_path(hash: &Sha256) -> StorePath {
 
 fn meta_path(hash: &Sha256) -> StorePath {
     StorePath::from(format!("patches/meta/sha256/{}.json", hash.to_hex()))
+}
+
+fn annotations_path(hash: &Sha256) -> StorePath {
+    StorePath::from(format!("patches/annotations/sha256/{}.json", hash.to_hex()))
 }
 
 fn patch_id_path(patch_id: &str) -> StorePath {
@@ -298,6 +312,25 @@ impl Store for ObjectBackedStore {
         Ok(serde_json::from_slice(&bytes)?)
     }
 
+    async fn put_annotations(&self, hash: &Sha256, ann: &PatchAnnotations) -> Result<()> {
+        let json = serde_json::to_vec_pretty(ann)?;
+        self.inner
+            .put(&annotations_path(hash), PutPayload::from(json))
+            .await?;
+        Ok(())
+    }
+
+    async fn get_annotations(&self, hash: &Sha256) -> Result<Option<PatchAnnotations>> {
+        match self.inner.get(&annotations_path(hash)).await {
+            Ok(res) => {
+                let bytes = res.bytes().await?;
+                Ok(Some(serde_json::from_slice(&bytes)?))
+            }
+            Err(object_store::Error::NotFound { .. }) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     async fn get_patch_id(&self, patch_id: &str) -> Result<Option<Sha256>> {
         match self.inner.get(&patch_id_path(patch_id)).await {
             Ok(res) => {
@@ -441,6 +474,26 @@ mod tests {
         let meta = sample_meta(h);
         store.put_meta(&h, &meta).await.unwrap();
         assert_eq!(store.get_meta(&h).await.unwrap(), meta);
+    }
+
+    #[tokio::test]
+    async fn annotations_round_trip_and_absent_is_none() {
+        use crt_core::{Applicability, PatchAnnotations, VersionSpec};
+        let store = ObjectBackedStore::in_memory();
+        let h = blob_hash(b"annotated");
+        // Absent ⇒ None (the unassessed default), unlike `get_meta` whose
+        // absence is an error.
+        assert!(store.get_annotations(&h).await.unwrap().is_none());
+
+        let mut ann = PatchAnnotations {
+            applies_to: Some(Applicability::Versions(
+                [VersionSpec::Line("18.2".to_owned())].into_iter().collect(),
+            )),
+            ..Default::default()
+        };
+        ann.tags.insert("rgw".to_owned());
+        store.put_annotations(&h, &ann).await.unwrap();
+        assert_eq!(store.get_annotations(&h).await.unwrap(), Some(ann));
     }
 
     #[tokio::test]
