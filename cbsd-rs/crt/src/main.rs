@@ -285,13 +285,54 @@ enum PatchCmd {
     /// Show one patch's recorded metadata.
     ///
     /// `<blob_hash>` is a full 64-char hex address or a unique short prefix of
-    /// one; `--json` emits the `PatchMeta` as a JSON object.
+    /// one; `--json` emits the `{meta, annotations}` view as a JSON object.
     Info {
         /// Full hex blob hash, or a unique short prefix of one.
         blob_hash: String,
         /// Emit the patch as a JSON object instead of text.
         #[arg(long)]
         json: bool,
+    },
+    /// Edit a patch's operator annotations.
+    ///
+    /// Sets applicability (`--ceph-version`/`--unceph-version`/`--generic`/
+    /// `--unassessed`, mutually exclusive), tags (`--tag`/`--untag`), the
+    /// description (`--description`/`--clear-description`), and attributes
+    /// (`--set k=v`/`--unset k`). One read-modify-write; the facets compose,
+    /// and existing facets are preserved.
+    Annotate {
+        /// Full hex blob hash, or a unique short prefix of one.
+        blob_hash: String,
+        /// Add an applicable ceph version (`18.2` or `v18.2.1`; repeatable).
+        #[arg(long, conflicts_with_all = ["generic", "unassessed", "unceph_version"])]
+        ceph_version: Vec<String>,
+        /// Remove an applicable ceph version (repeatable).
+        #[arg(long, conflicts_with_all = ["generic", "unassessed", "ceph_version"])]
+        unceph_version: Vec<String>,
+        /// Mark generic (applies to any ceph version).
+        #[arg(long, conflicts_with = "unassessed")]
+        generic: bool,
+        /// Reset applicability to unassessed.
+        #[arg(long)]
+        unassessed: bool,
+        /// Add a tag (repeatable).
+        #[arg(long = "tag")]
+        tag: Vec<String>,
+        /// Remove a tag (repeatable).
+        #[arg(long = "untag")]
+        untag: Vec<String>,
+        /// Set the triage description.
+        #[arg(long, conflicts_with = "clear_description")]
+        description: Option<String>,
+        /// Clear the triage description.
+        #[arg(long)]
+        clear_description: bool,
+        /// Set an attribute `key=value` (repeatable).
+        #[arg(long = "set")]
+        set: Vec<String>,
+        /// Remove an attribute by key (repeatable).
+        #[arg(long = "unset")]
+        unset: Vec<String>,
     },
 }
 
@@ -434,6 +475,44 @@ async fn main() -> Result<()> {
                         )
                     );
                 }
+            }
+            PatchCmd::Annotate {
+                blob_hash,
+                ceph_version,
+                unceph_version,
+                generic,
+                unassessed,
+                tag,
+                untag,
+                description,
+                clear_description,
+                set,
+                unset,
+            } => {
+                // Validate flags before any store IO (a bad version / k=v fails
+                // fast).
+                let edit = annotate::EditAnnotation::from_flags(
+                    ceph_version,
+                    unceph_version,
+                    generic,
+                    unassessed,
+                    tag,
+                    untag,
+                    description,
+                    clear_description,
+                    set,
+                    unset,
+                )?;
+                let store = open_store(&cfg.store, &cli.secrets)?;
+                // Resolve the hash (and confirm the patch exists) via `find`.
+                let view = patch::find(&store, &blob_hash).await?;
+                let (ann, warnings) =
+                    annotate::apply_edit(&store, &view.meta.blob_hash, &edit).await?;
+                for w in &warnings {
+                    eprintln!("  warning: {w}");
+                }
+                eprintln!("annotated {}", view.meta.blob_hash);
+                print!("{}", patch::render_info(&view.meta, Some(&ann), None));
             }
         },
         Command::Release { cmd } => {

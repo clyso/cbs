@@ -186,7 +186,7 @@ pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchView> {
 /// Render a [`VersionSpec`] for display — the stored string (`18.2` for a
 /// `Line`, `v18.2.0` for an `Exact`, design §6).
 #[must_use]
-fn render_spec(spec: &VersionSpec) -> &str {
+pub(crate) fn render_spec(spec: &VersionSpec) -> &str {
     match spec {
         VersionSpec::Line(l) | VersionSpec::Exact(l) => l,
     }
