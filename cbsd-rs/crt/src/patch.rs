@@ -10,34 +10,48 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow, bail};
-use crt_core::{PatchMeta, Provenance, Sha256};
+use crt_core::{Applicability, PatchAnnotations, PatchMeta, Provenance, Sha256, VersionSpec};
 use crt_store::Store;
 use serde::Serialize;
+
+/// A patch's git-derived metadata plus its operator-authored annotations, if
+/// any (design §6). The element of `patch list --json` and the `patch info`
+/// JSON: `{ "meta": <PatchMeta>, "annotations": <PatchAnnotations> | null }`
+/// (explicit `null` when the blob has no annotations record).
+#[derive(Debug, Serialize)]
+pub struct PatchView {
+    pub meta: PatchMeta,
+    pub annotations: Option<PatchAnnotations>,
+}
 
 /// All imported patches, sorted by `(subject, blob_hash)` for stable output.
 ///
 /// `Sha256` has no `Ord`, so the hash is ordered as its hex string. Reads one
-/// `get_meta` per patch (1 list + N gets); a failing read aborts the listing
-/// rather than silently dropping the patch — fail-loud, matching the rest of
-/// the tool.
-pub async fn list(store: &dyn Store) -> Result<Vec<PatchMeta>> {
+/// `get_meta` + one `get_annotations` per patch (1 list + 2N gets); a failing
+/// read aborts the listing rather than silently dropping the patch — fail-loud,
+/// matching the rest of the tool.
+pub async fn list(store: &dyn Store) -> Result<Vec<PatchView>> {
     let hashes = store.list_patches().await?;
     let mut patches = Vec::with_capacity(hashes.len());
     for hash in hashes {
-        patches.push(store.get_meta(&hash).await?);
+        let meta = store.get_meta(&hash).await?;
+        let annotations = store.get_annotations(&hash).await?;
+        patches.push(PatchView { meta, annotations });
     }
     patches.sort_by(|a, b| {
-        (&a.subject, a.blob_hash.to_hex()).cmp(&(&b.subject, b.blob_hash.to_hex()))
+        (&a.meta.subject, a.meta.blob_hash.to_hex())
+            .cmp(&(&b.meta.subject, b.meta.blob_hash.to_hex()))
     });
     Ok(patches)
 }
 
 /// Render the patch list as `<blob_hash>  <subject>` lines (one per patch).
+/// The annotations-aware column lands in a later commit (design §8 commit 4).
 #[must_use]
-pub fn render_list(patches: &[PatchMeta]) -> String {
+pub fn render_list(patches: &[PatchView]) -> String {
     let mut out = String::new();
     for p in patches {
-        out.push_str(&format!("{}  {}\n", p.blob_hash, p.subject));
+        out.push_str(&format!("{}  {}\n", p.meta.blob_hash, p.meta.subject));
     }
     out
 }
@@ -54,27 +68,28 @@ pub enum GroupBy {
 }
 
 /// A named bucket of patches produced by [`group`]. Serializes to
-/// `{ "group": <string>, "patches": [<PatchMeta>, …] }` (design §6); the
-/// per-element annotations wrapper lands in a later commit.
+/// `{ "group": <string>, "patches": [<PatchView>, …] }` (design §6) — each
+/// element carrying meta + annotations.
 #[derive(Serialize)]
 pub struct PatchGroup<'a> {
     pub group: String,
-    pub patches: Vec<&'a PatchMeta>,
+    pub patches: Vec<&'a PatchView>,
 }
 
 /// Bucket `patches` for `--group-by`. Groups are ordered by key; within a
 /// group, patches keep the seq-002 `(subject, blob_hash)` order.
 #[must_use]
-pub fn group(patches: &[PatchMeta], by: GroupBy) -> Vec<PatchGroup<'_>> {
-    let mut buckets: BTreeMap<String, Vec<&PatchMeta>> = BTreeMap::new();
+pub fn group(patches: &[PatchView], by: GroupBy) -> Vec<PatchGroup<'_>> {
+    let mut buckets: BTreeMap<String, Vec<&PatchView>> = BTreeMap::new();
     for p in patches {
-        buckets.entry(group_key(p, by)).or_default().push(p);
+        buckets.entry(group_key(&p.meta, by)).or_default().push(p);
     }
     buckets
         .into_iter()
         .map(|(group, mut patches)| {
             patches.sort_by(|a, b| {
-                (&a.subject, a.blob_hash.to_hex()).cmp(&(&b.subject, b.blob_hash.to_hex()))
+                (&a.meta.subject, a.meta.blob_hash.to_hex())
+                    .cmp(&(&b.meta.subject, b.meta.blob_hash.to_hex()))
             });
             PatchGroup { group, patches }
         })
@@ -111,7 +126,7 @@ pub fn render_groups(groups: &[PatchGroup<'_>]) -> String {
     for g in groups {
         let _ = writeln!(out, "{}", g.group);
         for p in &g.patches {
-            let _ = writeln!(out, "  {}  {}", p.blob_hash, p.subject);
+            let _ = writeln!(out, "  {}  {}", p.meta.blob_hash, p.meta.subject);
         }
     }
     out
@@ -124,11 +139,11 @@ pub fn render_groups(groups: &[PatchGroup<'_>]) -> String {
 /// is too short, `>64` is too long). A full hash is looked up directly; a prefix
 /// is matched against `list_patches` — no match or an ambiguous prefix is an
 /// error.
-pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchMeta> {
+pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchView> {
     if !arg.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
         bail!("{arg:?} is not a lowercase-hex blob hash or prefix");
     }
-    match arg.len() {
+    let meta = match arg.len() {
         64 => {
             let hash = Sha256::try_from(arg.to_owned())?;
             store.get_meta(&hash).await.map_err(|e| {
@@ -137,7 +152,7 @@ pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchMeta> {
                 } else {
                     e.into()
                 }
-            })
+            })?
         }
         4..=63 => {
             let matches: Vec<Sha256> = store
@@ -148,7 +163,7 @@ pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchMeta> {
                 .collect();
             match matches.as_slice() {
                 [] => bail!("no patch with blob hash prefix {arg:?}"),
-                [hash] => Ok(store.get_meta(hash).await?),
+                [hash] => store.get_meta(hash).await?,
                 many => {
                     let listed = many
                         .iter()
@@ -163,15 +178,66 @@ pub async fn find(store: &dyn Store, arg: &str) -> Result<PatchMeta> {
             "{arg:?} has {n} hex chars; expected a 64-char blob hash or a prefix \
              of 4–63"
         ),
+    };
+    let annotations = store.get_annotations(&meta.blob_hash).await?;
+    Ok(PatchView { meta, annotations })
+}
+
+/// Render a [`VersionSpec`] for display — the stored string (`18.2` for a
+/// `Line`, `v18.2.0` for an `Exact`, design §6).
+#[must_use]
+fn render_spec(spec: &VersionSpec) -> &str {
+    match spec {
+        VersionSpec::Line(l) | VersionSpec::Exact(l) => l,
     }
 }
 
-/// Render a patch's metadata as a labeled text block. When `equivalent` is set
-/// it names a *different* blob that is the patch-id index's representative for
+/// Append the operator-authored annotations to a `patch info` block. Always
+/// shows `applies-to` (an existing record asserts something there, even if
+/// `(unassessed)`); the optional facets show only when present.
+fn append_annotations(out: &mut String, ann: &PatchAnnotations) {
+    use std::fmt::Write as _;
+    match &ann.applies_to {
+        None => {
+            let _ = writeln!(out, "applies-to:   (unassessed)");
+        }
+        Some(Applicability::Generic) => {
+            let _ = writeln!(out, "applies-to:   generic");
+        }
+        Some(Applicability::Versions(specs)) => {
+            let list = specs.iter().map(render_spec).collect::<Vec<_>>().join(", ");
+            let _ = writeln!(out, "applies-to:   versions: {list}");
+        }
+    }
+    if !ann.tags.is_empty() {
+        let tags = ann.tags.iter().cloned().collect::<Vec<_>>().join(", ");
+        let _ = writeln!(out, "tags:         {tags}");
+    }
+    if let Some(desc) = &ann.description {
+        let _ = writeln!(out, "description:  {desc}");
+    }
+    if !ann.attributes.is_empty() {
+        let kv = ann
+            .attributes
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(out, "attributes:   {kv}");
+    }
+}
+
+/// Render a patch's metadata as a labeled text block. `annotations` is the
+/// blob's annotations record, if any (design §6). When `equivalent` is set it
+/// names a *different* blob that is the patch-id index's representative for
 /// this patch; the line is text-only (one-way — absent when inspecting that
 /// representative — and never part of the `--json` output).
 #[must_use]
-pub fn render_info(meta: &PatchMeta, equivalent: Option<&Sha256>) -> String {
+pub fn render_info(
+    meta: &PatchMeta,
+    annotations: Option<&PatchAnnotations>,
+    equivalent: Option<&Sha256>,
+) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
     let _ = writeln!(out, "blob_hash:    {}", meta.blob_hash);
@@ -214,6 +280,11 @@ pub fn render_info(meta: &PatchMeta, equivalent: Option<&Sha256>) -> String {
             "cherry-picked-from: {}",
             meta.cherry_picked_from.join(", ")
         );
+    }
+    if let Some(ann) = annotations
+        && !ann.is_empty()
+    {
+        append_annotations(&mut out, ann);
     }
     if let Some(other) = equivalent {
         let _ = writeln!(
@@ -267,6 +338,20 @@ mod tests {
         }
     }
 
+    /// A `PatchView` with no annotations — grouping ignores annotations, so
+    /// the grouping tests build these directly without a store.
+    fn view_with(
+        raw: &[u8],
+        subject: &str,
+        provenance: Provenance,
+        source_repo: &str,
+    ) -> PatchView {
+        PatchView {
+            meta: meta_with(raw, subject, provenance, source_repo),
+            annotations: None,
+        }
+    }
+
     #[test]
     fn group_by_pr_buckets_same_pr_together_and_locals_apart() {
         let pr = pr_provenance(
@@ -277,9 +362,9 @@ mod tests {
             description: "ceph 1..2".to_owned(),
         };
         let patches = vec![
-            meta_with(b"a", "aaa", pr.clone(), "ceph/ceph"),
-            meta_with(b"b", "bbb", pr.clone(), "ceph/ceph"),
-            meta_with(b"c", "ccc", local, "/tmp/ceph"),
+            view_with(b"a", "aaa", pr.clone(), "ceph/ceph"),
+            view_with(b"b", "bbb", pr.clone(), "ceph/ceph"),
+            view_with(b"c", "ccc", local, "/tmp/ceph"),
         ];
         let groups = group(&patches, GroupBy::Pr);
         assert_eq!(groups.len(), 2);
@@ -307,9 +392,9 @@ mod tests {
             description: "d".to_owned(),
         };
         let patches = vec![
-            meta_with(b"a", "a", p.clone(), "ceph/ceph"),
-            meta_with(b"b", "b", p.clone(), "clyso/ceph"),
-            meta_with(b"c", "c", p, "ceph/ceph"),
+            view_with(b"a", "a", p.clone(), "ceph/ceph"),
+            view_with(b"b", "b", p.clone(), "clyso/ceph"),
+            view_with(b"c", "c", p, "ceph/ceph"),
         ];
         let groups = group(&patches, GroupBy::SourceRepo);
         // Groups are ordered by key; "ceph/ceph" sorts before "clyso/ceph".
@@ -325,7 +410,7 @@ mod tests {
         let p = Provenance::Other {
             description: "d".to_owned(),
         };
-        let patches = vec![meta_with(b"a", "the subject", p, "ceph/ceph")];
+        let patches = vec![view_with(b"a", "the subject", p, "ceph/ceph")];
         let groups = group(&patches, GroupBy::SourceRepo);
         let out = render_groups(&groups);
         assert!(out.starts_with("ceph/ceph\n"), "header first: {out:?}");
@@ -338,15 +423,15 @@ mod tests {
         let p = Provenance::Other {
             description: "d".to_owned(),
         };
-        let patches = vec![meta_with(b"a", "s", p, "ceph/ceph")];
+        let patches = vec![view_with(b"a", "s", p, "ceph/ceph")];
         let groups = group(&patches, GroupBy::SourceRepo);
         let json = serde_json::to_value(&groups).unwrap();
         assert!(json.is_array());
         assert_eq!(json[0]["group"], "ceph/ceph");
         assert!(json[0]["patches"].is_array());
-        // Commit 1's grouped element is the bare PatchMeta (the annotations
-        // wrapper lands in commit 2c).
-        assert_eq!(json[0]["patches"][0]["subject"], "s");
+        // Each grouped element is a `{meta, annotations}` view (design §6).
+        assert_eq!(json[0]["patches"][0]["meta"]["subject"], "s");
+        assert!(json[0]["patches"][0]["annotations"].is_null());
     }
 
     /// Store a patch with the given subject under content address of `raw`.
@@ -385,19 +470,22 @@ mod tests {
         put_patch(&store, b"one", "zzz last").await;
         put_patch(&store, b"two", "aaa first").await;
         let patches = list(&store).await.unwrap();
-        let subjects: Vec<&str> = patches.iter().map(|p| p.subject.as_str()).collect();
+        let subjects: Vec<&str> = patches.iter().map(|p| p.meta.subject.as_str()).collect();
         assert_eq!(subjects, ["aaa first", "zzz last"]);
     }
 
     #[tokio::test]
-    async fn list_json_round_trips() {
+    async fn list_json_emits_meta_and_null_annotations_elements() {
         let store = ObjectBackedStore::in_memory();
         put_patch(&store, b"one", "s1").await;
         put_patch(&store, b"two", "s2").await;
         let patches = list(&store).await.unwrap();
-        let json = serde_json::to_string_pretty(&patches).unwrap();
-        let parsed: Vec<PatchMeta> = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, patches);
+        let json = serde_json::to_value(&patches).unwrap();
+        // Flat `--json` is now an array of `{meta, annotations}` elements; a
+        // patch with no annotations record renders explicit `null` (design §6).
+        assert_eq!(json.as_array().unwrap().len(), 2);
+        assert_eq!(json[0]["meta"]["subject"], "s1");
+        assert!(json[0]["annotations"].is_null());
     }
 
     #[test]
@@ -419,7 +507,11 @@ mod tests {
             },
             source_repo: "r".to_owned(),
         };
-        let rendered = render_list(std::slice::from_ref(&meta));
+        let view = PatchView {
+            meta,
+            annotations: None,
+        };
+        let rendered = render_list(std::slice::from_ref(&view));
         assert_eq!(rendered, format!("{}  the subject\n", store_hash));
     }
 
@@ -427,16 +519,23 @@ mod tests {
     async fn find_resolves_a_full_hash() {
         let store = ObjectBackedStore::in_memory();
         let h = put_patch(&store, b"the patch", "a subject").await;
-        let meta = find(&store, &h.to_hex()).await.unwrap();
-        assert_eq!(meta.blob_hash, h);
-        assert_eq!(meta.subject, "a subject");
+        let view = find(&store, &h.to_hex()).await.unwrap();
+        assert_eq!(view.meta.blob_hash, h);
+        assert_eq!(view.meta.subject, "a subject");
     }
 
     #[tokio::test]
     async fn find_resolves_a_unique_prefix() {
         let store = ObjectBackedStore::in_memory();
         let h = put_patch(&store, b"the patch", "s").await;
-        assert_eq!(find(&store, &h.to_hex()[..12]).await.unwrap().blob_hash, h);
+        assert_eq!(
+            find(&store, &h.to_hex()[..12])
+                .await
+                .unwrap()
+                .meta
+                .blob_hash,
+            h
+        );
     }
 
     #[tokio::test]
@@ -510,12 +609,90 @@ mod tests {
             },
             source_repo: "ceph/ceph".to_owned(),
         };
-        let out = render_info(&meta, None);
+        let out = render_info(&meta, None, None);
         assert!(out.contains("the-patch-id"));
         assert!(out.contains("fix the thing"));
         assert!(out.contains("Ann <ann@example.com>"));
         assert!(out.contains("the body"));
         assert!(!out.contains("equivalent-to"));
+        // No annotations record ⇒ no applies-to line.
+        assert!(!out.contains("applies-to"));
+    }
+
+    #[test]
+    fn render_info_shows_annotations_when_present() {
+        let meta = meta_with(
+            b"x",
+            "s",
+            Provenance::Other {
+                description: "d".to_owned(),
+            },
+            "r",
+        );
+        let mut ann = PatchAnnotations {
+            applies_to: Some(Applicability::Versions(
+                [
+                    VersionSpec::Line("18.2".to_owned()),
+                    VersionSpec::Exact("v18.2.0".to_owned()),
+                ]
+                .into_iter()
+                .collect(),
+            )),
+            description: Some("the rgw backport".to_owned()),
+            ..Default::default()
+        };
+        ann.tags.insert("rgw".to_owned());
+        ann.attributes
+            .insert("retire-when".to_owned(), "v18.3.0".to_owned());
+
+        let out = render_info(&meta, Some(&ann), None);
+        assert!(out.contains("applies-to:"), "got: {out}");
+        assert!(out.contains("18.2"));
+        assert!(out.contains("v18.2.0"));
+        assert!(out.contains("tags:"));
+        assert!(out.contains("rgw"));
+        assert!(out.contains("description:"));
+        assert!(out.contains("the rgw backport"));
+        assert!(out.contains("retire-when=v18.3.0"));
+    }
+
+    #[test]
+    fn render_info_marks_a_recorded_but_unassessed_patch() {
+        let meta = meta_with(
+            b"x",
+            "s",
+            Provenance::Other {
+                description: "d".to_owned(),
+            },
+            "r",
+        );
+        // A record exists (e.g. only tags set) but applies_to is None.
+        let mut ann = PatchAnnotations::default();
+        ann.tags.insert("rgw".to_owned());
+        let out = render_info(&meta, Some(&ann), None);
+        assert!(out.contains("applies-to:   (unassessed)"), "got: {out}");
+    }
+
+    #[test]
+    fn render_info_hides_an_empty_annotations_record() {
+        // An emptied record (e.g. after `--untag <last>`) is non-`None` but
+        // `is_empty()`; `patch info` renders no annotations block, matching the
+        // bare line `patch list` shows for it.
+        let meta = meta_with(
+            b"x",
+            "s",
+            Provenance::Other {
+                description: "d".to_owned(),
+            },
+            "r",
+        );
+        let empty = PatchAnnotations::default();
+        assert!(empty.is_empty());
+        let out = render_info(&meta, Some(&empty), None);
+        assert!(
+            !out.contains("applies-to"),
+            "no block for empty record: {out}"
+        );
     }
 
     #[test]
@@ -538,7 +715,7 @@ mod tests {
             },
             source_repo: "r".to_owned(),
         };
-        let out = render_info(&meta, Some(&other));
+        let out = render_info(&meta, None, Some(&other));
         assert!(out.contains("equivalent-to"));
         assert!(out.contains(&other.to_hex()));
     }

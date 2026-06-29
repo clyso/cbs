@@ -17,6 +17,7 @@ use crate::release::{
     BlastArg, ConflictArg, CoverageArg, EntryFields, JustificationArg, VisibilityArg,
 };
 
+mod annotate;
 mod bundle;
 mod config;
 mod git;
@@ -254,6 +255,18 @@ enum PatchCmd {
         /// the git fetch of the PR head, so private-repo PRs are supported.
         #[arg(long, env = "GITHUB_TOKEN")]
         github_token: Option<String>,
+        /// Annotate every imported patch as applying to this ceph version
+        /// (`18.2` for a line, `v18.2.1` for a point release). Merged into any
+        /// existing annotations.
+        #[arg(long, conflicts_with = "generic")]
+        ceph_version: Option<String>,
+        /// Annotate every imported patch as generic (applies to any ceph
+        /// version).
+        #[arg(long)]
+        generic: bool,
+        /// Tag every imported patch (repeatable).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
     /// List the imported patches.
     ///
@@ -328,7 +341,14 @@ async fn main() -> Result<()> {
                 range,
                 pr,
                 github_token,
+                ceph_version,
+                generic,
+                tags,
             } => {
+                // Parse annotation flags first, so a bad --ceph-version fails
+                // before any import work.
+                let bulk =
+                    annotate::BulkAnnotation::from_flags(ceph_version.as_deref(), generic, tags)?;
                 let store = open_store(&cfg.store, &cli.secrets)?;
                 let imported = if let Some(pr) = pr {
                     import::import_pr(&store, &repo, &pr, github_token.as_deref()).await?
@@ -339,12 +359,12 @@ async fn main() -> Result<()> {
                     import::import_range(&store, &repo, &range, &source).await?
                 };
                 for p in &imported {
-                    let tag = if p.already_present {
+                    let label = if p.already_present {
                         "present "
                     } else {
                         "imported"
                     };
-                    println!("{tag} {} {}", p.blob_hash, p.subject);
+                    println!("{label} {} {}", p.blob_hash, p.subject);
                     if let Some(eq) = &p.equivalent_to {
                         eprintln!(
                             "  warning: equivalent to existing patch {eq} \
@@ -357,6 +377,18 @@ async fn main() -> Result<()> {
                     imported.len(),
                     cfg.component
                 );
+                // Merge the bulk annotation into every imported blob (§5.1).
+                if let Some(bulk) = bulk {
+                    let hashes: Vec<_> = imported.iter().map(|p| p.blob_hash).collect();
+                    let absorbed = annotate::apply_bulk(&store, &hashes, &bulk).await?;
+                    for h in &absorbed {
+                        eprintln!(
+                            "  warning: {h} is generic; --ceph-version ignored \
+                             (use `crt patch annotate` to change it)"
+                        );
+                    }
+                    eprintln!("annotated {} patch(es)", hashes.len());
+                }
             }
             PatchCmd::List { json, group_by } => {
                 let store = open_store(&cfg.store, &cli.secrets)?;
@@ -385,15 +417,22 @@ async fn main() -> Result<()> {
             }
             PatchCmd::Info { blob_hash, json } => {
                 let store = open_store(&cfg.store, &cli.secrets)?;
-                let meta = patch::find(&store, &blob_hash).await?;
+                let view = patch::find(&store, &blob_hash).await?;
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&meta)?);
+                    println!("{}", serde_json::to_string_pretty(&view)?);
                 } else {
                     let equivalent = store
-                        .get_patch_id(&meta.patch_id)
+                        .get_patch_id(&view.meta.patch_id)
                         .await?
-                        .filter(|h| *h != meta.blob_hash);
-                    print!("{}", patch::render_info(&meta, equivalent.as_ref()));
+                        .filter(|h| *h != view.meta.blob_hash);
+                    print!(
+                        "{}",
+                        patch::render_info(
+                            &view.meta,
+                            view.annotations.as_ref(),
+                            equivalent.as_ref()
+                        )
+                    );
                 }
             }
         },
