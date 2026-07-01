@@ -2,8 +2,8 @@
 
 > Operational status snapshot for CRT v2 (the Ceph Release Tool). Not subject to
 > the `seq-docs-convention` naming (operational file). **Last updated:**
-> 2026-06-26 (M4 done + reviewed — MVP complete), on branch
-> `wip/release-tool-v2`.
+> 2026-07-01 (MVP complete; post-MVP patch introspection (seq-002) and patch
+> annotations (seq-003) landed), on branch `wip/release-tool-v2`.
 
 ## What CRT v2 is
 
@@ -13,30 +13,36 @@ content-addressed store, compose a release manifest, **seal** it (canonical JSON
 Three crates in the `cbsd-rs/` workspace (edition 2024, GPL-3.0-or-later):
 
 - **`crt-core`** — pure domain logic, **no IO / no tokio**: manifest model, risk
-  rubric, RFC 8785 canonical JSON + digest, detached OpenPGP sign/verify. Signs
-  and verifies over **in-memory key bytes** — never touches Vault or the
-  network.
+  rubric, RFC 8785 canonical JSON + digest, detached OpenPGP sign/verify,
+  patch-annotation types + ceph-version matching (seq-003). Signs and verifies
+  over **in-memory key bytes** — never touches Vault or the network.
 - **`crt-store`** — `object_store`-backed persistence (`InMemory` for tests,
-  `LocalFileSystem` for dev, `AmazonS3` for prod). Blobs, patch meta, drafts,
-  write-once sealed releases, notes templates.
+  `LocalFileSystem` for dev, `AmazonS3` for prod). Blobs, patch meta, operator
+  annotations (`patches/annotations/`, seq-003), drafts, write-once sealed
+  releases, notes templates.
 - **`crt`** — the clap CLI. Owns the IO edge shims (subprocess `git`, `octocrab`
   for PR metadata, `vaultrs` for the signing key, `reqwest` for the public key).
 
 ## Authoritative documents
 
-| Doc                                                                  | What                                 |
-| -------------------------------------------------------------------- | ------------------------------------ |
-| `docs/crt/000-concept.md`                                            | Concept / rationale                  |
-| `docs/crt/design/001-20260620T1318-v2-mvp.md`                        | **Authoritative design** (MVP)       |
-| `docs/crt/plans/001-20260621T0930-01-store-and-import.md`            | M1 plan                              |
-| `docs/crt/plans/001-20260621T2212-02-manifest-seal-sign-verify.md`   | M2 plan (progress table + decisions) |
-| `docs/crt/plans/001-20260623T1717-03-sbom-notes-materialize.md`      | M3 plan (progress table + decisions) |
-| `docs/crt/plans/001-20260625T0831-04-git-materialize-verify-tree.md` | M4 plan (progress table + decisions) |
-| `docs/crt/reviews/001-*-impl-v2-mvp-v{1,2}.md`                       | M1 reviews                           |
-| `docs/crt/reviews/001-20260622T0515-impl-v2-mvp-v3.md`               | M2 commits 2.1–2.3 review            |
-| `docs/crt/reviews/001-20260622T2040-impl-v2-mvp-v4.md`               | M2 commits 2.4–2.6 review (GO/80)    |
-| `docs/crt/reviews/001-20260625T0449-impl-v2-mvp-v5.md`               | M3 review                            |
-| `docs/crt/reviews/001-20260626T0919-impl-v2-mvp-v6.md`               | M4 review (GO/80)                    |
+| Doc                                                                     | What                                 |
+| ----------------------------------------------------------------------- | ------------------------------------ |
+| `docs/crt/000-concept.md`                                               | Concept / rationale                  |
+| `docs/crt/design/001-20260620T1318-v2-mvp.md`                           | **Authoritative design** (MVP)       |
+| `docs/crt/plans/001-20260621T0930-01-store-and-import.md`               | M1 plan                              |
+| `docs/crt/plans/001-20260621T2212-02-manifest-seal-sign-verify.md`      | M2 plan (progress table + decisions) |
+| `docs/crt/plans/001-20260623T1717-03-sbom-notes-materialize.md`         | M3 plan (progress table + decisions) |
+| `docs/crt/plans/001-20260625T0831-04-git-materialize-verify-tree.md`    | M4 plan (progress table + decisions) |
+| `docs/crt/reviews/001-*-impl-v2-mvp-v{1,2}.md`                          | M1 reviews                           |
+| `docs/crt/reviews/001-20260622T0515-impl-v2-mvp-v3.md`                  | M2 commits 2.1–2.3 review            |
+| `docs/crt/reviews/001-20260622T2040-impl-v2-mvp-v4.md`                  | M2 commits 2.4–2.6 review (GO/80)    |
+| `docs/crt/reviews/001-20260625T0449-impl-v2-mvp-v5.md`                  | M3 review                            |
+| `docs/crt/reviews/001-20260626T0919-impl-v2-mvp-v6.md`                  | M4 review (GO/80)                    |
+| `docs/crt/design/002-20260627T1645-patch-list-info.md`                  | seq-002 design (patch list/info)     |
+| `docs/crt/plans/002-20260627T1659-patch-list-info.md`                   | seq-002 plan                         |
+| `docs/crt/design/003-20260628T0807-patch-annotations-and-list-views.md` | seq-003 design (annotations)         |
+| `docs/crt/reviews/003-*-design-…-v{1,2,3}.md`                           | seq-003 design reviews               |
+| `docs/crt/reviews/003-20260629T0758-impl-…-v1.md`                       | seq-003 impl review (GO/94)          |
 
 If code and design disagree, **fix the code** — but several intentional
 deviations from the design are recorded in the M2 plan's per-commit "Decisions"
@@ -54,6 +60,29 @@ fetch). Treat those as authoritative-as-landed.
 | **M2**    | Sealed, signed manifests + `verify` legs 0–2                          | ✅ done + reviewed             |
 | **M3**    | Deterministic SBOM (§7.1) + notes (§7.2) + `materialize` artifacts    | ✅ done                        |
 | **M4**    | `materialize` (git ref/tag + signed `000-RELEASE/`) + `verify --tree` | ✅ done + reviewed (v6: GO/80) |
+
+### Post-MVP features (on top of the MVP design 001)
+
+Two features landed after the MVP, each with its own `seq-docs`
+design/plan/review trail:
+
+- **seq-002 — patch introspection (done).** `crt patch list` and
+  `crt patch info` read the content-addressed store: full or **short-hash** blob
+  lookup, text or `--json`.
+- **seq-003 — patch annotations & richer list views (done, GO/94).** An
+  operator-authored annotations record per blob — applicability (`Generic` vs a
+  set of ceph-version `Line`/`Exact` specs), free-form tags, a description, and
+  an open attribute bag — kept **separate** from the git-derived `PatchMeta`
+  (`patches/annotations/sha256/<blob>.json`) and **merged** across re-imports,
+  never clobbered. Set in bulk at `import`
+  (`--ceph-version`/`--generic`/`--tag`) or per patch via `crt patch annotate`.
+  `patch list` gains `--group-by pr|source-repo|ceph-version|tag`, the
+  `--ceph-version`/`--tag`/`--unassessed` filters, and an annotations column;
+  `--json` elements become `{meta, annotations}`.
+
+Also post-M4: private-repo PR import, release `--push`, and the public-key fetch
+now authenticate off-argv with a GitHub token; `crt --help` wraps to the
+terminal with slimmed subcommand summaries.
 
 ### M1 — done (`3a0cbe4e`, `f87ac939`, `30d09904`)
 
@@ -192,13 +221,20 @@ truth — seal stamps it, `release notes` gates on it, and leg 4 (M4) will too.
 - **Draft concurrency** is last-writer-wins (serial handoff). Optimistic
   concurrency (conditional puts) or the GitHub-Issues workflow (concept §8) is
   deferred — not safe for simultaneous editing of one draft.
-- **Short-hash patch selection** in `release add` (§14) — deferred; full 64-char
-  blob hashes only for now.
+- **Short-hash patch selection**: `patch info` / `patch annotate` resolve a
+  unique short prefix (seq-002/003); `release add` is still full-64-char only
+  (§14).
+- **`release add` applicability guard** — reject or warn when a patch's seq-003
+  `applies_to` excludes the draft's `base_ref`. The metadata now exists; the
+  guard is the next consumer (seq-003 §10). Likely the highest-leverage next
+  piece.
 - **`visibility`** is recorded but **inert** (design §7) — no redaction;
   enforcement deferred to a future service gateway.
 - **`data_structure_change`** (concept §6.4) has no CLI setter yet (defaults
   `None`); **cross-release lifecycle** (`first_shipped_in`) is not tracked
-  (entries seal `status: active`, `first_shipped_in: null`).
+  (entries seal `status: active`, `first_shipped_in: null`). Ad-hoc lifecycle
+  facets (e.g. `retire-when`) can be recorded today in the seq-003 annotations
+  attribute bag; typed graduation with its own checks is deferred (seq-003 §10).
 - **Key rotation / revocation / fingerprint pinning** (design §6.1/§14) and
   **cosign/sigstore** (§6.2) are open operational/future items.
 
