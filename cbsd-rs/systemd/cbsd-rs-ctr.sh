@@ -272,6 +272,7 @@ worker_start() {
   CBSD_LOG="info"
   IMAGE="harbor.clyso.com/cbs/cbsd-rs-worker:latest"
   WITH_WIREGUARD="false"
+  COLOCATED="false"
   source_config
 
   cbsd_log="${CBSD_LOG}"
@@ -333,9 +334,18 @@ worker_start() {
     }
   }
 
+  [[ "${WITH_WIREGUARD}" == "true" && "${COLOCATED}" == "true" ]] && {
+    echo "error: WITH_WIREGUARD and COLOCATED cannot both be true" >&2
+    exit 1
+  }
+
   network_opts=()
   [[ "${WITH_WIREGUARD}" == "true" ]] && {
     network_opts=("--network" "slirp4netns:mtu=1420,allow_host_loopback=true")
+  }
+
+  [[ "${COLOCATED}" == "true" ]] && {
+    network_opts=("--network" "pasta:--map-gw")
   }
 
   # shellcheck disable=SC2068
