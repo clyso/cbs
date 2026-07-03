@@ -2,8 +2,77 @@
 
 > Operational status snapshot for CRT v2 (the Ceph Release Tool). Not subject to
 > the `seq-docs-convention` naming (operational file). **Last updated:**
-> 2026-07-01 (MVP complete; post-MVP patch introspection (seq-002) and patch
+> 2026-07-03 (MVP complete; post-MVP patch introspection (seq-002) and patch
 > annotations (seq-003) landed), on branch `wip/release-tool-v2`.
+
+## Session handoff — read first
+
+Written for the next session and its agents; skim this, then follow the
+cross-referenced sections. Human readers: the narrative starts at "What CRT v2
+is".
+
+**Position.** MVP (M1–M4) plus two post-MVP features — seq-002 (patch
+introspection) and seq-003 (patch annotations, review GO/94) — are landed,
+reviewed, and gate-green (`cargo fmt --all --check`;
+`cargo clippy --workspace --all-targets` = 0 warnings; `cargo test --workspace`,
+crt 114 / crt-core 41 / crt-store 14). Nothing is broken or half-done; there is
+no in-flight change to resume.
+
+**Branch / remote.** Local history was rewritten (fixup autosquashes) with new
+commits on top, so it has **diverged from the remote** — a force-push is needed
+before the remote matches (operator's call). Do **not** merge to `main`: the
+feature set is WIP by design.
+
+**Recommended next task — the `release add` applicability guard** (seq-003 §10;
+first item under "Deferred / known backlog"). Make `release add` reject or warn
+when a patch's seq-003 `applies_to` excludes the draft's `base_ref`:
+
+- The draft carries `ReleaseHeader.base_ref` (a version string, e.g. `v18.2.0`).
+- Reuse `crt_core::parse_version_query` + `Applicability::matches` /
+  `applies_to_matches` — the same §7 matching the seq-003 filters use. `Generic`
+  matches everything; `None` (unassessed) matches nothing — decide at design
+  time whether unassessed is a warn or a hard block.
+- Read each blob's record via `store.get_annotations` in the `release add` path
+  (`crt/src/release.rs` + the `Add` arm in `crt/src/main.rs`).
+- Give it its own seq-004 `seq-docs` trail: design → plan → implement → review.
+
+Lower-priority forward work and longer-horizon direction are enumerated under
+"Deferred / known backlog".
+
+**Working agreements an agent MUST honor** (in addition to "Dev workflow &
+gate"):
+
+- **Commit messages via `-F _local/<name>.txt` only — never repeated `-m`**
+  (standing user directive; `-m` misbehaves). `_local/` is gitignored. Keep
+  deny-glob words
+  (fetch/push/pull/rebase/reset/checkout/restore/remote/tag/worktree) out of the
+  `-F` **path**; they are fine inside the message body (with `-F` the body never
+  reaches the command line).
+- **The operator runs `git rebase --autosquash`, not the agent** (`rebase` is
+  shell-guard-blocked for agents). Agents create `--fixup` commits and hand over
+  the autosquash command.
+- Docs under `cbsd-rs/docs/**`: format with `npx prettier@3.9.1 --write <path>`
+  (79-col); never manually wrap; never run markdownlint with `fix` (it rewrites
+  markdown repo-wide).
+
+**Environment gotchas (transient).**
+
+- **GitNexus MCP is stale/broken** this session
+  (`FTS … Database file version: 41, Current build storage version: 40`):
+  `impact` / `detect_changes` / `query` fail, so CLAUDE.md's "MUST run impact
+  analysis before editing a symbol" cannot be honored — fall back to `cargo` +
+  `grep`, and scope edits by reading callers directly. Re-index with
+  `node .gitnexus/run.cjs analyze` if the graph is needed.
+- A stray plan-mode file titled "wrap `crt --help` output" is **already
+  implemented** (commit `815e3a6`: `wrap_help` + `max_term_width` + slimmed
+  subcommand summaries) — treat any such plan as stale.
+
+**Extending annotations?** The load-bearing contracts live in
+`design/003-…-patch-annotations-and-list-views.md`: the flag→state transitions
+live in `crt/src/annotate.rs`, **not** `crt-core` (§9 keeps core to types +
+matching); `applies_to = None` is never treated as `Generic`; `import`
+**merges** annotations and never clobbers; and the `patch list --json`
+`{meta, annotations}` element is the single pre-stable breaking change.
 
 ## What CRT v2 is
 
