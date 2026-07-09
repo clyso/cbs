@@ -48,8 +48,9 @@ FROM python:3.13-alpine3.21 AS worker-base
 # podman:          container runtime for cbscore build execution
 # ca-certificates: TLS peer verification
 # curl:            podman helper scripts + uv install
+# ccache:          worker metrics sampling (`ccache --print-stats`)
 # hadolint ignore=DL3018
-RUN apk add --no-cache podman ca-certificates curl
+RUN apk add --no-cache podman ca-certificates curl ccache
 
 # Install uv (Python package manager).
 # hadolint ignore=DL4006
@@ -81,6 +82,11 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 # containers. Points to the directory containing pyproject.toml,
 # not the inner package dir.
 ENV CBSCORE_PATH=/cbs/cbscore-install/cbscore
+
+# Point ccache at the build cache volume that cbscore mounts into its
+# build containers, so the worker's metrics sampler reads the cache the
+# builds actually use — not an empty default in ~/.cache/ccache.
+ENV CCACHE_DIR=/cbs/ccache
 
 WORKDIR /
 
