@@ -201,15 +201,16 @@ the `admin` role should be granted this capability.
 
 ### Periodic Builds
 
-| Method | Path                     | Auth     | Cap                                                                       | Description               |
-| ------ | ------------------------ | -------- | ------------------------------------------------------------------------- | ------------------------- |
-| POST   | `/periodic`              | Required | `periodic:create` + `builds:create` (scoped)                              | Create periodic task      |
-| GET    | `/periodic`              | Required | `periodic:view`                                                           | List periodic tasks       |
-| GET    | `/periodic/{id}`         | Required | `periodic:view`                                                           | Get periodic task details |
-| PUT    | `/periodic/{id}`         | Required | `periodic:manage:own` or `:any` (+ `builds:create` if descriptor changed) | Update periodic task      |
-| DELETE | `/periodic/{id}`         | Required | `periodic:manage:own` or `:any`                                           | Delete periodic task      |
-| PUT    | `/periodic/{id}/enable`  | Required | `periodic:manage:own` or `:any`                                           | Enable periodic task      |
-| PUT    | `/periodic/{id}/disable` | Required | `periodic:manage:own` or `:any`                                           | Disable periodic task     |
+| Method | Path                     | Auth     | Cap                                                                       | Description                                          |
+| ------ | ------------------------ | -------- | ------------------------------------------------------------------------- | ---------------------------------------------------- |
+| POST   | `/periodic`              | Required | `periodic:create` + `builds:create` (scoped)                              | Create periodic task                                 |
+| GET    | `/periodic`              | Required | `periodic:view`                                                           | List periodic tasks                                  |
+| GET    | `/periodic/{id}`         | Required | `periodic:view`                                                           | Get periodic task details                            |
+| PUT    | `/periodic/{id}`         | Required | `periodic:manage:own` or `:any` (+ `builds:create` if descriptor changed) | Update periodic task                                 |
+| DELETE | `/periodic/{id}`         | Required | `periodic:manage:own` or `:any`                                           | Delete periodic task                                 |
+| PUT    | `/periodic/{id}/enable`  | Required | `periodic:manage:own` or `:any`                                           | Enable periodic task                                 |
+| PUT    | `/periodic/{id}/disable` | Required | `periodic:manage:own` or `:any`                                           | Disable periodic task                                |
+| POST   | `/periodic/{id}/trigger` | Required | `periodic:manage:own` or `:any` + `builds:create` (scoped)                | Trigger now (optional one-shot priority; design 024) |
 
 ## Capabilities Reference (v1)
 

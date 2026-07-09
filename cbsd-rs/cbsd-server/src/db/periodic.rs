@@ -277,6 +277,29 @@ pub async fn update_trigger_success(
     Ok(())
 }
 
+/// Record a manual trigger (design 024): bookkeeping only. Unlike
+/// `update_trigger_success`, retry state (`retry_count`, `retry_at`,
+/// `last_error`) is left untouched — a manual fire is not evidence the
+/// scheduled path is healthy — and `updated_at` is not bumped, since a
+/// trigger is not a definition change.
+pub async fn record_manual_trigger(
+    pool: &SqlitePool,
+    id: &str,
+    build_id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE periodic_tasks
+           SET last_triggered_at = unixepoch(), last_build_id = ?
+           WHERE id = ?"#,
+        build_id,
+        id,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 /// Record a retry attempt with the next retry timestamp and error message.
 pub async fn update_retry(
     pool: &SqlitePool,
@@ -352,4 +375,73 @@ pub async fn disable_with_error(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::test_support::{seed_periodic_task_in_retry, test_pool};
+
+    const OWNER: &str = "owner@example.com";
+    const TASK_ID: &str = "task-1";
+
+    /// Design 024: a manual trigger records `last_triggered_at` and
+    /// `last_build_id` and touches NOTHING else — retry state stays as
+    /// the scheduler left it, `updated_at` is not bumped, and the
+    /// enabled flag and stored priority are preserved.
+    #[tokio::test]
+    async fn record_manual_trigger_updates_only_bookkeeping_columns() {
+        let pool = test_pool().await;
+        seed_periodic_task_in_retry(&pool, TASK_ID, OWNER, "{}", "{version}-{DT}").await;
+        let before = get_task(&pool, TASK_ID)
+            .await
+            .expect("get before")
+            .expect("task exists");
+
+        let build_id = crate::db::builds::insert_build(
+            &pool,
+            "{}",
+            OWNER,
+            "normal",
+            Some(TASK_ID),
+            None,
+            None,
+        )
+        .await
+        .expect("insert build");
+        record_manual_trigger(&pool, TASK_ID, build_id)
+            .await
+            .expect("record manual trigger");
+
+        let after = get_task(&pool, TASK_ID)
+            .await
+            .expect("get after")
+            .expect("task exists");
+        assert_eq!(after.last_build_id, Some(build_id));
+        assert!(after.last_triggered_at.is_some());
+        assert_eq!(after.retry_count, before.retry_count);
+        assert_eq!(after.retry_at, before.retry_at);
+        assert_eq!(after.last_error, before.last_error);
+        assert_eq!(after.updated_at, before.updated_at);
+        assert_eq!(after.enabled, before.enabled);
+        assert_eq!(after.priority, before.priority);
+    }
+
+    /// A concurrent task deletion between submission and bookkeeping
+    /// makes the UPDATE match zero rows; that must not be an error.
+    #[tokio::test]
+    async fn record_manual_trigger_on_missing_task_is_noop() {
+        let pool = test_pool().await;
+        crate::db::users::create_or_update_user(&pool, OWNER, "Owner")
+            .await
+            .expect("seed user");
+        let build_id =
+            crate::db::builds::insert_build(&pool, "{}", OWNER, "normal", None, None, None)
+                .await
+                .expect("insert build");
+
+        record_manual_trigger(&pool, "no-such-task", build_id)
+            .await
+            .expect("zero-row update is not an error");
+    }
 }

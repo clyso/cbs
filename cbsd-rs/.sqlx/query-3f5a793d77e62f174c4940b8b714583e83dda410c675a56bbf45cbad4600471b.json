@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT user_email AS \"user_email!\" FROM builds WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_email!",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3f5a793d77e62f174c4940b8b714583e83dda410c675a56bbf45cbad4600471b"
+}

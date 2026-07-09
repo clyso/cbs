@@ -44,6 +44,13 @@ use crate::config::{
 use crate::logs::writer::LogWriterState;
 use crate::queue::BuildQueue;
 
+/// PASETO v4 symmetric key used by every test `ServerConfig` and by
+/// [`seed_authed_bearer`] — a valid 32-byte hex key so tests can mint
+/// working bearer tokens against the test config.
+pub fn test_token_secret() -> String {
+    "0".repeat(64)
+}
+
 /// In-memory shared-cache SQLite pool with all migrations applied. Each
 /// call produces a distinct DB namespace so parallel tests do not collide.
 pub async fn test_pool() -> SqlitePool {
@@ -111,7 +118,7 @@ fn test_server_config_with_components_dir(components_dir: PathBuf) -> ServerConf
         log_dir: PathBuf::from("/tmp/cbsd-test-logs"),
         components_dir,
         secrets: SecretsConfig {
-            token_secret_key: "0".repeat(128),
+            token_secret_key: test_token_secret(),
             max_token_ttl_seconds: 15_552_000,
         },
         oauth: OAuthConfig {
@@ -178,6 +185,48 @@ pub async fn test_session_layer(
         .with_http_only(true)
 }
 
+/// Fixed `retry_at` epoch used by [`seed_periodic_task_in_retry`], so
+/// tests can assert the seeded retry state survives untouched.
+pub const TEST_RETRY_AT: i64 = 4_102_444_800;
+
+/// Seed `owner` (real user row) plus a periodic task in mid-retry
+/// state: disabled, `retry_count = 3`, `retry_at = TEST_RETRY_AT`,
+/// `last_error = "boom"`, stored priority `low`. Manual-trigger tests
+/// (design 024) assert this exact state is preserved by a trigger.
+pub async fn seed_periodic_task_in_retry(
+    pool: &SqlitePool,
+    task_id: &str,
+    owner: &str,
+    descriptor: &str,
+    tag_format: &str,
+) {
+    crate::db::users::create_or_update_user(pool, owner, "Owner")
+        .await
+        .expect("seed owner");
+    crate::db::periodic::insert_task(
+        pool,
+        task_id,
+        "0 2 * * *",
+        tag_format,
+        descriptor,
+        "low",
+        None,
+        owner,
+    )
+    .await
+    .expect("insert task");
+    sqlx::query!(
+        r#"UPDATE periodic_tasks
+           SET enabled = 0, retry_count = 3, retry_at = ?, last_error = 'boom'
+           WHERE id = ?"#,
+        TEST_RETRY_AT,
+        task_id,
+    )
+    .execute(pool)
+    .await
+    .expect("seed retry state");
+}
+
 /// Construct an `AuthUser` with the requested caps. Does not insert a
 /// corresponding row in the DB — callers that need a real user row must
 /// insert one via `db::users::create_or_update_user` or a seed helper.
@@ -188,4 +237,36 @@ pub fn auth_user(email: &str, name: &str, is_robot: bool, caps: &[&str]) -> Auth
         caps: caps.iter().map(|s| (*s).to_string()).collect(),
         is_robot,
     }
+}
+
+/// Seed a fully authenticated user for tests that drive the real router
+/// (`build_router` + `oneshot`): user row, a dedicated role carrying
+/// `caps` with no scopes (scope-less assignments pass every scope
+/// check), and a valid PASETO token whose hash is registered in the
+/// `tokens` table. Returns the raw bearer token for an
+/// `Authorization: Bearer <token>` header. The token is minted with
+/// [`test_token_secret`], the same key every test `ServerConfig` uses.
+pub async fn seed_authed_bearer(pool: &SqlitePool, email: &str, caps: &[&str]) -> String {
+    use secrecy::ExposeSecret;
+
+    crate::db::users::create_or_update_user(pool, email, "Test User")
+        .await
+        .expect("seed user");
+    let role_name = format!("test-role-{}", email.replace(['@', '.'], "-"));
+    crate::db::roles::create_role(pool, &role_name, "test role", false)
+        .await
+        .expect("create role");
+    crate::db::roles::set_role_caps_and_scopes(pool, &role_name, caps, &[])
+        .await
+        .expect("set role caps");
+    crate::db::roles::add_user_role(pool, email, &role_name)
+        .await
+        .expect("assign role");
+
+    let (token, hash) =
+        crate::auth::paseto::token_create(email, 3600, &test_token_secret()).expect("mint token");
+    crate::db::tokens::insert_token(pool, email, &hash, None)
+        .await
+        .expect("insert token");
+    token.expose_secret().to_string()
 }

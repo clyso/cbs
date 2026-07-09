@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE periodic_tasks\n           SET last_triggered_at = unixepoch(), last_build_id = ?\n           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "48662a8c75ef1c1b691dededd3a0081a279c39237ca3c4855127ab3ae88797eb"
+}

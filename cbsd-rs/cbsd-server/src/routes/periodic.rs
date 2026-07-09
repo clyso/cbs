@@ -17,6 +17,7 @@ use std::str::FromStr;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use cbsd_proto::Priority;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -122,6 +123,29 @@ struct UpdateTaskBody {
     summary: Option<String>,
 }
 
+/// Optional body for `POST /{id}/trigger`. Per design 024 the whole body
+/// may be absent (the handler takes `Option<Json<..>>`); `priority` is a
+/// one-shot override that never modifies the stored task row.
+#[derive(Deserialize, ToSchema)]
+struct TriggerTaskBody {
+    priority: Option<String>,
+}
+
+/// Response for `POST /{id}/trigger`. Modeled on `SubmitBuildResponse`
+/// (202, `state`, `is_robot`, `warning`) with the id renamed to
+/// `build_id` — the path already carries a task id — plus the
+/// interpolated `tag` and effective `priority` for operator visibility.
+#[derive(Debug, Serialize, ToSchema)]
+struct TriggerTaskResponse {
+    build_id: i64,
+    state: String,
+    tag: String,
+    priority: String,
+    is_robot: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -133,6 +157,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(get_task, update_task, delete_task))
         .routes(routes!(enable_task))
         .routes(routes!(disable_task))
+        .routes(routes!(trigger_task))
 }
 
 /// Per audit-rem D3: a user may mutate a periodic task when they hold
@@ -285,6 +310,396 @@ mod tests {
                 .await
                 .expect("count after");
         assert_eq!(after, 0);
+    }
+
+    // -----------------------------------------------------------------
+    // POST /{id}/trigger (design 024)
+    // -----------------------------------------------------------------
+
+    use crate::routes::test_support::{
+        TEST_RETRY_AT, seed_authed_bearer, seed_periodic_task_in_retry, test_app_state,
+        test_session_layer,
+    };
+
+    const TRIGGER_COMPONENT: &str = "ceph";
+    const TRIGGER_TASK_ID: &str = "trig-task-1";
+    const TASK_OWNER: &str = "owner@example.com";
+    const REQUESTER: &str = "op@example.com";
+    const REQUESTER_CAPS: &[&str] = &["periodic:manage:any", "builds:create"];
+
+    fn trigger_descriptor_json() -> String {
+        serde_json::json!({
+            "version": "19.2.3",
+            "channel": "c1",
+            "signed_off_by": {"user": "Owner", "email": TASK_OWNER},
+            "dst_image": {"name": "ceph", "tag": "base"},
+            "components": [{"name": TRIGGER_COMPONENT, "ref": "main"}],
+            "build": {"distro": "rockylinux", "os_version": "el9"}
+        })
+        .to_string()
+    }
+
+    /// Seed the task owner and a task with the given descriptor. The
+    /// task is left disabled and in mid-retry state so trigger tests
+    /// can assert both are preserved.
+    async fn seed_trigger_task(pool: &sqlx::SqlitePool, descriptor: &str) {
+        seed_periodic_task_in_retry(
+            pool,
+            TRIGGER_TASK_ID,
+            TASK_OWNER,
+            descriptor,
+            "{version}-manual",
+        )
+        .await;
+    }
+
+    /// Full success-path fixture: task (disabled, in retry), channel
+    /// `c1` with default type `dev`, an authenticated requester (real
+    /// user + scope-less role + bearer token), and an `AppState` whose
+    /// component registry knows the descriptor's component. Returns
+    /// `(state, bearer)`.
+    async fn seed_trigger_fixture(pool: &sqlx::SqlitePool) -> (AppState, String) {
+        seed_trigger_task(pool, &trigger_descriptor_json()).await;
+
+        let channel_id = crate::db::channels::create_channel(pool, "c1", "test channel")
+            .await
+            .expect("create channel");
+        let type_id = crate::db::channels::create_type(pool, channel_id, "dev", "proj", "")
+            .await
+            .expect("create type");
+        assert!(
+            crate::db::channels::set_default_type(pool, channel_id, type_id)
+                .await
+                .expect("set default type")
+        );
+
+        let bearer = seed_authed_bearer(pool, REQUESTER, REQUESTER_CAPS).await;
+
+        let mut state = test_app_state(pool.clone());
+        state.components = vec![crate::components::ComponentInfo {
+            name: TRIGGER_COMPONENT.to_string(),
+            versions: Vec::new(),
+        }];
+        (state, bearer)
+    }
+
+    fn requester() -> AuthUser {
+        auth_user(REQUESTER, "Operator", false, REQUESTER_CAPS)
+    }
+
+    #[tokio::test]
+    async fn trigger_denied_without_manage_cap() {
+        let pool = test_pool().await;
+        seed_trigger_task(&pool, &trigger_descriptor_json()).await;
+        let state = test_app_state(pool);
+
+        let user = auth_user(REQUESTER, "Op", false, &["periodic:view", "builds:create"]);
+        let err = trigger_task(State(state), user, Path(TRIGGER_TASK_ID.to_string()), None)
+            .await
+            .expect_err("must be denied");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn trigger_denied_for_own_cap_on_other_task() {
+        let pool = test_pool().await;
+        seed_trigger_task(&pool, &trigger_descriptor_json()).await;
+        let state = test_app_state(pool);
+
+        let user = auth_user(
+            REQUESTER,
+            "Op",
+            false,
+            &["periodic:manage:own", "builds:create"],
+        );
+        let err = trigger_task(State(state), user, Path(TRIGGER_TASK_ID.to_string()), None)
+            .await
+            .expect_err("must be denied");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn trigger_denied_without_builds_create() {
+        let pool = test_pool().await;
+        seed_trigger_task(&pool, &trigger_descriptor_json()).await;
+        let state = test_app_state(pool);
+
+        let user = auth_user(REQUESTER, "Op", false, &["periodic:manage:any"]);
+        let err = trigger_task(State(state), user, Path(TRIGGER_TASK_ID.to_string()), None)
+            .await
+            .expect_err("must be denied");
+        assert_eq!(err.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn trigger_unknown_task_is_404() {
+        let pool = test_pool().await;
+        let state = test_app_state(pool);
+
+        let err = trigger_task(
+            State(state),
+            requester(),
+            Path("no-such-task".to_string()),
+            None,
+        )
+        .await
+        .expect_err("must be 404");
+        assert_eq!(err.0, StatusCode::NOT_FOUND);
+    }
+
+    /// The override is validated strictly and fail-fast — before any
+    /// descriptor or channel work, so no fixture beyond the task row.
+    #[tokio::test]
+    async fn trigger_unknown_priority_is_400() {
+        let pool = test_pool().await;
+        seed_trigger_task(&pool, &trigger_descriptor_json()).await;
+        let state = test_app_state(pool);
+
+        let err = trigger_task(
+            State(state),
+            requester(),
+            Path(TRIGGER_TASK_ID.to_string()),
+            Some(Json(TriggerTaskBody {
+                priority: Some("urgent".to_string()),
+            })),
+        )
+        .await
+        .expect_err("must be 400");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    /// A stored descriptor that no longer parses yields a synchronous
+    /// 400 — the task is NOT auto-disabled (contrast with the
+    /// scheduler's Fatal path).
+    #[tokio::test]
+    async fn trigger_invalid_stored_descriptor_is_400_and_task_untouched() {
+        let pool = test_pool().await;
+        seed_trigger_task(&pool, "{}").await;
+        let state = test_app_state(pool.clone());
+
+        let err = trigger_task(
+            State(state),
+            requester(),
+            Path(TRIGGER_TASK_ID.to_string()),
+            None,
+        )
+        .await
+        .expect_err("must be 400");
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+
+        let task = db::periodic::get_task(&pool, TRIGGER_TASK_ID)
+            .await
+            .expect("get task")
+            .expect("task exists");
+        assert_eq!(task.last_error.as_deref(), Some("boom"));
+        assert_eq!(task.retry_count, 3);
+    }
+
+    /// Success path with a priority override: the build is attributed
+    /// to the requester, carries the override and the task link, and
+    /// the task row keeps its stored priority, enabled flag, and retry
+    /// state — only the two bookkeeping columns move.
+    #[tokio::test]
+    async fn trigger_disabled_task_succeeds_and_preserves_task_state() {
+        let pool = test_pool().await;
+        let (state, _bearer) = seed_trigger_fixture(&pool).await;
+
+        let (status, Json(resp)) = match trigger_task(
+            State(state),
+            requester(),
+            Path(TRIGGER_TASK_ID.to_string()),
+            Some(Json(TriggerTaskBody {
+                priority: Some("high".to_string()),
+            })),
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err((code, _)) => panic!("expected success, got {code}"),
+        };
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(resp.state, "queued");
+        assert_eq!(resp.priority, "high");
+        assert_eq!(resp.tag, "19.2.3-manual");
+        assert!(!resp.is_robot);
+
+        let build = sqlx::query!(
+            r#"SELECT user_email AS "user_email!", priority AS "priority!",
+                      periodic_task_id
+               FROM builds WHERE id = ?"#,
+            resp.build_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("build row");
+        assert_eq!(build.user_email, REQUESTER);
+        assert_eq!(build.priority, "high");
+        assert_eq!(build.periodic_task_id.as_deref(), Some(TRIGGER_TASK_ID));
+
+        let task = db::periodic::get_task(&pool, TRIGGER_TASK_ID)
+            .await
+            .expect("get task")
+            .expect("task exists");
+        assert!(!task.enabled);
+        assert_eq!(task.priority, "low");
+        assert_eq!(task.retry_count, 3);
+        assert_eq!(task.retry_at, Some(TEST_RETRY_AT));
+        assert_eq!(task.last_error.as_deref(), Some("boom"));
+        assert_eq!(task.last_build_id, Some(resp.build_id));
+        assert!(task.last_triggered_at.is_some());
+    }
+
+    /// The `periodic:manage:own` cap suffices when the requester owns
+    /// the task — the full success path, not just the pure gate check.
+    /// The build is then attributed to the owner-as-requester.
+    #[tokio::test]
+    async fn trigger_own_cap_owner_succeeds() {
+        let pool = test_pool().await;
+        let (state, _bearer) = seed_trigger_fixture(&pool).await;
+        // The owner needs a role assignment of their own for the
+        // channel scope check (the fixture only authenticates REQUESTER).
+        let owner_caps: &[&str] = &["periodic:manage:own", "builds:create"];
+        let _owner_bearer = seed_authed_bearer(&pool, TASK_OWNER, owner_caps).await;
+
+        let user = auth_user(TASK_OWNER, "Owner", false, owner_caps);
+        let (status, Json(resp)) =
+            match trigger_task(State(state), user, Path(TRIGGER_TASK_ID.to_string()), None).await {
+                Ok(ok) => ok,
+                Err((code, _)) => panic!("expected success, got {code}"),
+            };
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let build = sqlx::query!(
+            r#"SELECT user_email AS "user_email!" FROM builds WHERE id = ?"#,
+            resp.build_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("build row");
+        assert_eq!(build.user_email, TASK_OWNER);
+    }
+
+    /// Without an override the stored priority column is used, via the
+    /// scheduler's lenient mapping.
+    #[tokio::test]
+    async fn trigger_without_override_uses_stored_priority() {
+        let pool = test_pool().await;
+        let (state, _bearer) = seed_trigger_fixture(&pool).await;
+
+        let (status, Json(resp)) = match trigger_task(
+            State(state),
+            requester(),
+            Path(TRIGGER_TASK_ID.to_string()),
+            None,
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err((code, _)) => panic!("expected success, got {code}"),
+        };
+
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(resp.priority, "low");
+    }
+
+    // -----------------------------------------------------------------
+    // HTTP-layer tests (mandatory per design 024): the optional-body
+    // contract lives in the extractor, which direct handler calls
+    // bypass. These drive the real router.
+    // -----------------------------------------------------------------
+
+    async fn trigger_oneshot(
+        pool: sqlx::SqlitePool,
+        state: AppState,
+        bearer: &str,
+        content_type: Option<&str>,
+        body: Option<&str>,
+    ) -> StatusCode {
+        use tower::ServiceExt;
+
+        let session_layer = test_session_layer(pool).await;
+        let app = crate::app::build_router(state, session_layer);
+
+        let mut builder = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/periodic/{TRIGGER_TASK_ID}/trigger"))
+            .header("authorization", format!("Bearer {bearer}"));
+        if let Some(ct) = content_type {
+            builder = builder.header("content-type", ct);
+        }
+        let req = builder
+            .body(axum::body::Body::from(
+                body.map(str::to_string).unwrap_or_default(),
+            ))
+            .expect("build request");
+
+        let response = app.oneshot(req).await.expect("router");
+        response.status()
+    }
+
+    /// A genuinely bodyless request (no Content-Type header) must fire
+    /// the task at its stored priority — the `Option<Json<..>>`
+    /// extractor contract. Plain `Json<T>` would 415 here.
+    #[tokio::test]
+    async fn http_trigger_without_body_or_content_type_is_accepted() {
+        let pool = test_pool().await;
+        let (state, bearer) = seed_trigger_fixture(&pool).await;
+        let status = trigger_oneshot(pool, state, &bearer, None, None).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn http_trigger_with_empty_object_body_is_accepted() {
+        let pool = test_pool().await;
+        let (state, bearer) = seed_trigger_fixture(&pool).await;
+        let status =
+            trigger_oneshot(pool, state, &bearer, Some("application/json"), Some("{}")).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn http_trigger_with_unknown_priority_is_400() {
+        let pool = test_pool().await;
+        let (state, bearer) = seed_trigger_fixture(&pool).await;
+        let status = trigger_oneshot(
+            pool,
+            state,
+            &bearer,
+            Some("application/json"),
+            Some(r#"{"priority": "urgent"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A non-JSON Content-Type is rejected by the extractor with 415,
+    /// exactly like every other JSON endpoint.
+    #[tokio::test]
+    async fn http_trigger_with_wrong_content_type_is_415() {
+        let pool = test_pool().await;
+        let (state, bearer) = seed_trigger_fixture(&pool).await;
+        let status = trigger_oneshot(pool, state, &bearer, Some("text/plain"), Some("high")).await;
+        assert_eq!(status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    /// Design 024: the trigger body is optional, so the generated spec
+    /// must NOT mark it required. utoipa derives `required` from the
+    /// `Option<..>` content type in `request_body(content = ...)`.
+    #[test]
+    fn trigger_openapi_body_is_not_required() {
+        let (_router, api) = router().split_for_parts();
+        let spec = serde_json::to_value(&api).expect("spec serializes");
+        let request_body = &spec["paths"]["/{id}/trigger"]["post"]["requestBody"];
+        assert!(
+            !request_body.is_null(),
+            "trigger path must document a request body"
+        );
+        assert_ne!(
+            request_body["required"],
+            serde_json::Value::Bool(true),
+            "trigger request body must not be marked required"
+        );
     }
 }
 
@@ -837,6 +1252,206 @@ async fn disable_task(
 
     Ok(Json(
         serde_json::json!({"detail": format!("periodic task '{id}' disabled")}),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/periodic/{id}/trigger
+// ---------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/{id}/trigger",
+    tag = "periodic",
+    security(("bearer" = []), ("cookie" = [])),
+    params(("id" = String, Path, description = "Periodic task ID")),
+    request_body(
+        content = Option<TriggerTaskBody>,
+        description = "Optional one-shot priority override (high/normal/low)",
+    ),
+    responses(
+        (status = StatusCode::ACCEPTED, body = TriggerTaskResponse),
+        (status = StatusCode::BAD_REQUEST, body = ErrorDetail),
+        (status = StatusCode::FORBIDDEN, body = ErrorDetail),
+        (status = StatusCode::NOT_FOUND, body = ErrorDetail),
+    ),
+)]
+/// Trigger a periodic build task immediately (design 024). The build is
+/// attributed to the requester, whose own build permissions are checked;
+/// the task's schedule, enabled flag, and retry state are not touched.
+/// Disabled tasks are deliberately triggerable ("test before enable").
+async fn trigger_task(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    // `Option<Json<..>>` is load-bearing: plain `Json<T>` rejects a
+    // request with no Content-Type header with 415, breaking the bare
+    // `curl -X POST .../trigger` case this endpoint exists to serve.
+    body: Option<Json<TriggerTaskBody>>,
+) -> Result<(StatusCode, Json<TriggerTaskResponse>), (StatusCode, Json<ErrorDetail>)> {
+    // Per audit-rem D3: fetch first to consult ownership.
+    let task = db::periodic::get_task(&state.pool, &id)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get periodic task '{id}': {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::NOT_FOUND, "periodic task not found"))?;
+
+    if !can_manage_task(&user, &task) {
+        return Err(auth_error(StatusCode::FORBIDDEN, PERIODIC_MANAGE_DENIED));
+    }
+    if !user.has_cap("builds:create") {
+        return Err(auth_error(
+            StatusCode::FORBIDDEN,
+            "missing required capability: builds:create",
+        ));
+    }
+
+    // Strict, fail-fast validation of the override; the stored column
+    // keeps the scheduler's lenient mapping (see effective priority
+    // below). Direct user input gets a 400, not serde's 422.
+    let override_priority = match body.as_ref().and_then(|b| b.priority.as_deref()) {
+        None => None,
+        Some("high") => Some(Priority::High),
+        Some("normal") => Some(Priority::Normal),
+        Some("low") => Some(Priority::Low),
+        Some(_) => {
+            return Err(auth_error(
+                StatusCode::BAD_REQUEST,
+                "invalid priority: expected 'high', 'normal', or 'low'",
+            ));
+        }
+    };
+
+    // Parse + re-validate the stored descriptor (WCP D5). Unlike the
+    // scheduler's Fatal path this does NOT disable the task: the
+    // operator sees the failure synchronously; auto-disable protects
+    // unattended fires only.
+    let mut descriptor: cbsd_proto::BuildDescriptor = serde_json::from_str(&task.descriptor)
+        .map_err(|e| {
+            auth_error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid stored descriptor: {e}"),
+            )
+        })?;
+    crate::components::validator::validate_descriptor(&descriptor, &state.components)
+        .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e.to_string()))?;
+
+    // Repository scope checks against the REQUESTER, as submit_build.
+    let mut scope_checks: Vec<(ScopeType, String)> = Vec::new();
+    for comp in &descriptor.components {
+        if let Some(ref repo) = comp.repo {
+            scope_checks.push((ScopeType::Repository, repo.clone()));
+        }
+    }
+    if !scope_checks.is_empty() {
+        let scope_refs: Vec<(ScopeType, &str)> =
+            scope_checks.iter().map(|(t, v)| (*t, v.as_str())).collect();
+        user.require_scopes_all(&state.pool, &scope_refs).await?;
+    }
+
+    // Attribution: the requester, not the task owner.
+    descriptor.signed_off_by.user = user.name.clone();
+    descriptor.signed_off_by.email = user.email.clone();
+
+    // Interpolate the tag with the current UTC time. Same step order as
+    // the scheduler (interpolation before channel resolution), so both
+    // paths produce identical tags for the same task.
+    let now = chrono::Utc::now();
+    let tag = tag_format::interpolate_tag(&task.tag_format, &descriptor, now);
+    tag_format::validate_oci_tag(&tag).map_err(|e| {
+        auth_error(
+            StatusCode::BAD_REQUEST,
+            &format!("interpolated tag '{tag}' is not a valid OCI tag: {e}"),
+        )
+    })?;
+    descriptor.dst_image.tag = tag.clone();
+
+    // Channel/type resolution + channel scope check for the requester.
+    let user_record = db::users::get_user(&state.pool, &user.email)
+        .await
+        .map_err(|e| {
+            tracing::error!("failed to get user record: {e}");
+            auth_error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        })?
+        .ok_or_else(|| auth_error(StatusCode::INTERNAL_SERVER_ERROR, "user record not found"))?;
+
+    let resolved = crate::channels::resolve_and_rewrite(&state.pool, &mut descriptor, &user_record)
+        .await
+        .map_err(|e| auth_error(StatusCode::BAD_REQUEST, &e))?;
+
+    // Robots may not submit to ${username}-prefixed channels (as
+    // submit_build).
+    if user_record.is_robot
+        && crate::channels::prefix_template_contains_username(&resolved.prefix_template)
+    {
+        return Err(auth_error(
+            StatusCode::BAD_REQUEST,
+            "robot accounts cannot submit builds to channels that use the ${username} prefix template",
+        ));
+    }
+
+    // Effective priority: strict override wins, else the stored column
+    // via the scheduler's lenient mapping.
+    let priority = override_priority.unwrap_or(match task.priority.as_str() {
+        "high" => Priority::High,
+        "low" => Priority::Low,
+        _ => Priority::Normal,
+    });
+
+    let (build_id, pending_count) = crate::routes::builds::insert_build_internal(
+        &state,
+        descriptor,
+        &user.email,
+        priority,
+        Some(&task.id),
+        Some(resolved.channel_id),
+        Some(resolved.channel_type_id),
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to submit build for periodic task '{id}': {e}");
+        auth_error(StatusCode::INTERNAL_SERVER_ERROR, &e)
+    })?;
+
+    // Bookkeeping only — the build exists and is queued, so a failure
+    // here must not fail the request.
+    if let Err(e) = db::periodic::record_manual_trigger(&state.pool, &task.id, build_id).await {
+        tracing::error!(
+            task_id = %task.id,
+            "failed to record manual trigger for build {build_id}: {e}"
+        );
+    }
+
+    let priority_str = match priority {
+        Priority::High => "high",
+        Priority::Normal => "normal",
+        Priority::Low => "low",
+    };
+
+    tracing::info!(
+        task_id = %task.id,
+        "user {} manually triggered periodic task: build {build_id} (priority={priority_str})",
+        user.display_identity(),
+    );
+
+    let warning = if pending_count > 1 {
+        Some(format!("{pending_count} build(s) in queue"))
+    } else {
+        None
+    };
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(TriggerTaskResponse {
+            build_id,
+            state: "queued".to_string(),
+            tag,
+            priority: priority_str.to_string(),
+            is_robot: user.is_robot,
+            warning,
+        }),
     ))
 }
 

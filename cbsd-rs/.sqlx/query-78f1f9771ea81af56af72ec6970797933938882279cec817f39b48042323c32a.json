@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT user_email AS \"user_email!\", priority AS \"priority!\",\n                      periodic_task_id\n               FROM builds WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "user_email!",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "priority!",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "periodic_task_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "78f1f9771ea81af56af72ec6970797933938882279cec817f39b48042323c32a"
+}
