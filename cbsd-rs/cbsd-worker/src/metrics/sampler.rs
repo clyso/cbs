@@ -79,13 +79,27 @@ pub async fn run_sampler(
             // worker threads. A refreshed `None` (ccache absent) is carried as
             // `None`, dropping the series rather than freezing a stale value. A
             // panic in the blocking task is logged rather than silently dropped.
-            carried_ccache = match tokio::task::spawn_blocking(app::sample_ccache).await {
+            let refreshed = match tokio::task::spawn_blocking(app::sample_ccache).await {
                 Ok(result) => result,
                 Err(err) => {
                     tracing::warn!(%err, "ccache sampling task panicked; dropping series");
                     None
                 }
             };
+            // Log availability transitions only, so an absent ccache warns once
+            // per connection rather than on every refresh interval.
+            let first = last_ccache.is_none();
+            if refreshed.is_none() && (first || carried_ccache.is_some()) {
+                tracing::warn!(
+                    "ccache stats unavailable; cbsd_worker_ccache_* series will be \
+                     omitted (is ccache installed and CCACHE_DIR set?)"
+                );
+            } else if refreshed.is_some() && !first && carried_ccache.is_none() {
+                tracing::info!(
+                    "ccache stats available again; resuming cbsd_worker_ccache_* series"
+                );
+            }
+            carried_ccache = refreshed;
             last_ccache = Some(Instant::now());
         }
 

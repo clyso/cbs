@@ -88,12 +88,28 @@ pub fn uptime_secs() -> u64 {
 /// output cannot be parsed — the caller then omits the ccache series entirely
 /// rather than reporting zeros.
 pub fn sample_ccache() -> Option<CcacheMetrics> {
-    let output = Command::new("ccache").arg("--print-stats").output().ok()?;
+    let output = match Command::new("ccache").arg("--print-stats").output() {
+        Ok(output) => output,
+        Err(err) => {
+            tracing::debug!(%err, "failed to run `ccache --print-stats`");
+            return None;
+        }
+    };
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::debug!(
+            status = %output.status,
+            stderr = %stderr.trim(),
+            "`ccache --print-stats` exited unsuccessfully"
+        );
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    parse_print_stats(&text)
+    let parsed = parse_print_stats(&text);
+    if parsed.is_none() {
+        tracing::debug!("`ccache --print-stats` output lacks the cache size fields");
+    }
+    parsed
 }
 
 /// Parse the `key\tvalue` lines of `ccache --print-stats`. Sizes are reported
