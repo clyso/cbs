@@ -12,7 +12,7 @@
 
 //! CRUD management of periodic (cron-scheduled) build tasks.
 
-use cbsd_proto::{BuildDescriptor, BuildDestImage, BuildSignedOffBy, BuildTarget};
+use cbsd_proto::{BuildDescriptor, BuildDestImage, BuildSignedOffBy, BuildTarget, Priority};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 
@@ -50,6 +50,8 @@ enum PeriodicCommands {
     Enable(PeriodicEnableArgs),
     /// Disable an active periodic task
     Disable(PeriodicDisableArgs),
+    /// Trigger a periodic task now (works on disabled tasks too)
+    Trigger(PeriodicTriggerArgs),
 }
 
 #[derive(Args)]
@@ -166,6 +168,18 @@ struct PeriodicDisableArgs {
     id: String,
 }
 
+#[derive(Args)]
+struct PeriodicTriggerArgs {
+    /// Periodic task ID
+    id: String,
+
+    /// One-shot priority override for this run: high, normal, low.
+    /// Omitted: the task's stored priority is used. The stored task is
+    /// never modified.
+    #[arg(long)]
+    priority: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // API request/response types
 // ---------------------------------------------------------------------------
@@ -227,6 +241,23 @@ struct SimpleResponse {
     detail: Option<String>,
 }
 
+#[derive(Serialize)]
+struct TriggerPeriodicBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    priority: Option<Priority>,
+}
+
+#[derive(Deserialize)]
+struct TriggerPeriodicResponse {
+    build_id: i64,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    warning: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
@@ -244,6 +275,7 @@ pub async fn run(
         PeriodicCommands::Delete(a) => cmd_delete(a, config_path, opts).await,
         PeriodicCommands::Enable(a) => cmd_enable(a, config_path, opts).await,
         PeriodicCommands::Disable(a) => cmd_disable(a, config_path, opts).await,
+        PeriodicCommands::Trigger(a) => cmd_trigger(a, config_path, opts).await,
     }
 }
 
@@ -869,6 +901,43 @@ async fn cmd_disable(
 }
 
 // ---------------------------------------------------------------------------
+// periodic trigger
+// ---------------------------------------------------------------------------
+
+async fn cmd_trigger(
+    args: PeriodicTriggerArgs,
+    config_path: Option<&std::path::Path>,
+    opts: ClientOpts,
+) -> Result<(), Error> {
+    let config = Config::load(config_path)?;
+    let client = CbcClient::new(&config.host, &config.token, opts)?;
+
+    // Validate --priority client-side for an early, friendly error; the
+    // server re-validates strictly.
+    let priority = args.priority.as_deref().map(parse_priority).transpose()?;
+
+    let id = resolve_periodic_id(&client, &args.id).await?;
+    let resp: TriggerPeriodicResponse = client
+        .post(
+            &format!("periodic/{id}/trigger"),
+            &TriggerPeriodicBody { priority },
+        )
+        .await?;
+
+    println!("periodic task {id} triggered: build {}", resp.build_id);
+    if let Some(tag) = resp.tag {
+        println!("  tag:      {tag}");
+    }
+    if let Some(priority) = resp.priority {
+        println!("  priority: {priority}");
+    }
+    if let Some(warning) = resp.warning {
+        println!("  warning:  {warning}");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -926,6 +995,26 @@ mod tests {
     fn min_unique_empty_is_one() {
         let ids: [&str; 0] = [];
         assert_eq!(min_unique_components(&ids), 1);
+    }
+
+    /// The server treats `{}` as "no override"; the omitted `--priority`
+    /// flag must therefore serialize to an empty object, not
+    /// `{"priority":null}`. Guards the `skip_serializing_if` attribute.
+    #[test]
+    fn trigger_body_without_priority_serializes_to_empty_object() {
+        let body = TriggerPeriodicBody { priority: None };
+        assert_eq!(serde_json::to_string(&body).expect("serialize"), "{}");
+    }
+
+    #[test]
+    fn trigger_body_priority_serializes_lowercase() {
+        let body = TriggerPeriodicBody {
+            priority: Some(Priority::High),
+        };
+        assert_eq!(
+            serde_json::to_string(&body).expect("serialize"),
+            r#"{"priority":"high"}"#
+        );
     }
 
     #[test]
