@@ -24,7 +24,10 @@ sha2 = "0.10"
 sysinfo = "0.33"
 tar = "0.4"
 tokio = { version = "1", features = ["full"] }
-rustls = { version = "0.23", default-features = false }
+# `ring` is required by ws/connection.rs (crypto::ring::default_provider);
+# without it, standalone `-p cbsd-worker` builds fail and only workspace
+# feature unification (via reqwest's rustls-tls elsewhere) masks it.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rustls-pki-types = "1"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
