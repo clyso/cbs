@@ -33,11 +33,19 @@ use crate::client::{CbcClient, ClientOpts};
 use crate::config::Config;
 use crate::error::Error;
 
-/// Extended version: cargo version + git SHA from production build.
-const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "+", env!("CBS_BUILD_META"),);
+shadow_rs::shadow!(build);
 
 #[derive(Parser)]
-#[command(name = "cbc", version = VERSION, about = "CBS build service client")]
+#[command(name = "cbc",
+    version = shadow_rs::formatcp!(
+        "v{pkg_ver} (g{git_ver}) {arch}",
+        pkg_ver = build::PKG_VERSION,
+        git_ver = build::SHORT_COMMIT,
+        arch = build::BUILD_OS
+    ),
+    about = "CBS build service client",
+    max_term_width = 80
+)]
 struct Cli {
     /// Path to configuration file
     #[arg(long, global = true)]

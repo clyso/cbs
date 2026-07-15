@@ -1,6 +1,6 @@
 [package]
 name = "cbc"
-version = "0.1.0"
+version = "2.0.0"
 edition.workspace = true
 license = "GPL-3.0-or-later"
 repository.workspace = true
@@ -21,7 +21,11 @@ dirs = "5"
 open = "5"
 reqwest-eventsource = "0.6"
 futures-util = "0.3"
+shadow-rs = { version = "2.0.0", default-features = false }
 
 [dev-dependencies]
 static_assertions = "1"
 tempfile = "3"
+
+[build-dependencies]
+shadow-rs = "2.0.0"
