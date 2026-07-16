@@ -25,6 +25,7 @@ from rich.console import Console
 from rich.highlighter import RegexHighlighter
 from rich.theme import Theme
 
+from cbscommon import logger as cbscommon_logger
 from crt.crtlib.logger import logger as parent_logger
 
 logger = parent_logger.getChild("cmds")
@@ -125,10 +126,12 @@ def rprint(s: str) -> None:
 
 def set_debug_logging() -> None:
     parent_logger.setLevel(logging.DEBUG)
+    cbscommon_logger.setLevel(logging.DEBUG)
 
 
 def set_verbose_logging() -> None:
     parent_logger.setLevel(logging.INFO)
+    cbscommon_logger.setLevel(logging.INFO)
 
 
 class Symbols(enum.StrEnum):

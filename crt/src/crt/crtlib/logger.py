@@ -13,6 +13,8 @@
 
 import logging
 
+from cbscommon import logger_set_handler as cbscommon_set_handler
+
 logger = logging.getLogger("crt")
 logger.setLevel(logging.ERROR)
 
@@ -20,6 +22,7 @@ logger.setLevel(logging.ERROR)
 def logger_set_handler(handler: logging.Handler) -> None:
     logger.propagate = False
     logger.addHandler(handler)
+    cbscommon_set_handler(handler)
 
 
 def logger_unset_handler(handler: logging.Handler) -> None:

@@ -20,7 +20,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
-from cbscore.utils import MaybeSecure, Password, SecureURL
+from cbscommon.process.types import MaybeSecure
+
+from cbscore.utils import Password, SecureURL
 from cbscore.utils.secrets import SecretsMgrError
 from cbscore.utils.secrets import logger as parent_logger
 from cbscore.utils.secrets.models import (

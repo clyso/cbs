@@ -12,22 +12,25 @@
 # GNU General Public License for more details.
 
 
+import asyncio
 import datetime
 from datetime import datetime as dt
 from pathlib import Path
 from typing import override
 
-import git
-
-from crt.crtlib.git_utils import (
-    SHA,
-    GitAMApplyError,
+from cbscommon.git.cmds import (
+    get_git_user,
     git_am_abort,
     git_am_apply,
-    git_cleanup_repo,
-    git_get_local_head,
+    git_branch_delete,
+    git_checkout,
     git_prepare_remote,
+    git_reset_state,
+    git_update_submodules,
 )
+from cbscommon.git.exceptions import GitAMApplyError, GitError
+from cbscommon.git.types import SHA
+
 from crt.crtlib.logger import logger as parent_logger
 from crt.crtlib.models.common import ManifestPatchEntry
 from crt.crtlib.models.manifest import ReleaseManifest
@@ -58,84 +61,25 @@ class ApplyConflictError(ApplyError):
         self.conflict_files = files
 
 
-def _update_submodules(repo_path: Path) -> None:
-    logger.debug("update submodules")
-    repo = git.Repo(repo_path)
-    try:
-        repo.git.execute(  # pyright: ignore[reportCallIssue]
-            ["git", "submodule", "update", "--init", "--recursive"],
-            as_process=False,
-            with_stdout=True,
-        )
-    except Exception as e:
-        msg = f"unable to update repository's submodules: {e}"
-        logger.error(msg)
-        raise ApplyError(msg=msg) from None
-
-
-def _checkout_ref(repo_path: Path, from_ref: str, branch_name: str) -> git.Head:
-    logger.debug(f"checkout ref '{from_ref}' to '{branch_name}'")
-    repo = git.Repo(repo_path)
-    if head := git_get_local_head(repo_path, branch_name):
-        logger.debug(f"branch '{branch_name}' already exists, simply checkout")
-        repo.head.reference = head
-        _ = repo.head.reset(index=True, working_tree=True)
-        return head
-
-    assert branch_name not in repo.heads
-    try:
-        new_head = repo.create_head(branch_name, from_ref)
-    except Exception:
-        msg = f"unable to create new head '{branch_name}' " + f"from '{from_ref}'"
-        logger.exception(msg)
-        raise ApplyError(msg=msg) from None
-
-    repo.head.reference = new_head
-    _ = repo.head.reset(index=True, working_tree=True)
-
-    try:
-        git_cleanup_repo(repo_path)
-        _update_submodules(repo_path)
-    except Exception as e:
-        msg = f"unable to clean up repo state after checkout: {e}"
-        logger.error(msg)
-        raise ApplyError(msg=msg) from None
-
-    return new_head
-
-
 def _prepare_repo(repo_path: Path):
-    repo = git.Repo(repo_path)
-
-    def _check_repo() -> None:
-        logger.debug("check repo's config user and email")
-        for what in ["name", "email"]:
-            try:
-                res = repo.git.execute(
-                    ["git", "config", f"user.{what}"],
-                    with_extended_output=False,
-                    as_process=False,
-                    stdout_as_string=True,
-                )
-            except Exception:
-                msg = f"error obtaining repository's user's {what}"
-                logger.error(msg)
-                raise ApplyError(msg=msg) from None
-
-            if not res:
-                msg = f"user's {what} not set for repository"
-                logger.error(msg)
-                raise ApplyError(msg=msg)
-
-    def _cleanup_repo() -> None:
-        git_cleanup_repo(repo_path)
-        repo.head.reference = repo.heads.main
-        _ = repo.index.reset(index=True, working_tree=True)
+    try:
+        name, email = asyncio.run(get_git_user(repo_path))
+        if not name:
+            msg = "user's name not set for repository"
+            logger.error(msg)
+            raise ApplyError(msg=msg)
+        if not email:
+            msg = "user's email not set for repository"
+            logger.error(msg)
+            raise ApplyError(msg=msg)
+    except GitError as e:
+        msg = f"error obtaining repository's user's data: {e}"
+        logger.error(msg)
+        raise ApplyError(msg=msg) from None
 
     # propagate exceptions
-    _check_repo()
-    _cleanup_repo()
-    _update_submodules(repo_path)
+    asyncio.run(git_reset_state(repo_path))
+    asyncio.run(git_update_submodules(repo_path))
 
 
 def apply_manifest(
@@ -148,18 +92,15 @@ def apply_manifest(
     no_cleanup: bool = False,
     run_locally: bool = False,
 ) -> tuple[bool, list[ManifestPatchEntry], list[ManifestPatchEntry]]:
-    ceph_repo = git.Repo(ceph_repo_path)
-
     logger.info(f"apply manifest '{manifest.release_uuid}' to branch '{target_branch}'")
 
     def _cleanup(*, abort_apply: bool = False) -> None:
         logger.debug(f"cleanup state, branch '{target_branch}'")
         if abort_apply:
-            git_am_abort(ceph_repo_path)
+            asyncio.run(git_am_abort(ceph_repo_path))
 
-        git_cleanup_repo(ceph_repo_path)
-        ceph_repo.head.reference = ceph_repo.heads.main
-        ceph_repo.git.branch(["-D", target_branch])  # pyright: ignore[reportAny]
+        asyncio.run(git_reset_state(ceph_repo_path))
+        asyncio.run(git_branch_delete(ceph_repo_path, target_branch))
 
     def _apply_patches(
         patches: list[ManifestPatchEntry],
@@ -181,7 +122,7 @@ def apply_manifest(
                 raise ApplyError(msg=f"missing patch uuid '{entry.entry_uuid}'")
 
             try:
-                git_am_apply(ceph_repo_path, patch_path)
+                asyncio.run(git_am_apply(ceph_repo_path, patch_path))
             except Exception as e:
                 raise e from None
 
@@ -193,15 +134,25 @@ def apply_manifest(
         _prepare_repo(ceph_repo_path)
         repo_name = f"{manifest.base_ref_org}/{manifest.base_ref_repo}"
         if not run_locally:
-            _ = git_prepare_remote(
-                ceph_repo_path, f"github.com/{repo_name}", repo_name, token
+            asyncio.run(
+                git_prepare_remote(
+                    ceph_repo_path, f"github.com/{repo_name}", repo_name, token
+                )
             )
     except ApplyError as e:
         logger.error(e)
         raise e from None
 
     try:
-        _branch = _checkout_ref(ceph_repo_path, manifest.base_ref, target_branch)
+        asyncio.run(
+            git_checkout(
+                ceph_repo_path,
+                manifest.base_ref,
+                to_branch=target_branch,
+                clean=True,
+                update_submodules=True,
+            )
+        )
     except ApplyError as e:
         msg = f"unable to apply manifest patchsets: {e}"
         logger.error(msg)

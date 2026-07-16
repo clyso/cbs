@@ -12,6 +12,7 @@
 # GNU General Public License for more details.
 
 
+import asyncio
 import datetime
 import errno
 import re
@@ -23,6 +24,14 @@ from typing import cast
 
 import click
 import rich.box
+from cbscommon.git.cmds import (
+    git_prepare_remote,
+    git_push,
+    git_remote_exists,
+    git_remote_ref_exists,
+    git_tag_exists_in_remote,
+)
+from cbscommon.git.exceptions import GitError
 from cbscore.versions.utils import parse_version
 from rich.console import Group, RenderableType
 from rich.padding import Padding
@@ -39,14 +48,6 @@ from crt.crtlib.errors.manifest import (
 )
 from crt.crtlib.errors.patchset import NoSuchPatchSetError, PatchSetError
 from crt.crtlib.errors.release import NoSuchReleaseError, ReleaseError
-from crt.crtlib.git_utils import (
-    GitError,
-    git_get_remote_ref,
-    git_prepare_remote,
-    git_push,
-    git_remote,
-    git_tag_exists_in_remote,
-)
 from crt.crtlib.github import gh_get_pr
 from crt.crtlib.manifest import (
     ManifestExecuteResult,
@@ -1156,30 +1157,41 @@ def _prepare_release_repo(
     release_name: str,
     token: str,
 ) -> None:
+    async def _check_release_ready() -> bool:
+        return (
+            await git_remote_exists(ceph_repo_path, remote_name)
+            and await git_remote_ref_exists(
+                ceph_repo_path, release_branch_name, remote_name
+            )
+            and await git_tag_exists_in_remote(
+                ceph_repo_path, remote_name, release_tag_name
+            )
+        )
+
+    async def _push_release():
+        release = load_release(ces_patch_path, release_name)
+        release_repo_name = release.base_repo
+        await git_prepare_remote(
+            ceph_repo_path,
+            f"github.com/{release_repo_name}",
+            release_repo_name,
+            token,
+        )
+        if remote_name != release_repo_name:
+            await git_prepare_remote(
+                ceph_repo_path, f"github.com/{remote_name}", remote_name, token
+            )
+        _ = await git_push(ceph_repo_path, release_branch_name, remote_name)
+        _ = await git_push(ceph_repo_path, release_tag_name, remote_name)
+
     try:
         release_branch_name = manifest.base_ref
         release_tag_name = release_branch_name.replace("/", "-")
         remote_name = manifest.dst_repo
-        if (
-            git_remote(ceph_repo_path, remote_name)
-            and git_get_remote_ref(ceph_repo_path, release_branch_name, remote_name)
-            and git_tag_exists_in_remote(ceph_repo_path, remote_name, release_tag_name)
-        ):
+        if asyncio.run(_check_release_ready()):
             pinfo("release repo already prepared")
             return
-
-        release = load_release(ces_patch_path, release_name)
-        release_repo_name = release.base_repo
-
-        git_prepare_remote(
-            ceph_repo_path, f"github.com/{release_repo_name}", release_repo_name, token
-        )
-        if remote_name != release_repo_name:
-            git_prepare_remote(
-                ceph_repo_path, f"github.com/{remote_name}", remote_name, token
-            )
-        git_push(ceph_repo_path, release_branch_name, remote_name)
-        git_push(ceph_repo_path, release_tag_name, remote_name)
+        asyncio.run(_push_release())
     except GitError as e:
         perror(f"unable to prepare release repository: {e}")
         sys.exit(e.ec if e.ec else errno.ENOTRECOVERABLE)

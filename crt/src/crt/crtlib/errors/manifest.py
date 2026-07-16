@@ -14,8 +14,9 @@
 import uuid
 from typing import override
 
+from cbscommon.git.types import SHA
+
 from crt.crtlib.errors import CRTError
-from crt.crtlib.git_utils import SHA
 from crt.crtlib.models.common import AuthorData
 
 
