@@ -69,7 +69,7 @@ pub struct BuildDescriptorArgs {
     pub version_type: Option<String>,
 
     /// Base distribution
-    #[arg(long, default_value = "rockylinux")]
+    #[arg(long, default_value = "rockylinux/rockylinux:9")]
     pub distro: String,
 
     /// OS version string
