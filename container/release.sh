@@ -37,7 +37,6 @@ Versions must always be in the format 'vMAJOR.minor.patch', where 'MAJOR',
 
 Options:
   --cbc-only            Add tag for 'cbc' only (i.e., cbc-<version>)
-                        (implies '--no-update-latest')
   --no-update-latest    Do not update latest major version tag
   -r | --remote NAME    Name of remote to push to (default: ${default_remote_str})
   -h | --help           Show this message
@@ -54,7 +53,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --cbc-only)
       do_cbc_only=1
-      update_latest_major=0
       ;;
     --no-update-latest)
       update_latest_major=0
@@ -125,6 +123,7 @@ version_stream="$(echo "${version}" | cut -d'.' -f1)"
 release_tag="${version}"
 [[ ${do_cbc_only} -eq 1 ]] && {
   release_tag="cbc-${version}"
+  version_stream="cbc"
   echo -e "${_INFOMARK} creating tag '${release_tag}' for 'cbc' only"
 }
 
