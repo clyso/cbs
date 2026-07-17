@@ -125,6 +125,14 @@ release_tag="${version}"
   release_tag="cbc-${version}"
   version_stream="cbc"
   echo -e "${_INFOMARK} creating tag '${release_tag}' for 'cbc' only"
+
+  cargo_ver="$(grep '^version = .*' cbsd-rs/cbc/Cargo.toml \
+    | sed -ne 's/^version = "\([0-9]\+\.[0-9]\+\.[0-9]\+\)"$/\1/p')"
+  [[ "${cargo_ver}" != "${version:1}" ]] && {
+    echo "error: version '${version}' does not match cbc's" \
+      "Cargo.toml version '${cargo_ver}'" >&2
+    exit 1
+  }
 }
 
 echo -e "${_INFOMARK} update current main branch from remote '${push_remote}'"
